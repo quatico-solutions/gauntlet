@@ -1,4 +1,5 @@
 import type { StoryCard } from "../format/story-card";
+import { parseStoryCard } from "../format/story-card";
 import type { LLMClient } from "../models/provider";
 
 export function buildFanoutPrompt(card: StoryCard): string {
@@ -47,5 +48,13 @@ export async function generateFanout(
   return response.text
     .split("---CARD---")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((chunk) => {
+      try {
+        parseStoryCard(chunk);
+        return true;
+      } catch {
+        return false;
+      }
+    });
 }
