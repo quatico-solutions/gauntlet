@@ -161,29 +161,118 @@ describe("runAgent", () => {
     });
   });
 
+  test("handles multi-turn tool use conversation", async () => {
+    const client = makeMockClient([
+      // Turn 1: take a screenshot
+      {
+        text: "I'll take a screenshot first",
+        toolCalls: [{ id: "call_1", name: "screenshot", arguments: {} }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "raw_turn_1" },
+      },
+      // Turn 2: click something based on what was seen
+      {
+        text: "I see the page, let me click",
+        toolCalls: [
+          { id: "call_2", name: "click", arguments: { selector: ".btn" } },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "raw_turn_2" },
+      },
+      // Turn 3: report result with observations
+      {
+        text: "Everything checks out",
+        toolCalls: [
+          {
+            id: "call_3",
+            name: "report_result",
+            arguments: {
+              status: "pass",
+              summary: "UI renders correctly",
+              reasoning: "Screenshot confirmed layout, button click worked",
+              observations: [
+                { kind: "ux", description: "Button contrast could be higher" },
+                { kind: "suggestion", description: "Add loading indicator" },
+              ],
+            },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "raw_turn_3" },
+      },
+    ]);
+
+    const adapter = makeMockAdapter({
+      screenshot: "screenshot_base64_data",
+      click: "clicked .btn",
+    });
+
+    const result = await runAgent(card, adapter, client, makeMockLogger());
+
+    expect(result.status).toBe("pass");
+    expect(result.summary).toBe("UI renders correctly");
+    expect(result.observations).toHaveLength(2);
+    expect(result.observations[0]).toEqual({
+      kind: "ux",
+      description: "Button contrast could be higher",
+    });
+    expect(result.observations[1]).toEqual({
+      kind: "suggestion",
+      description: "Add loading indicator",
+    });
+
+    // Verify message array grew correctly across turns
+    const chatCalls = (client as any)._chatCalls;
+    expect(chatCalls).toHaveLength(3);
+
+    // Turn 1: just the initial user message
+    expect(chatCalls[0]).toHaveLength(1);
+
+    // Turn 2: initial user + raw assistant turn 1 + tool result for screenshot
+    expect(chatCalls[1]).toHaveLength(3);
+    expect(chatCalls[1][2]).toEqual({
+      role: "tool_result",
+      tool_call_id: "call_1",
+      content: "screenshot_base64_data",
+    });
+
+    // Turn 3: previous 3 + raw assistant turn 2 + tool result for click = 5
+    expect(chatCalls[2]).toHaveLength(5);
+    expect(chatCalls[2][4]).toEqual({
+      role: "tool_result",
+      tool_call_id: "call_2",
+      content: "clicked .btn",
+    });
+  });
+
   test("handles tool execution errors gracefully", async () => {
     const failingAdapter = makeMockAdapter();
     failingAdapter.executeTool = async (name: string) => {
-      throw new Error("browser crashed");
+      if (name === "click") throw new Error("Element not found: .missing");
+      return `result of ${name}`;
     };
 
     const client = makeMockClient([
+      // Turn 1: try to click a bad selector
       {
-        text: "",
-        toolCalls: [{ id: "call_1", name: "screenshot", arguments: {} }],
+        text: "Let me click",
+        toolCalls: [
+          { id: "call_1", name: "click", arguments: { selector: ".missing" } },
+        ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "raw" },
       },
+      // Turn 2: agent sees the error, reports failure
       {
-        text: "",
+        text: "Click failed",
         toolCalls: [
           {
             id: "call_2",
             name: "report_result",
             arguments: {
-              status: "investigate",
-              summary: "Tool failed",
-              reasoning: "Screenshot tool errored",
+              status: "fail",
+              summary: "Required element not found",
+              reasoning: "Click on .missing failed with element not found error",
             },
           },
         ],
@@ -192,16 +281,22 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, failingAdapter, client, makeMockLogger());
+    const result = await runAgent(
+      card,
+      failingAdapter,
+      client,
+      makeMockLogger()
+    );
 
-    expect(result.status).toBe("investigate");
+    expect(result.status).toBe("fail");
+    expect(result.summary).toBe("Required element not found");
 
     // Verify the error was passed back as a tool result, not thrown
     const secondCallMessages = (client as any)._chatCalls[1];
     expect(secondCallMessages[2]).toEqual({
       role: "tool_result",
       tool_call_id: "call_1",
-      content: "Error: browser crashed",
+      content: "Error: Element not found: .missing",
     });
   });
 });
