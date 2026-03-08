@@ -15,6 +15,8 @@ export async function fanout(
     await fanoutFromResult(resultDir, outDir, models);
   } else if (scenarioPath) {
     await fanoutFromScenario(scenarioPath, outDir, models);
+  } else {
+    throw new Error("Either scenarioPath or resultDir must be provided");
   }
 }
 
