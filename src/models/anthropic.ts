@@ -12,12 +12,36 @@ export function createAnthropicClient(model: string): LLMClient {
 
   return {
     async chat(messages, tools, systemPrompt) {
+      const convertedTools = tools.map(convertTool);
+
+      // Cache breakpoint 1: system prompt
+      const system: Anthropic.Messages.TextBlockParam[] = [
+        {
+          type: "text",
+          text: systemPrompt,
+          cache_control: { type: "ephemeral" },
+        },
+      ];
+
+      // Cache breakpoint 2: last tool definition
+      if (convertedTools.length > 0) {
+        convertedTools[convertedTools.length - 1] = {
+          ...convertedTools[convertedTools.length - 1],
+          cache_control: { type: "ephemeral" },
+        };
+      }
+
+      // Cache breakpoint 3: last message (moving breakpoint for conversation prefix)
+      const apiMessages = withCacheBreakpointOnLastMessage(
+        messages as Anthropic.MessageParam[]
+      );
+
       const response = await client.messages.create({
         model,
         max_tokens: 4096,
-        system: systemPrompt,
-        messages: messages as Anthropic.MessageParam[],
-        tools: tools.map(convertTool),
+        system,
+        messages: apiMessages,
+        tools: convertedTools,
       });
 
       return convertResponse(response);
@@ -68,6 +92,43 @@ function convertTool(tool: ToolDefinition): Anthropic.Tool {
     description: tool.description,
     input_schema: tool.parameters as Anthropic.Tool["input_schema"],
   };
+}
+
+/**
+ * Shallow-clone the last message and add cache_control to its last content block.
+ * This creates a moving cache breakpoint so the conversation prefix is cached between turns.
+ */
+function withCacheBreakpointOnLastMessage(
+  messages: Anthropic.MessageParam[]
+): Anthropic.MessageParam[] {
+  if (messages.length === 0) return messages;
+
+  const result = [...messages];
+  const last = result[result.length - 1];
+
+  if (typeof last.content === "string") {
+    result[result.length - 1] = {
+      ...last,
+      content: [
+        {
+          type: "text" as const,
+          text: last.content,
+          cache_control: { type: "ephemeral" as const },
+        },
+      ],
+    };
+  } else if (Array.isArray(last.content) && last.content.length > 0) {
+    const contentCopy = [...last.content];
+    const lastBlock = contentCopy[contentCopy.length - 1];
+    // Our content blocks are always tool_result or text, both support cache_control
+    contentCopy[contentCopy.length - 1] = {
+      ...lastBlock,
+      cache_control: { type: "ephemeral" },
+    } as typeof lastBlock;
+    result[result.length - 1] = { ...last, content: contentCopy };
+  }
+
+  return result;
 }
 
 function convertResponse(response: Anthropic.Message): AgentResponse {
