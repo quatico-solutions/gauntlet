@@ -30,10 +30,17 @@ async function main() {
       await fanout(args.scenarioPath, args.outDir, args.models);
       break;
     }
-    case "serve":
-      console.error("serve: not yet implemented");
-      process.exit(1);
+    case "serve": {
+      const { createApp } = await import("./api/server");
+      const app = createApp(args.dataDir ?? ".");
+      const port = args.port;
+      console.error(`vet server listening on port ${port}`);
+      Bun.serve({
+        port,
+        fetch: app.fetch,
+      });
       break;
+    }
   }
 }
 
