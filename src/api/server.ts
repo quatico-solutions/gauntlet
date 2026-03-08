@@ -7,9 +7,11 @@ import { runRoutes } from "./routes/run";
 
 export function createApp(dataDir: string) {
   const app = new Hono();
-  app.route("/scenarios", scenarioRoutes(dataDir));
-  app.route("/results", resultRoutes(join(dataDir, "results")));
-  app.route("/fanout", fanoutRoutes(dataDir));
-  app.route("/run", runRoutes(dataDir));
+  const api = new Hono();
+  api.route("/scenarios", scenarioRoutes(dataDir));
+  api.route("/results", resultRoutes(join(dataDir, "results")));
+  api.route("/fanout", fanoutRoutes(dataDir));
+  api.route("/run", runRoutes(dataDir));
+  app.route("/api", api);
   return app;
 }

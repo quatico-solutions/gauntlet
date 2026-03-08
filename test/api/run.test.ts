@@ -33,11 +33,11 @@ describe("Run API", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  test("POST /run/:id returns 404 for unknown scenario", async () => {
+  test("POST /api/run/:id returns 404 for unknown scenario", async () => {
     const app = new Hono();
-    app.route("/run", runRoutes(dataDir));
+    app.route("/api/run", runRoutes(dataDir));
 
-    const res = await app.request("/run/story-999", {
+    const res = await app.request("/api/run/story-999", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ target: "http://localhost:3000" }),
@@ -47,11 +47,11 @@ describe("Run API", () => {
     expect(body.error).toBe("not found");
   });
 
-  test("POST /run/:id returns 400 when target is missing", async () => {
+  test("POST /api/run/:id returns 400 when target is missing", async () => {
     const app = new Hono();
-    app.route("/run", runRoutes(dataDir));
+    app.route("/api/run", runRoutes(dataDir));
 
-    const res = await app.request("/run/story-001", {
+    const res = await app.request("/api/run/story-001", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -61,15 +61,15 @@ describe("Run API", () => {
     expect(body.error).toContain("target");
   });
 
-  test("POST /run/:id returns 400 when no model configured", async () => {
+  test("POST /api/run/:id returns 400 when no model configured", async () => {
     const savedAgent = process.env.VET_AGENT_MODEL;
     delete process.env.VET_AGENT_MODEL;
 
     try {
       const app = new Hono();
-      app.route("/run", runRoutes(dataDir));
+      app.route("/api/run", runRoutes(dataDir));
 
-      const res = await app.request("/run/story-001", {
+      const res = await app.request("/api/run/story-001", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target: "http://localhost:3000" }),

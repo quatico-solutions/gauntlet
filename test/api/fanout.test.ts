@@ -76,17 +76,17 @@ describe("Fanout API", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  test("POST /fanout/:id returns 404 for unknown scenario", async () => {
+  test("POST /api/fanout/:id returns 404 for unknown scenario", async () => {
     const app = new Hono();
-    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient("")));
+    app.route("/api/fanout", fanoutRoutes(dataDir, () => makeFakeClient("")));
 
-    const res = await app.request("/fanout/story-999", { method: "POST" });
+    const res = await app.request("/api/fanout/story-999", { method: "POST" });
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toBe("not found");
   });
 
-  test("POST /fanout/:id returns 400 when no model configured", async () => {
+  test("POST /api/fanout/:id returns 400 when no model configured", async () => {
     const savedFanout = process.env.VET_FANOUT_MODEL;
     const savedAgent = process.env.VET_AGENT_MODEL;
     delete process.env.VET_FANOUT_MODEL;
@@ -94,9 +94,9 @@ describe("Fanout API", () => {
 
     try {
       const app = new Hono();
-      app.route("/fanout", fanoutRoutes(dataDir));
+      app.route("/api/fanout", fanoutRoutes(dataDir));
 
-      const res = await app.request("/fanout/story-001", { method: "POST" });
+      const res = await app.request("/api/fanout/story-001", { method: "POST" });
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toContain("no model configured");
@@ -106,14 +106,14 @@ describe("Fanout API", () => {
     }
   });
 
-  test("POST /fanout/:id generates cards and writes to stories dir", async () => {
+  test("POST /api/fanout/:id generates cards and writes to stories dir", async () => {
     const responseText = `${GENERATED_CARD_A}---CARD---${GENERATED_CARD_B}`;
     const client = makeFakeClient(responseText);
 
     const app = new Hono();
-    app.route("/fanout", fanoutRoutes(dataDir, () => client));
+    app.route("/api/fanout", fanoutRoutes(dataDir, () => client));
 
-    const res = await app.request("/fanout/story-001", { method: "POST" });
+    const res = await app.request("/api/fanout/story-001", { method: "POST" });
     expect(res.status).toBe(200);
 
     const body = await res.json();
@@ -204,7 +204,7 @@ describe("Fanout observations API", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  test("POST /fanout/:id/observations promotes observations to story cards", async () => {
+  test("POST /api/fanout/:id/observations promotes observations to story cards", async () => {
     const resultsDir = join(dataDir, "results", "test-001");
     mkdirSync(resultsDir, { recursive: true });
     writeFileSync(
@@ -225,9 +225,9 @@ describe("Fanout observations API", () => {
 
     const responseText = `${OBS_CARD_A}---CARD---${OBS_CARD_B}`;
     const app = new Hono();
-    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient(responseText)));
+    app.route("/api/fanout", fanoutRoutes(dataDir, () => makeFakeClient(responseText)));
 
-    const res = await app.request("/fanout/test-001/observations", { method: "POST" });
+    const res = await app.request("/api/fanout/test-001/observations", { method: "POST" });
     expect(res.status).toBe(200);
 
     const body = await res.json();
@@ -241,11 +241,11 @@ describe("Fanout observations API", () => {
     expect(files).toContain("test-001-obs-b.md");
   });
 
-  test("POST /fanout/:id/observations returns 404 when no result exists", async () => {
+  test("POST /api/fanout/:id/observations returns 404 when no result exists", async () => {
     const app = new Hono();
-    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient("")));
+    app.route("/api/fanout", fanoutRoutes(dataDir, () => makeFakeClient("")));
 
-    const res = await app.request("/fanout/nonexistent/observations", { method: "POST" });
+    const res = await app.request("/api/fanout/nonexistent/observations", { method: "POST" });
     expect(res.status).toBe(404);
   });
 });
@@ -264,7 +264,7 @@ describe("Fanout failure API", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  test("POST /fanout/:id/failure generates follow-up stories from a failed run", async () => {
+  test("POST /api/fanout/:id/failure generates follow-up stories from a failed run", async () => {
     const resultsDir = join(dataDir, "results", "test-002");
     mkdirSync(resultsDir, { recursive: true });
     writeFileSync(
@@ -282,9 +282,9 @@ describe("Fanout failure API", () => {
 
     const responseText = `${FAIL_CARD_A}---CARD---${FAIL_CARD_B}`;
     const app = new Hono();
-    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient(responseText)));
+    app.route("/api/fanout", fanoutRoutes(dataDir, () => makeFakeClient(responseText)));
 
-    const res = await app.request("/fanout/test-002/failure", { method: "POST" });
+    const res = await app.request("/api/fanout/test-002/failure", { method: "POST" });
     expect(res.status).toBe(200);
 
     const body = await res.json();
@@ -298,7 +298,7 @@ describe("Fanout failure API", () => {
     expect(files).toContain("test-002-fail-b.md");
   });
 
-  test("POST /fanout/:id/failure returns 400 when result is not a failure", async () => {
+  test("POST /api/fanout/:id/failure returns 400 when result is not a failure", async () => {
     const resultsDir = join(dataDir, "results", "test-003");
     mkdirSync(resultsDir, { recursive: true });
     writeFileSync(
@@ -315,9 +315,9 @@ describe("Fanout failure API", () => {
     );
 
     const app = new Hono();
-    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient("")));
+    app.route("/api/fanout", fanoutRoutes(dataDir, () => makeFakeClient("")));
 
-    const res = await app.request("/fanout/test-003/failure", { method: "POST" });
+    const res = await app.request("/api/fanout/test-003/failure", { method: "POST" });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toContain("not a failure");

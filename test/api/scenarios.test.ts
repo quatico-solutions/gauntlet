@@ -30,8 +30,8 @@ describe("Scenarios API", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  test("GET /scenarios lists all scenarios", async () => {
-    const res = await app.request("/scenarios");
+  test("GET /api/scenarios lists all scenarios", async () => {
+    const res = await app.request("/api/scenarios");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveLength(2);
@@ -39,21 +39,21 @@ describe("Scenarios API", () => {
     expect(body[1].id).toBe("story-002");
   });
 
-  test("GET /scenarios/:id returns single scenario", async () => {
-    const res = await app.request("/scenarios/story-001");
+  test("GET /api/scenarios/:id returns single scenario", async () => {
+    const res = await app.request("/api/scenarios/story-001");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.title).toBe("Test story");
     expect(body.acceptanceCriteria).toHaveLength(1);
   });
 
-  test("GET /scenarios/:id returns 404 for missing", async () => {
-    const res = await app.request("/scenarios/story-999");
+  test("GET /api/scenarios/:id returns 404 for missing", async () => {
+    const res = await app.request("/api/scenarios/story-999");
     expect(res.status).toBe(404);
   });
 
-  test("PUT /scenarios/:id updates scenario", async () => {
-    const res = await app.request("/scenarios/story-001", {
+  test("PUT /api/scenarios/:id updates scenario", async () => {
+    const res = await app.request("/api/scenarios/story-001", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "ready" }),
@@ -63,23 +63,23 @@ describe("Scenarios API", () => {
     expect(body.status).toBe("ready");
 
     // Verify persisted
-    const getRes = await app.request("/scenarios/story-001");
+    const getRes = await app.request("/api/scenarios/story-001");
     const getBody = await getRes.json();
     expect(getBody.status).toBe("ready");
   });
 
-  test("GET /scenarios returns empty array when stories dir doesn't exist", async () => {
+  test("GET /api/scenarios returns empty array when stories dir doesn't exist", async () => {
     const emptyDir = mkdtempSync(join(tmpdir(), "vet-no-stories-"));
     const emptyApp = createApp(emptyDir);
-    const res = await emptyApp.request("/scenarios");
+    const res = await emptyApp.request("/api/scenarios");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual([]);
     rmSync(emptyDir, { recursive: true, force: true });
   });
 
-  test("POST /scenarios/:id/approve sets status to ready", async () => {
-    const res = await app.request("/scenarios/story-001/approve", {
+  test("POST /api/scenarios/:id/approve sets status to ready", async () => {
+    const res = await app.request("/api/scenarios/story-001/approve", {
       method: "POST",
     });
     expect(res.status).toBe(200);
