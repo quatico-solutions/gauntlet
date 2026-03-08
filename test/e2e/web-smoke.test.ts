@@ -6,29 +6,9 @@ import type { StoryCard } from "../../src/format/story-card";
 import { mkdtempSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { withTimeout, isChromeUnavailable } from "./helpers";
 
 const TEST_PAGE = join(import.meta.dir, "../fixtures/test-page.html");
-
-/** Race a promise against a timeout; rejects with a descriptive error on timeout */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
-    ),
-  ]);
-}
-
-/** Returns true if the error indicates Chrome is unavailable (not a real test failure) */
-function isChromeUnavailable(err: any): boolean {
-  const msg = err?.message ?? "";
-  return (
-    msg.includes("Chrome") ||
-    msg.includes("connect") ||
-    msg.includes("ECONNREFUSED") ||
-    msg.includes("timed out")
-  );
-}
 
 describe("Web e2e smoke test", () => {
   test(
