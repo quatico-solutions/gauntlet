@@ -32,7 +32,24 @@ Think about:
 - Boundary conditions (first item, last item, maximum items)
 - Negative testing (what should NOT happen)
 
-Generate 3-5 variations. Output each as a complete story card in markdown format with YAML frontmatter, separated by "---CARD---" markers.`;
+Generate 3-5 variations. Separate each card with a "---CARD---" marker.
+
+Each card MUST use this exact format (triple-dash frontmatter, NOT code fences):
+
+---
+id: ${card.id}-a
+title: Example variation title
+status: draft
+tags: edge-case
+parent: ${card.id}
+---
+
+Description of what this variation tests.
+
+## Acceptance Criteria
+
+- First criterion
+- Second criterion`;
 }
 
 export async function generateFanout(
