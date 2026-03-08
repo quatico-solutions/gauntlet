@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { createApp } from "../../src/api/server";
 import { fanoutRoutes } from "../../src/api/routes/fanout";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
