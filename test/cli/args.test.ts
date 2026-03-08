@@ -49,4 +49,26 @@ describe("parseArgs", () => {
     expect(args.command).toBe("validate");
     expect(args.scenarioPath).toBe("story.md");
   });
+
+  test("parses fanout command with scenario path", () => {
+    const args = parseArgs(["bun", "index.ts", "fanout", "story.md", "--out", "./cards"]);
+    expect(args.command).toBe("fanout");
+    if (args.command !== "fanout") throw new Error("unreachable");
+    expect(args.scenarioPath).toBe("story.md");
+    expect(args.resultDir).toBeUndefined();
+    expect(args.outDir).toBe("./cards");
+  });
+
+  test("parses fanout --from-result flag", () => {
+    const args = parseArgs(["bun", "index.ts", "fanout", "--from-result", "./evidence/story-001", "--out", "./cards"]);
+    expect(args.command).toBe("fanout");
+    if (args.command !== "fanout") throw new Error("unreachable");
+    expect(args.resultDir).toBe("./evidence/story-001");
+    expect(args.scenarioPath).toBeUndefined();
+    expect(args.outDir).toBe("./cards");
+  });
+
+  test("fanout throws when neither scenario path nor --from-result provided", () => {
+    expect(() => parseArgs(["bun", "index.ts", "fanout"])).toThrow();
+  });
 });

@@ -27,7 +27,7 @@ async function main() {
     }
     case "fanout": {
       const { fanout } = await import("./cli/fanout");
-      await fanout(args.scenarioPath, args.outDir, args.models);
+      await fanout(args.scenarioPath, args.outDir, args.models, args.resultDir);
       break;
     }
     case "serve": {

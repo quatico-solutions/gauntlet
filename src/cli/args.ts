@@ -18,7 +18,8 @@ export interface ValidateArgs {
 
 export interface FanoutArgs {
   command: "fanout";
-  scenarioPath: string;
+  scenarioPath?: string;
+  resultDir?: string;
   outDir: string;
   models: ModelConfig;
 }
@@ -91,15 +92,17 @@ function parseValidateArgs(args: string[]): ValidateArgs {
 
 function parseFanoutArgs(args: string[]): FanoutArgs {
   const positional = extractPositional(args);
-  if (!positional) {
-    throw new Error("Missing scenario path\n\nUsage: vet fanout <scenario.md>");
-  }
-
   const flags = parseFlags(args);
+  const resultDir = flags["from-result"];
+
+  if (!positional && !resultDir) {
+    throw new Error("Missing scenario path or --from-result\n\nUsage: vet fanout <scenario.md> | --from-result <result-dir>");
+  }
 
   return {
     command: "fanout",
     scenarioPath: positional,
+    resultDir,
     outDir: flags.out ?? "./",
     models: parseModelFlags(flags.model ?? []),
   };
@@ -115,10 +118,14 @@ function parseServeArgs(args: string[]): ServeArgs {
   };
 }
 
-/** Extract the first positional argument (non-flag) */
+/** Extract the first positional argument (non-flag, not a flag value) */
 function extractPositional(args: string[]): string | undefined {
-  for (const arg of args) {
-    if (!arg.startsWith("--")) return arg;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith("--")) {
+      i++; // skip flag value
+      continue;
+    }
+    return args[i];
   }
   return undefined;
 }
