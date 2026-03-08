@@ -2,7 +2,7 @@ import { readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { Adapter } from "../adapter";
-import type { ToolDefinition } from "../../models/provider";
+import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
 
 // The forked CDP library is CommonJS JS — use require for bun compatibility
@@ -67,6 +67,10 @@ export class WebAdapter implements Adapter {
               type: "string",
               description: "CSS selector of the element to click",
             },
+            return_screenshot: {
+              type: "boolean",
+              description: "Take a screenshot after this action and return the image",
+            },
           },
           required: ["selector"],
         },
@@ -83,6 +87,10 @@ export class WebAdapter implements Adapter {
               type: "string",
               description: "CSS selector of the input element",
             },
+            return_screenshot: {
+              type: "boolean",
+              description: "Take a screenshot after this action and return the image",
+            },
           },
           required: ["text"],
         },
@@ -95,6 +103,10 @@ export class WebAdapter implements Adapter {
           type: "object",
           properties: {
             key: { type: "string", description: "Key name to press" },
+            return_screenshot: {
+              type: "boolean",
+              description: "Take a screenshot after this action and return the image",
+            },
           },
           required: ["key"],
         },
@@ -106,6 +118,10 @@ export class WebAdapter implements Adapter {
           type: "object",
           properties: {
             url: { type: "string", description: "URL to navigate to" },
+            return_screenshot: {
+              type: "boolean",
+              description: "Take a screenshot after this action and return the image",
+            },
           },
           required: ["url"],
         },
@@ -135,6 +151,10 @@ export class WebAdapter implements Adapter {
               type: "string",
               description: "JavaScript expression to evaluate",
             },
+            return_screenshot: {
+              type: "boolean",
+              description: "Take a screenshot after this action and return the image",
+            },
           },
           required: ["expression"],
         },
@@ -157,6 +177,10 @@ export class WebAdapter implements Adapter {
               type: "number",
               description: "Timeout in milliseconds (default 5000)",
             },
+            return_screenshot: {
+              type: "boolean",
+              description: "Take a screenshot after this action and return the image",
+            },
           },
         },
       },
@@ -167,8 +191,18 @@ export class WebAdapter implements Adapter {
     name: string,
     args: Record<string, unknown>,
     logger: EvidenceLogger
-  ): Promise<string> {
+  ): Promise<ToolResult> {
     logger.logAction(name, args);
+
+    const takeReturnScreenshot = async (): Promise<ToolResult["image"]> => {
+      if (!args.return_screenshot) return undefined;
+      const tmpFile = join(tmpdir(), `vet-screenshot-${Date.now()}.png`);
+      await chrome.screenshot(0, tmpFile, null, false);
+      const data = readFileSync(tmpFile);
+      logger.saveScreenshot(Buffer.from(data));
+      try { unlinkSync(tmpFile); } catch { }
+      return { data: Buffer.from(data).toString("base64"), mediaType: "image/png" };
+    };
 
     switch (name) {
       case "screenshot": {
@@ -189,11 +223,14 @@ export class WebAdapter implements Adapter {
         } catch {
           // temp file cleanup is best-effort
         }
-        return `Screenshot saved to ${saved}`;
+        return {
+          text: `Screenshot saved to ${saved}`,
+          image: { data: Buffer.from(data).toString("base64"), mediaType: "image/png" },
+        };
       }
       case "click": {
         await chrome.click(0, args.selector as string);
-        return "clicked";
+        return { text: "clicked", image: await takeReturnScreenshot() };
       }
       case "type": {
         const selector = args.selector as string | undefined;
@@ -206,40 +243,41 @@ export class WebAdapter implements Adapter {
             await chrome.keyboardPress(0, char);
           }
         }
-        return "typed";
+        return { text: "typed", image: await takeReturnScreenshot() };
       }
       case "press": {
         await chrome.keyboardPress(0, args.key as string);
-        return "pressed";
+        return { text: "pressed", image: await takeReturnScreenshot() };
       }
       case "navigate": {
         await chrome.navigate(0, args.url as string);
-        return "navigated";
+        return { text: "navigated", image: await takeReturnScreenshot() };
       }
       case "extract": {
         const selector = args.selector as string | undefined;
         if (selector) {
           const text = await chrome.extractText(0, selector);
-          return text;
+          return { text };
         }
         const markdown = await chrome.generateMarkdown(0);
-        return markdown;
+        return { text: markdown };
       }
       case "eval": {
         const result = await chrome.evaluate(0, args.expression as string);
-        return typeof result === "string" ? result : JSON.stringify(result);
+        const text = typeof result === "string" ? result : JSON.stringify(result);
+        return { text, image: await takeReturnScreenshot() };
       }
       case "wait_for": {
         const timeout = (args.timeout as number) ?? 5000;
         if (args.selector) {
           await chrome.waitForElement(0, args.selector as string, timeout);
-          return "element found";
+          return { text: "element found", image: await takeReturnScreenshot() };
         }
         if (args.text) {
           await chrome.waitForText(0, args.text as string, timeout);
-          return "text found";
+          return { text: "text found", image: await takeReturnScreenshot() };
         }
-        return "nothing to wait for — provide selector or text";
+        return { text: "nothing to wait for — provide selector or text" };
       }
       default:
         throw new Error(`Unknown tool: ${name}`);

@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { runAgent } from "../../src/agent/agent";
 import { EvidenceLogger } from "../../src/evidence/logger";
-import type { LLMClient, ToolCall } from "../../src/models/provider";
+import type { LLMClient, ToolCall, ToolResult } from "../../src/models/provider";
 import type { StoryCard } from "../../src/format/story-card";
 import { mkdtempSync, readFileSync } from "fs";
 import { join } from "path";
@@ -139,11 +139,11 @@ describe("Web e2e smoke test", () => {
         userMessage(content: string) {
           return { role: "user", content };
         },
-        toolResultMessages(calls: ToolCall[], results: string[]) {
+        toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
           return calls.map((c, i) => ({
             role: "tool",
             id: c.id,
-            content: results[i],
+            content: results[i].text,
           }));
         },
       };

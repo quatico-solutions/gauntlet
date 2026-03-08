@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { runAgent } from "../../src/agent/agent";
-import type { LLMClient, AgentResponse, ToolCall } from "../../src/models/provider";
+import type { LLMClient, AgentResponse, ToolCall, ToolResult } from "../../src/models/provider";
 import type { Adapter } from "../../src/adapters/adapter";
 import type { EvidenceLogger } from "../../src/evidence/logger";
 import type { StoryCard } from "../../src/format/story-card";
@@ -36,8 +36,8 @@ function makeMockAdapter(
       },
     ],
     executeTool: async (name: string) => {
-      if (name in toolResults) return toolResults[name];
-      return `result of ${name}`;
+      if (name in toolResults) return { text: toolResults[name] };
+      return { text: `result of ${name}` };
     },
     start: async () => {},
     close: async () => {},
@@ -59,11 +59,11 @@ function makeMockClient(responses: AgentResponse[]): LLMClient {
     userMessage(content: string) {
       return { role: "user", content };
     },
-    toolResultMessages(calls: ToolCall[], results: string[]) {
+    toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
       return calls.map((call, i) => ({
         role: "tool_result",
         tool_call_id: call.id,
-        content: results[i],
+        content: results[i].text,
       }));
     },
     _chatCalls: chatCalls,
@@ -249,7 +249,7 @@ describe("runAgent", () => {
     const failingAdapter = makeMockAdapter();
     failingAdapter.executeTool = async (name: string) => {
       if (name === "click") throw new Error("Element not found: .missing");
-      return `result of ${name}`;
+      return { text: `result of ${name}` };
     };
 
     const client = makeMockClient([

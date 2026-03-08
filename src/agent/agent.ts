@@ -1,4 +1,4 @@
-import type { LLMClient, ToolDefinition } from "../models/provider";
+import type { LLMClient, ToolDefinition, ToolResult } from "../models/provider";
 import type { Adapter } from "../adapters/adapter";
 import type { EvidenceLogger } from "../evidence/logger";
 import type { StoryCard } from "../format/story-card";
@@ -101,14 +101,14 @@ export async function runAgent(
     if (response.toolCalls.length > 0) {
       messages.push(response.rawAssistantMessage);
 
-      const results: string[] = [];
+      const results: ToolResult[] = [];
       for (const tc of response.toolCalls) {
         try {
           const result = await adapter.executeTool(tc.name, tc.arguments, logger);
           results.push(result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          results.push(`Error: ${message}`);
+          results.push({ text: `Error: ${message}` });
         }
       }
 

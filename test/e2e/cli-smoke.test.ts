@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { runAgent } from "../../src/agent/agent";
 import { CLIAdapter } from "../../src/adapters/cli/adapter";
 import { EvidenceLogger } from "../../src/evidence/logger";
-import type { LLMClient, ToolCall, AgentResponse } from "../../src/models/provider";
+import type { LLMClient, ToolCall, ToolResult, AgentResponse } from "../../src/models/provider";
 import type { StoryCard } from "../../src/format/story-card";
 import { join } from "path";
 import { mkdtempSync } from "fs";
@@ -34,11 +34,11 @@ function makeScriptedClient(steps: AgentResponse[]): LLMClient {
     userMessage(content: string) {
       return { role: "user", content };
     },
-    toolResultMessages(calls: ToolCall[], results: string[]) {
+    toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
       return calls.map((call, i) => ({
         role: "tool_result",
         tool_call_id: call.id,
-        content: results[i],
+        content: results[i].text,
       }));
     },
   };

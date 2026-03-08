@@ -12,6 +12,14 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
 }
 
+export interface ToolResult {
+  text: string;
+  image?: {
+    data: string;       // base64-encoded
+    mediaType: string;  // e.g. "image/png"
+  };
+}
+
 export interface AgentResponse {
   text: string;
   toolCalls: ToolCall[];
@@ -28,5 +36,5 @@ export interface LLMClient {
 
   userMessage(content: string): unknown;
 
-  toolResultMessages(calls: ToolCall[], results: string[]): unknown[];
+  toolResultMessages(calls: ToolCall[], results: ToolResult[]): unknown[];
 }

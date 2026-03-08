@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import type { ToolCall, AgentResponse, LLMClient } from "../../src/models/provider";
+import type { ToolCall, ToolResult, AgentResponse, LLMClient } from "../../src/models/provider";
 
 describe("provider types", () => {
   test("ToolCall has id field", () => {
@@ -38,8 +38,8 @@ describe("provider types", () => {
       userMessage(content: string) {
         return { role: "user", content };
       },
-      toolResultMessages(calls: ToolCall[], results: string[]) {
-        return calls.map((c, i) => ({ id: c.id, result: results[i] }));
+      toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
+        return calls.map((c, i) => ({ id: c.id, result: results[i].text }));
       },
     };
 
@@ -47,7 +47,7 @@ describe("provider types", () => {
     expect(
       client.toolResultMessages(
         [{ id: "1", name: "test", arguments: {} }],
-        ["ok"]
+        [{ text: "ok" }]
       )
     ).toEqual([{ id: "1", result: "ok" }]);
   });

@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../models/provider";
+import type { ToolDefinition, ToolResult } from "../models/provider";
 import type { EvidenceLogger } from "../evidence/logger";
 
 export interface Adapter {
@@ -9,5 +9,5 @@ export interface Adapter {
     name: string,
     args: Record<string, unknown>,
     logger: EvidenceLogger
-  ): Promise<string>;
+  ): Promise<ToolResult>;
 }

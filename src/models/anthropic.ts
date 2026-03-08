@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { LLMClient, ToolDefinition, AgentResponse, ToolCall } from "./provider";
+import type { LLMClient, ToolDefinition, AgentResponse, ToolCall, ToolResult } from "./provider";
 
 export function createAnthropicClient(model: string): LLMClient {
   const client = new Anthropic();
@@ -21,15 +21,35 @@ export function createAnthropicClient(model: string): LLMClient {
       return { role: "user", content };
     },
 
-    toolResultMessages(calls: ToolCall[], results: string[]) {
+    toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
       return [
         {
           role: "user",
-          content: calls.map((call, i) => ({
-            type: "tool_result",
-            tool_use_id: call.id,
-            content: results[i],
-          })),
+          content: calls.map((call, i) => {
+            const result = results[i];
+            if (result.image) {
+              return {
+                type: "tool_result",
+                tool_use_id: call.id,
+                content: [
+                  {
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: result.image.mediaType,
+                      data: result.image.data,
+                    },
+                  },
+                  { type: "text", text: result.text },
+                ],
+              };
+            }
+            return {
+              type: "tool_result",
+              tool_use_id: call.id,
+              content: result.text,
+            };
+          }),
         },
       ];
     },

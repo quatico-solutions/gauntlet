@@ -1,5 +1,5 @@
 import type { Adapter } from "../adapter";
-import type { ToolDefinition } from "../../models/provider";
+import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
 
 
@@ -110,20 +110,20 @@ export class CLIAdapter implements Adapter {
     name: string,
     args: Record<string, unknown>,
     logger: EvidenceLogger
-  ): Promise<string> {
+  ): Promise<ToolResult> {
     logger.logAction(name, args);
 
     switch (name) {
       case "type": {
         await this.type(args.text as string);
-        return "typed";
+        return { text: "typed" };
       }
       case "press": {
         await this.press(args.key as string);
-        return "pressed";
+        return { text: "pressed" };
       }
       case "read_output": {
-        return this.readOutput();
+        return { text: this.readOutput() };
       }
       default:
         throw new Error(`Unknown tool: ${name}`);

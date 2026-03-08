@@ -16,7 +16,7 @@ describe.skipIf(skip)("OpenAIClient", () => {
       { id: "call_abc", name: "screenshot", arguments: {} },
       { id: "call_def", name: "click", arguments: { x: 10, y: 20 } },
     ];
-    const results = ["base64data", "clicked"];
+    const results = [{ text: "base64data" }, { text: "clicked" }];
 
     const messages = client.toolResultMessages(calls, results);
 

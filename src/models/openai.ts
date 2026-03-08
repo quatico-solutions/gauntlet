@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { LLMClient, ToolDefinition, AgentResponse, ToolCall } from "./provider";
+import type { LLMClient, ToolDefinition, AgentResponse, ToolCall, ToolResult } from "./provider";
 
 export function createOpenAIClient(model: string): LLMClient {
   const client = new OpenAI();
@@ -22,11 +22,11 @@ export function createOpenAIClient(model: string): LLMClient {
       return { role: "user", content };
     },
 
-    toolResultMessages(calls: ToolCall[], results: string[]) {
+    toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
       return calls.map((call, i) => ({
         role: "tool",
         tool_call_id: call.id,
-        content: results[i],
+        content: results[i].text,
       }));
     },
   };

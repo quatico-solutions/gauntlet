@@ -16,7 +16,7 @@ describe.skipIf(skip)("AnthropicClient", () => {
       { id: "toolu_abc", name: "screenshot", arguments: {} },
       { id: "toolu_def", name: "click", arguments: { x: 10, y: 20 } },
     ];
-    const results = ["base64data", "clicked"];
+    const results = [{ text: "base64data" }, { text: "clicked" }];
 
     const messages = client.toolResultMessages(calls, results);
 
@@ -26,6 +26,37 @@ describe.skipIf(skip)("AnthropicClient", () => {
       content: [
         { type: "tool_result", tool_use_id: "toolu_abc", content: "base64data" },
         { type: "tool_result", tool_use_id: "toolu_def", content: "clicked" },
+      ],
+    });
+  });
+
+  test("toolResultMessages embeds image content block when image is present", () => {
+    const calls = [
+      { id: "toolu_img", name: "screenshot", arguments: {} },
+    ];
+    const results = [{
+      text: "Screenshot saved to screenshots/001.png",
+      image: { data: "aGVsbG8=", mediaType: "image/png" },
+    }];
+
+    const messages = client.toolResultMessages(calls, results);
+
+    expect(messages).toHaveLength(1);
+    const content = (messages[0] as any).content;
+    expect(content).toHaveLength(1);
+    expect(content[0]).toEqual({
+      type: "tool_result",
+      tool_use_id: "toolu_img",
+      content: [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "aGVsbG8=",
+          },
+        },
+        { type: "text", text: "Screenshot saved to screenshots/001.png" },
       ],
     });
   });
