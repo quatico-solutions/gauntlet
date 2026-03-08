@@ -28,14 +28,40 @@ export function createOpenAIClient(model: string): LLMClient {
       return { role: "user", content };
     },
 
-    toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
-      return calls.map((call, i) => ({
-        role: "tool",
-        tool_call_id: call.id,
-        content: results[i].text,
-      }));
-    },
+    toolResultMessages: openaiToolResultMessages,
   };
+}
+
+export function openaiToolResultMessages(calls: ToolCall[], results: ToolResult[]): unknown[] {
+  const messages: unknown[] = calls.map((call, i) => ({
+    role: "tool",
+    tool_call_id: call.id,
+    content: results[i].text,
+  }));
+
+  const imageParts: unknown[] = [];
+  for (const result of results) {
+    if (result.image) {
+      imageParts.push({
+        type: "image_url",
+        image_url: {
+          url: `data:${result.image.mediaType};base64,${result.image.data}`,
+        },
+      });
+    }
+  }
+
+  if (imageParts.length > 0) {
+    messages.push({
+      role: "user",
+      content: [
+        { type: "text", text: "Screenshots from the tool calls above:" },
+        ...imageParts,
+      ],
+    });
+  }
+
+  return messages;
 }
 
 function convertTool(
