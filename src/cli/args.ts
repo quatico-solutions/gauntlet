@@ -6,7 +6,7 @@ export interface RunArgs {
   scenarioPath: string;
   target: string;
   outDir: string;
-  adapter: "web" | "cli";
+  adapter: "web" | "cli" | "tui";
   models: ModelConfig;
   chrome?: string;
 }
@@ -71,7 +71,7 @@ function parseRunArgs(args: string[]): RunArgs {
     scenarioPath: positional,
     target,
     outDir: flags.out ?? "./evidence",
-    adapter: (flags.adapter as "web" | "cli") ?? "web",
+    adapter: (flags.adapter as "web" | "cli" | "tui") ?? "web",
     models: parseModelFlags(flags.model ?? []),
     chrome: flags.chrome,
   };

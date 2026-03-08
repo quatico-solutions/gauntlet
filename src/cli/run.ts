@@ -11,7 +11,7 @@ export async function run(
   scenarioPath: string,
   target: string,
   outDir: string,
-  adapterType: "web" | "cli",
+  adapterType: "web" | "cli" | "tui",
   models: ModelConfig,
   chromeEndpoint?: string
 ): Promise<void> {
@@ -26,6 +26,12 @@ export async function run(
       adapter = new CLIAdapter();
       await adapter.start(target);
       break;
+    case "tui": {
+      const { TUIAdapter } = await import("../adapters/tui/adapter");
+      adapter = new TUIAdapter();
+      await adapter.start(target);
+      break;
+    }
     case "web": {
       const { WebAdapter } = await import("../adapters/web/adapter");
       adapter = new WebAdapter({ chrome: chromeEndpoint });

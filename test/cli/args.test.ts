@@ -15,9 +15,14 @@ describe("parseArgs", () => {
     expect(args.adapter).toBe("web");
   });
 
-  test("parses adapter flag", () => {
+  test("parses cli adapter flag", () => {
     const args = parseArgs(["bun", "index.ts", "run", "story.md", "--target", "cmd", "--adapter", "cli"]);
     expect(args.adapter).toBe("cli");
+  });
+
+  test("parses tui adapter flag", () => {
+    const args = parseArgs(["bun", "index.ts", "run", "story.md", "--target", "nano test.txt", "--adapter", "tui"]);
+    expect(args.adapter).toBe("tui");
   });
 
   test("parses model flags", () => {
