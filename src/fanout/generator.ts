@@ -1,6 +1,7 @@
 import type { StoryCard } from "../format/story-card";
 import { parseStoryCard } from "../format/story-card";
 import type { LLMClient } from "../models/provider";
+import type { VetResult } from "../types";
 
 export function buildFanoutPrompt(card: StoryCard): string {
   return `You are a QA test designer. Given a story card, generate variation scenarios that test edge cases, error paths, alternate personas, and boundary conditions.
@@ -45,7 +46,11 @@ export async function generateFanout(
     "You are a QA test designer. Output story cards in markdown format."
   );
 
-  return response.text
+  return splitAndValidateCards(response.text);
+}
+
+function splitAndValidateCards(text: string): string[] {
+  return text
     .split("---CARD---")
     .map((s) => s.trim())
     .filter(Boolean)
@@ -57,4 +62,86 @@ export async function generateFanout(
         return false;
       }
     });
+}
+
+// --- Observation promotion ---
+
+export function buildObservationPrompt(result: VetResult): string {
+  const observationList = result.observations
+    .map((o) => `- [${o.kind}] ${o.description}`)
+    .join("\n");
+
+  return `You are a QA analyst. Given observations from a test run, generate a focused story card for each observation that needs follow-up.
+
+Each card MUST include:
+- A unique id (use the scenario name with a suffix, e.g., ${result.scenario}-obs-1)
+- parent: ${result.scenario}
+- tags: observation
+- A clear title describing the issue or improvement
+- A description explaining what was observed
+- Acceptance criteria (at least one)
+
+## Scenario: ${result.scenario}
+
+## Observations
+
+${observationList}
+
+Generate one story card per observation. Output each as a complete story card in markdown format with YAML frontmatter, separated by "---CARD---" markers.`;
+}
+
+export async function generateFromObservations(
+  result: VetResult,
+  client: LLMClient
+): Promise<string[]> {
+  if (result.observations.length === 0) return [];
+
+  const prompt = buildObservationPrompt(result);
+  const response = await client.chat(
+    [client.userMessage(prompt)],
+    [],
+    "You are a QA analyst. Output story cards in markdown format."
+  );
+
+  return splitAndValidateCards(response.text);
+}
+
+// --- Failure analysis ---
+
+export function buildFailurePrompt(result: VetResult): string | null {
+  if (result.status !== "fail") return null;
+
+  return `You are a QA analyst. A test scenario has failed. Generate 2-3 follow-up story cards that investigate the root cause and verify the fix.
+
+Each card MUST include:
+- A unique id (use the scenario name with a suffix, e.g., ${result.scenario}-fail-1)
+- parent: ${result.scenario}
+- tags: failure-analysis
+- A clear title describing the investigation
+- A description explaining what to investigate
+- Acceptance criteria (at least one)
+
+## Failed Scenario: ${result.scenario}
+
+**Summary:** ${result.summary}
+
+**Reasoning:** ${result.reasoning}
+
+Generate 2-3 follow-up cards. Output each as a complete story card in markdown format with YAML frontmatter, separated by "---CARD---" markers.`;
+}
+
+export async function generateFromFailure(
+  result: VetResult,
+  client: LLMClient
+): Promise<string[]> {
+  const prompt = buildFailurePrompt(result);
+  if (prompt === null) return [];
+
+  const response = await client.chat(
+    [client.userMessage(prompt)],
+    [],
+    "You are a QA analyst. Output story cards in markdown format."
+  );
+
+  return splitAndValidateCards(response.text);
 }
