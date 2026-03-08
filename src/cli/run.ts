@@ -37,8 +37,12 @@ export async function run(
       adapter = new CLIAdapter();
       await adapter.start(target);
       break;
-    case "web":
-      throw new Error("Web adapter not yet implemented. Use --adapter cli");
+    case "web": {
+      const { WebAdapter } = await import("../adapters/web/adapter");
+      adapter = new WebAdapter();
+      await adapter.start(target);
+      break;
+    }
   }
 
   try {
