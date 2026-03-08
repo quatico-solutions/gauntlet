@@ -1,0 +1,64 @@
+import { describe, test, expect, afterEach, beforeAll } from "bun:test";
+import { TUIAdapter } from "../../../src/adapters/tui/adapter";
+
+const tmuxAvailable = (() => {
+  try {
+    const result = Bun.spawnSync(["tmux", "-V"]);
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(!tmuxAvailable)("TUIAdapter", () => {
+  let adapter: TUIAdapter | null = null;
+
+  afterEach(async () => {
+    if (adapter) {
+      try {
+        await adapter.close();
+      } catch {
+        // session may already be dead
+      }
+    }
+    adapter = null;
+  });
+
+  test("starts process in tmux and reads output", async () => {
+    adapter = new TUIAdapter();
+    await adapter.start("sh -c \"echo 'hello from tmux'; sleep 10\"");
+    await new Promise((r) => setTimeout(r, 500));
+    const screen = await adapter.readScreen();
+    expect(screen).toContain("hello from tmux");
+  });
+
+  test("sends keystrokes via tmux", async () => {
+    adapter = new TUIAdapter();
+    await adapter.start("bc -q");
+    await new Promise((r) => setTimeout(r, 500));
+    await adapter.type("2+3");
+    await adapter.press("Enter");
+    await new Promise((r) => setTimeout(r, 500));
+    const screen = await adapter.readScreen();
+    expect(screen).toContain("5");
+  });
+
+  test("close kills the tmux session", async () => {
+    adapter = new TUIAdapter();
+    await adapter.start("cat");
+    const sessionName = adapter.sessionName;
+    await adapter.close();
+    const result = Bun.spawnSync(["tmux", "has-session", "-t", sessionName]);
+    expect(result.exitCode).not.toBe(0);
+    adapter = null; // already closed
+  });
+
+  test("exposes tool definitions for the agent", () => {
+    adapter = new TUIAdapter();
+    const tools = adapter.toolDefinitions();
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("type");
+    expect(names).toContain("press");
+    expect(names).toContain("read_screen");
+  });
+});
