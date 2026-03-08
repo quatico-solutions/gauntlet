@@ -38,15 +38,7 @@ export function fanoutRoutes(dataDir: string, clientFactory?: () => LLMClient) {
     if ("error" in clientOrError) return c.json({ error: clientOrError.error }, 400);
 
     const cardTexts = await generateFanout(entry.card, clientOrError);
-
-    mkdirSync(storiesDir, { recursive: true });
-
-    const generated = cardTexts.map((text) => {
-      const card = parseStoryCard(text);
-      const filename = `${card.id}.md`;
-      writeFileSync(join(storiesDir, filename), text);
-      return { id: card.id, title: card.title, filename };
-    });
+    const generated = writeCards(storiesDir, cardTexts, entry.card.id);
 
     return c.json({ parent: entry.card.id, generated });
   });
@@ -57,7 +49,7 @@ export function fanoutRoutes(dataDir: string, clientFactory?: () => LLMClient) {
     if (!existsSync(resultPath)) return c.json({ error: "not found" }, 404);
 
     const result: VetResult = JSON.parse(readFileSync(resultPath, "utf-8"));
-    if (result.observations.length === 0) return c.json({ parent: id, generated: 0 });
+    if (result.observations.length === 0) return c.json({ parent: id, generated: [] });
 
     const clientOrError = resolveClient(clientFactory);
     if ("error" in clientOrError) return c.json({ error: clientOrError.error }, 400);
