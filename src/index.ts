@@ -32,7 +32,10 @@ async function main() {
     }
     case "serve": {
       const { createApp } = await import("./api/server");
-      const app = createApp(args.dataDir ?? ".");
+      const { join } = await import("path");
+      const dataDir = args.dataDir ?? ".";
+      const uiDir = join(import.meta.dir, "..", "ui", "dist");
+      const app = createApp(dataDir, uiDir);
       const port = args.port;
       console.error(`vet server listening on port ${port}`);
       Bun.serve({

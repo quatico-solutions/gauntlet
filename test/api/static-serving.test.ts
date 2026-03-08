@@ -1,0 +1,62 @@
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { createApp } from "../../src/api/server";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+
+describe("Static UI serving", () => {
+  let dataDir: string;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "vet-static-"));
+    mkdirSync(join(dataDir, "stories"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test("serves index.html for unknown routes when UI is built", async () => {
+    const uiDir = join(dataDir, "ui-dist");
+    mkdirSync(uiDir, { recursive: true });
+    writeFileSync(join(uiDir, "index.html"), "<html><body>vet ui</body></html>");
+
+    app = createApp(dataDir, uiDir);
+    const res = await app.request("/cards");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("vet ui");
+  });
+
+  test("serves static assets from UI dist", async () => {
+    const uiDir = join(dataDir, "ui-dist");
+    const assetsDir = join(uiDir, "assets");
+    mkdirSync(assetsDir, { recursive: true });
+    writeFileSync(join(assetsDir, "main.js"), "console.log('hello')");
+
+    app = createApp(dataDir, uiDir);
+    const res = await app.request("/assets/main.js");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe("console.log('hello')");
+  });
+
+  test("API routes still work with UI serving enabled", async () => {
+    const uiDir = join(dataDir, "ui-dist");
+    mkdirSync(uiDir, { recursive: true });
+    writeFileSync(join(uiDir, "index.html"), "<html></html>");
+
+    app = createApp(dataDir, uiDir);
+    const res = await app.request("/api/scenarios");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+  });
+
+  test("works without UI dist directory", async () => {
+    app = createApp(dataDir);
+    const res = await app.request("/cards");
+    expect(res.status).toBe(404);
+  });
+});
