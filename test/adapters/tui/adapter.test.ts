@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach, beforeAll } from "bun:test";
+import { describe, test, expect, afterEach } from "bun:test";
 import { TUIAdapter } from "../../../src/adapters/tui/adapter";
 
 const tmuxAvailable = (() => {
