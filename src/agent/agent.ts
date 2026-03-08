@@ -6,6 +6,11 @@ import type { VetResult, VetStatus, Observation } from "../types";
 import { buildSystemPrompt } from "./prompts";
 
 const MAX_TURNS = 50;
+const DEFAULT_TOOL_TIMEOUT_MS = 30000;
+
+export interface AgentOptions {
+  toolTimeoutMs?: number;
+}
 
 const REPORT_TOOL: ToolDefinition = {
   name: "report_result",
@@ -59,7 +64,8 @@ export async function runAgent(
   adapter: Adapter,
   client: LLMClient,
   logger: EvidenceLogger,
-  target?: string
+  target?: string,
+  options?: AgentOptions
 ): Promise<VetResult> {
   const startTime = Date.now();
   const systemPrompt = buildSystemPrompt(card);
@@ -114,10 +120,16 @@ export async function runAgent(
     if (response.toolCalls.length > 0) {
       messages.push(response.rawAssistantMessage);
 
+      const toolTimeout = options?.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
       const results: ToolResult[] = [];
       for (const tc of response.toolCalls) {
         try {
-          const result = await adapter.executeTool(tc.name, tc.arguments, logger);
+          const result = await Promise.race([
+            adapter.executeTool(tc.name, tc.arguments, logger),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`Tool "${tc.name}" timed out after ${toolTimeout}ms`)), toolTimeout)
+            ),
+          ]);
           results.push(result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

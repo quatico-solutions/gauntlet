@@ -301,6 +301,62 @@ describe("runAgent", () => {
     });
   });
 
+  test("times out slow tool calls", async () => {
+    let callCount = 0;
+
+    const slowAdapter = {
+      async start() {},
+      async close() {},
+      toolDefinitions() {
+        return [{
+          name: "slow_tool",
+          description: "A slow tool",
+          parameters: { type: "object", properties: {} },
+        }];
+      },
+      async executeTool(): Promise<ToolResult> {
+        await new Promise((resolve) => setTimeout(resolve, 60000));
+        return { text: "done" };
+      },
+    };
+
+    const client: LLMClient = {
+      async chat() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            text: "calling slow tool",
+            toolCalls: [{ id: "tc_1", name: "slow_tool", arguments: {} }],
+            stopReason: "tool_use" as const,
+            rawAssistantMessage: { role: "assistant" },
+            usage: { inputTokens: 0, outputTokens: 0 },
+          };
+        }
+        return {
+          text: "done",
+          toolCalls: [{
+            id: "tc_2", name: "report_result",
+            arguments: { status: "fail", summary: "timed out", reasoning: "tool timed out" },
+          }],
+          stopReason: "tool_use" as const,
+          rawAssistantMessage: { role: "assistant" },
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      },
+      userMessage(content: string) { return { role: "user", content }; },
+      toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
+        return calls.map((c, i) => ({ role: "tool", id: c.id, content: results[i].text }));
+      },
+    };
+
+    const result = await runAgent(
+      card, slowAdapter as any, client, makeMockLogger(), undefined,
+      { toolTimeoutMs: 500 }
+    );
+
+    expect(result.status).toBe("fail");
+  }, 10000);
+
   test("handles tool execution errors gracefully", async () => {
     const failingAdapter = makeMockAdapter();
     failingAdapter.executeTool = async (name: string) => {
