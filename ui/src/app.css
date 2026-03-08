@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #1b2631;
+  --color-ink-light: #374a5e;
+  --color-slate: #6b7c8f;
+  --color-teal: #1a6b5a;
+  --color-teal-dark: #135c4c;
+  --color-teal-light: #d4ece8;
+  --color-teal-wash: #eaf5f2;
+  --color-surface: #f6f8fa;
+  --color-panel: #eef1f5;
+  --color-edge: #e1e4e8;
+  --color-edge-light: #eef1f5;
+
+  --font-display: "Fraunces", serif;
+  --font-body: "DM Sans", sans-serif;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+
+.btn-primary {
+  background-color: var(--color-teal);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+.btn-primary:hover {
+  background-color: color-mix(in srgb, var(--color-teal) 90%, black);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+}
+
+.btn-secondary {
+  background-color: white;
+  color: var(--color-ink);
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid var(--color-edge);
+  transition: border-color 0.15s;
+}
+.btn-secondary:hover {
+  border-color: var(--color-teal);
+}
+
+.btn-danger {
+  background-color: white;
+  color: #b91c1c;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid #fecaca;
+  transition: border-color 0.15s;
+}
+.btn-danger:hover {
+  border-color: #b91c1c;
+}
+
+.input-field {
+  width: 100%;
+  border: 1px solid var(--color-edge);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+}
+.input-field:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-teal) 30%, transparent);
+  border-color: var(--color-teal);
+}
+
+.card {
+  background: white;
+  border: 1px solid var(--color-edge);
+  border-radius: 0.5rem;
+  transition: border-color 0.15s;
+}
+.card:hover {
+  border-color: color-mix(in srgb, var(--color-teal) 40%, transparent);
+}
+
+.heading-display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  color: var(--color-ink);
+}
+
+.section-label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-slate);
+}
+
+/* Scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-edge) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-edge);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-slate);
+}
+
+/* Tab bar */
+.top-tab-bar {
+  display: flex;
+  border-bottom: 2px solid var(--color-edge);
+  background: white;
+}
+.top-tab-bar button {
+  flex: 1;
+  padding: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-slate);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.top-tab-bar button:hover {
+  color: var(--color-ink);
+}
+.top-tab-bar button.active {
+  color: var(--color-teal);
+  border-bottom-color: var(--color-teal);
+}
