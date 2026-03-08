@@ -38,6 +38,18 @@ describe("parseStoryCard", () => {
     expect(card.stakeholder).toBe("power user");
   });
 
+  test("parses tags from smoke scenario fixture", () => {
+    const card = parseStoryCard(fixture("smoke-scenario.md"));
+    expect(card.id).toBe("smoke-test");
+    expect(card.tags).toEqual(["smoke"]);
+  });
+
+  test("parses tags from cli smoke scenario fixture", () => {
+    const card = parseStoryCard(fixture("cli-smoke-scenario.md"));
+    expect(card.id).toBe("cli-smoke");
+    expect(card.tags).toEqual(["smoke"]);
+  });
+
   test("throws on missing id", () => {
     expect(() =>
       parseStoryCard("---\ntitle: No ID\n---\nSome body")

@@ -2,8 +2,7 @@
 id: cli-smoke
 title: Echo app responds to input
 status: ready
-tags:
-  - smoke
+tags: smoke
 ---
 
 # Echo app responds to input

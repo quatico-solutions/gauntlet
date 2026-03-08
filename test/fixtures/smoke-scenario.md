@@ -2,8 +2,7 @@
 id: smoke-test
 title: Page loads and displays content
 status: ready
-tags:
-  - smoke
+tags: smoke
 ---
 
 # Page loads and displays content
