@@ -131,3 +131,195 @@ describe("Fanout API", () => {
     expect(contentA).toContain("Edge case empty input");
   });
 });
+
+// --- Observation promotion tests ---
+
+const OBS_CARD_A = `---
+id: test-001-obs-1
+title: Fix submit button
+status: draft
+tags: observation
+parent: test-001
+---
+
+Submit button is unresponsive.
+
+## Acceptance Criteria
+- Button responds to clicks
+`;
+
+const OBS_CARD_B = `---
+id: test-001-obs-2
+title: Improve contrast
+status: draft
+tags: observation
+parent: test-001
+---
+
+Low contrast text.
+
+## Acceptance Criteria
+- Text meets WCAG AA
+`;
+
+const FAIL_CARD_A = `---
+id: test-002-fail-1
+title: Investigate login crash
+status: draft
+tags: failure-analysis
+parent: test-002
+---
+
+Login crashes on submit.
+
+## Acceptance Criteria
+- Login completes without error
+`;
+
+const FAIL_CARD_B = `---
+id: test-002-fail-2
+title: Verify fix under load
+status: draft
+tags: failure-analysis
+parent: test-002
+---
+
+Re-test after fix.
+
+## Acceptance Criteria
+- Login works under concurrent load
+`;
+
+describe("Fanout observations API", () => {
+  let dataDir: string;
+  let storiesDir: string;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "vet-fanout-obs-"));
+    storiesDir = join(dataDir, "stories");
+    mkdirSync(storiesDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test("POST /fanout/:id/observations promotes observations to story cards", async () => {
+    const resultsDir = join(dataDir, "results", "test-001");
+    mkdirSync(resultsDir, { recursive: true });
+    writeFileSync(
+      join(resultsDir, "result.json"),
+      JSON.stringify({
+        scenario: "test-001",
+        status: "pass",
+        summary: "Passed with observations",
+        reasoning: "All good but noted issues",
+        observations: [
+          { kind: "bug", description: "Submit button unresponsive" },
+          { kind: "a11y", description: "Low contrast text" },
+        ],
+        evidence: { screenshots: [], log: "run.jsonl" },
+        duration_ms: 1000,
+      })
+    );
+
+    const responseText = `${OBS_CARD_A}---CARD---${OBS_CARD_B}`;
+    const app = new Hono();
+    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient(responseText)));
+
+    const res = await app.request("/fanout/test-001/observations", { method: "POST" });
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.parent).toBe("test-001");
+    expect(body.generated).toHaveLength(2);
+    expect(body.generated[0].id).toBe("test-001-obs-1");
+    expect(body.generated[1].id).toBe("test-001-obs-2");
+
+    const files = readdirSync(storiesDir).sort();
+    expect(files).toContain("test-001-obs-a.md");
+    expect(files).toContain("test-001-obs-b.md");
+  });
+
+  test("POST /fanout/:id/observations returns 404 when no result exists", async () => {
+    const app = new Hono();
+    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient("")));
+
+    const res = await app.request("/fanout/nonexistent/observations", { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("Fanout failure API", () => {
+  let dataDir: string;
+  let storiesDir: string;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "vet-fanout-fail-"));
+    storiesDir = join(dataDir, "stories");
+    mkdirSync(storiesDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test("POST /fanout/:id/failure generates follow-up stories from a failed run", async () => {
+    const resultsDir = join(dataDir, "results", "test-002");
+    mkdirSync(resultsDir, { recursive: true });
+    writeFileSync(
+      join(resultsDir, "result.json"),
+      JSON.stringify({
+        scenario: "test-002",
+        status: "fail",
+        summary: "Login crashed",
+        reasoning: "Button handler threw exception",
+        observations: [],
+        evidence: { screenshots: [], log: "run.jsonl" },
+        duration_ms: 2000,
+      })
+    );
+
+    const responseText = `${FAIL_CARD_A}---CARD---${FAIL_CARD_B}`;
+    const app = new Hono();
+    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient(responseText)));
+
+    const res = await app.request("/fanout/test-002/failure", { method: "POST" });
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.parent).toBe("test-002");
+    expect(body.generated).toHaveLength(2);
+    expect(body.generated[0].id).toBe("test-002-fail-1");
+    expect(body.generated[1].id).toBe("test-002-fail-2");
+
+    const files = readdirSync(storiesDir).sort();
+    expect(files).toContain("test-002-fail-a.md");
+    expect(files).toContain("test-002-fail-b.md");
+  });
+
+  test("POST /fanout/:id/failure returns 400 when result is not a failure", async () => {
+    const resultsDir = join(dataDir, "results", "test-003");
+    mkdirSync(resultsDir, { recursive: true });
+    writeFileSync(
+      join(resultsDir, "result.json"),
+      JSON.stringify({
+        scenario: "test-003",
+        status: "pass",
+        summary: "All good",
+        reasoning: "Everything works",
+        observations: [],
+        evidence: { screenshots: [], log: "run.jsonl" },
+        duration_ms: 500,
+      })
+    );
+
+    const app = new Hono();
+    app.route("/fanout", fanoutRoutes(dataDir, () => makeFakeClient("")));
+
+    const res = await app.request("/fanout/test-003/failure", { method: "POST" });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("not a failure");
+  });
+});
