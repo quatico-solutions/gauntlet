@@ -25,7 +25,8 @@ export async function run(
   target: string,
   outDir: string,
   adapterType: "web" | "cli",
-  models: ModelConfig
+  models: ModelConfig,
+  chromeEndpoint?: string
 ): Promise<void> {
   const content = readFileSync(scenarioPath, "utf-8");
   const card = parseStoryCard(content);
@@ -40,7 +41,7 @@ export async function run(
       break;
     case "web": {
       const { WebAdapter } = await import("../adapters/web/adapter");
-      adapter = new WebAdapter();
+      adapter = new WebAdapter({ chrome: chromeEndpoint });
       await adapter.start(target);
       break;
     }

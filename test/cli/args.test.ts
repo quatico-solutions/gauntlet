@@ -34,6 +34,11 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["bun", "index.ts", "run"])).toThrow();
   });
 
+  test("parses chrome flag", () => {
+    const args = parseArgs(["bun", "index.ts", "run", "story.md", "--target", "url", "--chrome", "localhost:9222"]);
+    expect(args.chrome).toBe("localhost:9222");
+  });
+
   test("parses validate command", () => {
     const args = parseArgs(["bun", "index.ts", "validate", "story.md"]);
     expect(args.command).toBe("validate");

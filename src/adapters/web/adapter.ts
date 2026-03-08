@@ -8,14 +8,34 @@ import type { EvidenceLogger } from "../../evidence/logger";
 // The forked CDP library is CommonJS JS — use require for bun compatibility
 const chrome = require("./lib/chrome-ws-lib");
 
+export interface WebAdapterOptions {
+  chrome?: string; // host:port for remote Chrome (e.g. "localhost:9222")
+}
+
 export class WebAdapter implements Adapter {
+  private remote: boolean;
+
+  constructor(options?: WebAdapterOptions) {
+    this.remote = false;
+    if (options?.chrome) {
+      const [host, port] = options.chrome.split(":");
+      process.env.CHROME_WS_HOST = host;
+      process.env.CHROME_WS_PORT = port;
+      this.remote = true;
+    }
+  }
+
   async start(url: string): Promise<void> {
-    await chrome.startChrome(true); // headless
+    if (!this.remote) {
+      await chrome.startChrome(true); // headless
+    }
     await chrome.navigate(0, url);
   }
 
   async close(): Promise<void> {
-    await chrome.killChrome();
+    if (!this.remote) {
+      await chrome.killChrome();
+    }
   }
 
   toolDefinitions(): ToolDefinition[] {

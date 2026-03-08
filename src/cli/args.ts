@@ -8,6 +8,7 @@ export interface RunArgs {
   outDir: string;
   adapter: "web" | "cli";
   models: ModelConfig;
+  chrome?: string;
 }
 
 export interface ValidateArgs {
@@ -72,6 +73,7 @@ function parseRunArgs(args: string[]): RunArgs {
     outDir: flags.out ?? "./evidence",
     adapter: (flags.adapter as "web" | "cli") ?? "web",
     models: parseModelFlags(flags.model ?? []),
+    chrome: flags.chrome,
   };
 }
 
