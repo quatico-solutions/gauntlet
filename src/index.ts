@@ -14,14 +14,22 @@ async function main() {
     case "run":
       await run(args.scenarioPath, args.target, args.outDir, args.adapter, args.models);
       break;
-    case "validate":
-      console.error("validate: not yet implemented");
-      process.exit(1);
+    case "validate": {
+      const { validateScenario } = await import("./cli/validate");
+      const result = validateScenario(args.scenarioPath);
+      if (result.valid) {
+        console.log(JSON.stringify({ valid: true }));
+      } else {
+        console.log(JSON.stringify({ valid: false, errors: result.errors }));
+        process.exit(1);
+      }
       break;
-    case "fanout":
-      console.error("fanout: not yet implemented");
-      process.exit(1);
+    }
+    case "fanout": {
+      const { fanout } = await import("./cli/fanout");
+      await fanout(args.scenarioPath, args.outDir, args.models);
       break;
+    }
     case "serve":
       console.error("serve: not yet implemented");
       process.exit(1);
