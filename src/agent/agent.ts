@@ -74,8 +74,16 @@ export async function runAgent(
     client.userMessage(initialMessage),
   ];
 
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let turns = 0;
+
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const response = await client.chat(messages, tools, systemPrompt);
+
+    totalInputTokens += response.usage.inputTokens;
+    totalOutputTokens += response.usage.outputTokens;
+    turns++;
 
     // Check for report_result
     const report = response.toolCalls.find(
@@ -94,6 +102,11 @@ export async function runAgent(
           log: logger.logPath,
         },
         duration_ms: Date.now() - startTime,
+        usage: {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          turns,
+        },
       };
     }
 
@@ -135,5 +148,10 @@ export async function runAgent(
       log: logger.logPath,
     },
     duration_ms: Date.now() - startTime,
+    usage: {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      turns,
+    },
   };
 }

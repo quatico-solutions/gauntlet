@@ -74,5 +74,9 @@ function convertResponse(
       content: choice.message.content,
       tool_calls: choice.message.tool_calls,
     },
+    usage: {
+      inputTokens: response.usage?.prompt_tokens ?? 0,
+      outputTokens: response.usage?.completion_tokens ?? 0,
+    },
   };
 }

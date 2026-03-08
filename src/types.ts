@@ -25,6 +25,11 @@ export interface VetResult {
     log: string;
   };
   duration_ms: number;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    turns: number;
+  };
 }
 
 export interface ModelConfig {

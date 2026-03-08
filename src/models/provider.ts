@@ -20,11 +20,17 @@ export interface ToolResult {
   };
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface AgentResponse {
   text: string;
   toolCalls: ToolCall[];
   stopReason: "end_turn" | "tool_use" | "max_tokens";
   rawAssistantMessage: unknown;
+  usage: TokenUsage;
 }
 
 export interface LLMClient {

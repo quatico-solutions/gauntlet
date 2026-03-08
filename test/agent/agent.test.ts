@@ -85,6 +85,7 @@ describe("runAgent", () => {
             { type: "tool_use", id: "call_1", name: "screenshot", input: {} },
           ],
         },
+        usage: { inputTokens: 100, outputTokens: 50 },
       },
       // Turn 2: report result
       {
@@ -102,6 +103,7 @@ describe("runAgent", () => {
         ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: [] },
+        usage: { inputTokens: 200, outputTokens: 75 },
       },
     ]);
 
@@ -110,6 +112,11 @@ describe("runAgent", () => {
     expect(result.status).toBe("pass");
     expect(result.summary).toBe("All good");
     expect(result.scenario).toBe("test-001");
+    expect(result.usage).toEqual({
+      inputTokens: 300,
+      outputTokens: 125,
+      turns: 2,
+    });
   });
 
   test("passes tool results back to the client", async () => {
@@ -119,6 +126,7 @@ describe("runAgent", () => {
         toolCalls: [{ id: "call_1", name: "screenshot", arguments: {} }],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "raw_msg_1" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
       {
         text: "",
@@ -135,6 +143,7 @@ describe("runAgent", () => {
         ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "raw_msg_2" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
     ]);
 
@@ -169,6 +178,7 @@ describe("runAgent", () => {
         toolCalls: [{ id: "call_1", name: "screenshot", arguments: {} }],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "raw_turn_1" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
       // Turn 2: click something based on what was seen
       {
@@ -178,6 +188,7 @@ describe("runAgent", () => {
         ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "raw_turn_2" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
       // Turn 3: report result with observations
       {
@@ -199,6 +210,7 @@ describe("runAgent", () => {
         ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "raw_turn_3" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
     ]);
 
@@ -245,6 +257,50 @@ describe("runAgent", () => {
     });
   });
 
+  test("accumulates token usage across turns", async () => {
+    const client = makeMockClient([
+      {
+        text: "Taking screenshot",
+        toolCalls: [{ id: "call_1", name: "screenshot", arguments: {} }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "turn1" },
+        usage: { inputTokens: 100, outputTokens: 20 },
+      },
+      {
+        text: "Taking another screenshot",
+        toolCalls: [{ id: "call_2", name: "screenshot", arguments: {} }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "turn2" },
+        usage: { inputTokens: 250, outputTokens: 30 },
+      },
+      {
+        text: "Done",
+        toolCalls: [
+          {
+            id: "call_3",
+            name: "report_result",
+            arguments: {
+              status: "pass",
+              summary: "All good",
+              reasoning: "Checked twice",
+            },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "turn3" },
+        usage: { inputTokens: 400, outputTokens: 50 },
+      },
+    ]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+
+    expect(result.usage).toEqual({
+      inputTokens: 750,
+      outputTokens: 100,
+      turns: 3,
+    });
+  });
+
   test("handles tool execution errors gracefully", async () => {
     const failingAdapter = makeMockAdapter();
     failingAdapter.executeTool = async (name: string) => {
@@ -261,6 +317,7 @@ describe("runAgent", () => {
         ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "raw" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
       // Turn 2: agent sees the error, reports failure
       {
@@ -278,6 +335,7 @@ describe("runAgent", () => {
         ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "raw2" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
     ]);
 

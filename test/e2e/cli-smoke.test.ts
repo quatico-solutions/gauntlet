@@ -57,6 +57,7 @@ describe("CLI adapter e2e smoke test", () => {
         toolCalls: [{ id: "call_1", name: "read_output", arguments: {} }],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "read initial" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
       // Turn 2: type "hello world\n"
       {
@@ -66,6 +67,7 @@ describe("CLI adapter e2e smoke test", () => {
         ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "typing" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
       // Turn 3: read_output — should see "You said: hello world"
       {
@@ -73,6 +75,7 @@ describe("CLI adapter e2e smoke test", () => {
         toolCalls: [{ id: "call_3", name: "read_output", arguments: {} }],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "read response" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
       // Turn 4: report result
       {
@@ -91,6 +94,7 @@ describe("CLI adapter e2e smoke test", () => {
         ],
         stopReason: "tool_use",
         rawAssistantMessage: { role: "assistant", content: "reporting" },
+        usage: { inputTokens: 0, outputTokens: 0 },
       },
     ];
 

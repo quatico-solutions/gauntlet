@@ -74,6 +74,7 @@ describe("Web e2e smoke test", () => {
                 ],
                 stopReason: "tool_use" as const,
                 rawAssistantMessage: { role: "assistant", turn: 1 },
+                usage: { inputTokens: 0, outputTokens: 0 },
               };
             case 2:
               return {
@@ -87,6 +88,7 @@ describe("Web e2e smoke test", () => {
                 ],
                 stopReason: "tool_use" as const,
                 rawAssistantMessage: { role: "assistant", turn: 2 },
+                usage: { inputTokens: 0, outputTokens: 0 },
               };
             case 3:
               return {
@@ -100,6 +102,7 @@ describe("Web e2e smoke test", () => {
                 ],
                 stopReason: "tool_use" as const,
                 rawAssistantMessage: { role: "assistant", turn: 3 },
+                usage: { inputTokens: 0, outputTokens: 0 },
               };
             case 4:
               return {
@@ -113,6 +116,7 @@ describe("Web e2e smoke test", () => {
                 ],
                 stopReason: "tool_use" as const,
                 rawAssistantMessage: { role: "assistant", turn: 4 },
+                usage: { inputTokens: 0, outputTokens: 0 },
               };
             case 5:
               return {
@@ -131,6 +135,7 @@ describe("Web e2e smoke test", () => {
                 ],
                 stopReason: "tool_use" as const,
                 rawAssistantMessage: { role: "assistant", turn: 5 },
+                usage: { inputTokens: 0, outputTokens: 0 },
               };
             default:
               throw new Error(`Unexpected call ${callCount}`);

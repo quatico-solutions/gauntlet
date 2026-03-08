@@ -86,5 +86,9 @@ function convertResponse(response: Anthropic.Message): AgentResponse {
     toolCalls,
     stopReason,
     rawAssistantMessage: { role: "assistant", content: response.content },
+    usage: {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    },
   };
 }

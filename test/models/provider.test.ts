@@ -17,6 +17,7 @@ describe("provider types", () => {
       toolCalls: [],
       stopReason: "end_turn",
       rawAssistantMessage: { role: "assistant", content: "hello" },
+      usage: { inputTokens: 0, outputTokens: 0 },
     };
     expect(response.rawAssistantMessage).toEqual({
       role: "assistant",
@@ -33,6 +34,7 @@ describe("provider types", () => {
           toolCalls: [],
           stopReason: "end_turn",
           rawAssistantMessage: null,
+          usage: { inputTokens: 0, outputTokens: 0 },
         };
       },
       userMessage(content: string) {
