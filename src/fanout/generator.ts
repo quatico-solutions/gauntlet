@@ -39,7 +39,7 @@ export async function generateFanout(
 ): Promise<string[]> {
   const prompt = buildFanoutPrompt(card);
   const response = await client.chat(
-    [{ role: "user", content: prompt }],
+    [client.userMessage(prompt)],
     [],
     "You are a QA test designer. Output story cards in markdown format."
   );
