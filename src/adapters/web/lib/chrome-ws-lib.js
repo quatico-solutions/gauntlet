@@ -16,9 +16,6 @@
  * - JRV-129: Multi-element selector warnings
  */
 
-const http = require('http');
-const crypto = require('crypto');
-
 const {
   CHROME_DEBUG_HOST,
   CHROME_DEBUG_PORT,
@@ -33,13 +30,12 @@ let activePort = CHROME_DEBUG_PORT;
 const PORT_RANGE_START = 9222;
 const PORT_RANGE_END = 12111;
 
-// Minimal WebSocket client implementation (dependency-free)
+// WebSocket client using the standard WebSocket API (works in both Node and Bun)
 class WebSocketClient {
   constructor(url) {
-    this.url = new URL(url);
+    this.url = url;
     this.callbacks = {};
-    this.socket = null;
-    this.buffer = Buffer.alloc(0);
+    this.ws = null;
     this.connected = false;
   }
 
@@ -48,132 +44,51 @@ class WebSocketClient {
   }
 
   isConnected() {
-    return this.connected && this.socket !== null;
+    return this.connected && this.ws !== null;
   }
 
   connect() {
     return new Promise((resolve, reject) => {
-      const key = crypto.randomBytes(16).toString('base64');
+      this.ws = new WebSocket(this.url);
 
-      const options = {
-        hostname: this.url.hostname,
-        port: this.url.port || 80,
-        path: this.url.pathname + this.url.search,
-        headers: {
-          'Upgrade': 'websocket',
-          'Connection': 'Upgrade',
-          'Sec-WebSocket-Key': key,
-          'Sec-WebSocket-Version': '13'
-        }
-      };
-
-      const req = http.request(options);
-
-      req.on('upgrade', (res, socket) => {
-        this.socket = socket;
+      this.ws.addEventListener('open', () => {
         this.connected = true;
-
-        socket.on('data', (data) => {
-          this.buffer = Buffer.concat([this.buffer, data]);
-          this.processFrames();
-        });
-
-        socket.on('error', (err) => {
-          this.connected = false;
-          if (this.callbacks.error) this.callbacks.error(err);
-        });
-
-        socket.on('close', () => {
-          this.connected = false;
-          if (this.callbacks.close) this.callbacks.close();
-        });
-
         if (this.callbacks.open) this.callbacks.open();
         resolve();
       });
 
-      req.on('error', reject);
-      req.end();
+      this.ws.addEventListener('message', (event) => {
+        if (this.callbacks.message) {
+          const data = typeof event.data === 'string' ? event.data : event.data.toString('utf8');
+          this.callbacks.message(data);
+        }
+      });
+
+      this.ws.addEventListener('error', (event) => {
+        this.connected = false;
+        if (this.callbacks.error) this.callbacks.error(event);
+        reject(event);
+      });
+
+      this.ws.addEventListener('close', () => {
+        this.connected = false;
+        if (this.callbacks.close) this.callbacks.close();
+      });
     });
   }
 
-  processFrames() {
-    while (this.buffer.length >= 2) {
-      const firstByte = this.buffer[0];
-      const secondByte = this.buffer[1];
-
-      const fin = (firstByte & 0x80) !== 0;
-      const opcode = firstByte & 0x0F;
-      const masked = (secondByte & 0x80) !== 0;
-      let payloadLen = secondByte & 0x7F;
-
-      let offset = 2;
-
-      if (payloadLen === 126) {
-        if (this.buffer.length < 4) return;
-        payloadLen = this.buffer.readUInt16BE(2);
-        offset = 4;
-      } else if (payloadLen === 127) {
-        if (this.buffer.length < 10) return;
-        payloadLen = Number(this.buffer.readBigUInt64BE(2));
-        offset = 10;
-      }
-
-      if (this.buffer.length < offset + payloadLen) return;
-
-      let payload = this.buffer.slice(offset, offset + payloadLen);
-      this.buffer = this.buffer.slice(offset + payloadLen);
-
-      if (opcode === 0x1 && this.callbacks.message) {
-        this.callbacks.message(payload.toString('utf8'));
-      }
-    }
-  }
-
   send(data) {
-    if (!this.socket || !this.connected) {
+    if (!this.ws || !this.connected) {
       throw new Error('WebSocket not connected');
     }
-    const payload = Buffer.from(data, 'utf8');
-    const payloadLen = payload.length;
-
-    let frame;
-    let offset = 2;
-
-    if (payloadLen < 126) {
-      frame = Buffer.alloc(payloadLen + 6);
-      frame[1] = payloadLen | 0x80;
-    } else if (payloadLen < 65536) {
-      frame = Buffer.alloc(payloadLen + 8);
-      frame[1] = 126 | 0x80;
-      frame.writeUInt16BE(payloadLen, 2);
-      offset = 4;
-    } else {
-      frame = Buffer.alloc(payloadLen + 14);
-      frame[1] = 127 | 0x80;
-      frame.writeBigUInt64BE(BigInt(payloadLen), 2);
-      offset = 10;
-    }
-
-    frame[0] = 0x81; // FIN + text frame
-
-    const mask = Buffer.alloc(4);
-    crypto.randomFillSync(mask);
-    mask.copy(frame, offset);
-    offset += 4;
-
-    for (let i = 0; i < payloadLen; i++) {
-      frame[offset + i] = payload[i] ^ mask[i % 4];
-    }
-
-    this.socket.write(frame);
+    this.ws.send(data);
   }
 
   close() {
     this.connected = false;
-    if (this.socket) {
-      this.socket.end();
-      this.socket = null;
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
     }
   }
 }
@@ -288,22 +203,12 @@ function closeAllConnections() {
 
 // HTTP helper with explicit host/port — used for probing ports before setting activePort
 async function chromeHttpAt(host, port, path, method = 'GET') {
-  return new Promise((resolve, reject) => {
-    const options = { hostname: host, port, path, method };
-
-    const req = http.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (!data) { resolve({}); return; }
-        try { resolve(JSON.parse(data)); }
-        catch (e) { resolve({ message: data }); }
-      });
-    });
-
-    req.on('error', reject);
-    req.end();
-  });
+  const url = `http://${host}:${port}${path}`;
+  const res = await fetch(url, { method });
+  const text = await res.text();
+  if (!text) return {};
+  try { return JSON.parse(text); }
+  catch (e) { return { message: text }; }
 }
 
 // Helper to make HTTP requests to Chrome on the active port
@@ -557,15 +462,22 @@ async function navigate(tabIndexOrWsUrl, url, autoCapture = false) {
     await clearConsoleMessages(tabIndexOrWsUrl);
   }
 
-  const result = await sendCdpCommand(wsUrl, 'Page.navigate', { url });
-
-  // Wait for page load with console logging enabled if needed
-  await new Promise((resolve) => {
+  // Navigate and wait for page load on a single connection to avoid race conditions.
+  // Page.enable must be sent before Page.navigate on the same connection so the
+  // Page.loadEventFired event is received.
+  const navigateId = 9997;
+  const result = await new Promise((resolve) => {
     const ws = new WebSocketClient(wsUrl);
     let pageLoaded = false;
+    let navigateResult = {};
 
     ws.on('message', (msg) => {
       const data = JSON.parse(msg);
+
+      // Capture the Page.navigate response (contains frameId)
+      if (data.id === navigateId && data.result) {
+        navigateResult = data.result;
+      }
 
       if (data.method === 'Page.loadEventFired' && !pageLoaded) {
         pageLoaded = true;
@@ -573,11 +485,11 @@ async function navigate(tabIndexOrWsUrl, url, autoCapture = false) {
         if (autoCapture) {
           setTimeout(() => {
             ws.close();
-            resolve();
+            resolve(navigateResult);
           }, 1000); // Wait 1 second for console messages
         } else {
           ws.close();
-          resolve();
+          resolve(navigateResult);
         }
       }
 
@@ -608,18 +520,21 @@ async function navigate(tabIndexOrWsUrl, url, autoCapture = false) {
     });
 
     ws.connect().then(() => {
-      // Enable both Page and Runtime domains
-      sendCdpCommand(wsUrl, 'Page.enable');
+      // Enable Page domain and navigate on THIS connection so we receive load events.
+      // CDP processes messages in order per connection, so Page.enable takes effect
+      // before Page.navigate begins.
+      ws.send(JSON.stringify({ id: 9999, method: 'Page.enable', params: {} }));
       if (autoCapture) {
-        sendCdpCommand(wsUrl, 'Runtime.enable');
+        ws.send(JSON.stringify({ id: 9998, method: 'Runtime.enable', params: {} }));
       }
+      ws.send(JSON.stringify({ id: navigateId, method: 'Page.navigate', params: { url } }));
     });
 
     // Timeout after 30s
     setTimeout(() => {
       if (!pageLoaded) {
         ws.close();
-        resolve();
+        resolve(navigateResult);
       }
     }, 30000);
   });
