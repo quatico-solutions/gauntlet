@@ -10,6 +10,8 @@
 
 **Design reference:** `docs/plans/2026-03-08-vet-web-ui-design.md`
 
+**Design approach:** Use brainstorm's design tokens (Fraunces/DM Sans, teal accent, surface/panel/edge colors) as the foundation, but apply the frontend-design skill's philosophy within those constraints. Each UI task should include a design thinking step before coding — consider spatial composition, motion, rhythm, and micro-interactions. The component code in this plan is structural scaffolding; the implementer should treat it as a starting point and apply real design intentionality to make each view feel crafted, not assembled. Match brainstorm's *feel*, not its exact layouts.
+
 ---
 
 ### Task 1: API Prefix Migration
