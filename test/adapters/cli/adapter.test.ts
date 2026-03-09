@@ -11,11 +11,11 @@ describe("CLIAdapter", () => {
 
   test("starts a shell and reads output", async () => {
     adapter = new CLIAdapter();
-    await adapter.start("echo 'hello vet'");
+    await adapter.start("echo 'hello gauntlet'");
     // Give it time to produce output
     await new Promise((r) => setTimeout(r, 500));
     const output = adapter.readOutput();
-    expect(output).toContain("hello vet");
+    expect(output).toContain("hello gauntlet");
   });
 
   test("sends input and reads response", async () => {

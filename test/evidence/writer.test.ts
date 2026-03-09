@@ -9,7 +9,7 @@ describe("writeResultFiles", () => {
   let outDir: string;
 
   beforeEach(() => {
-    outDir = mkdtempSync(join(tmpdir(), "vet-writer-"));
+    outDir = mkdtempSync(join(tmpdir(), "gauntlet-writer-"));
   });
 
   afterEach(() => {

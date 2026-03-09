@@ -9,7 +9,7 @@ describe("EvidenceLogger", () => {
   let logger: EvidenceLogger;
 
   beforeEach(() => {
-    outDir = mkdtempSync(join(tmpdir(), "vet-test-"));
+    outDir = mkdtempSync(join(tmpdir(), "gauntlet-test-"));
     logger = new EvidenceLogger(outDir);
   });
 

@@ -39,7 +39,7 @@ async function main() {
       const broadcaster = new RunBroadcaster();
       const app = createApp(dataDir, uiDir, broadcaster);
       const port = args.port;
-      console.error(`vet server listening on port ${port}`);
+      console.error(`gauntlet server listening on port ${port}`);
       Bun.serve({
         port,
         fetch(req, server) {

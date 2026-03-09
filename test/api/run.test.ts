@@ -23,7 +23,7 @@ describe("Run API", () => {
   let storiesDir: string;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "vet-run-api-"));
+    dataDir = mkdtempSync(join(tmpdir(), "gauntlet-run-api-"));
     storiesDir = join(dataDir, "stories");
     mkdirSync(storiesDir, { recursive: true });
     writeFileSync(join(storiesDir, "story-001-test.md"), STORY_MD);
@@ -62,8 +62,8 @@ describe("Run API", () => {
   });
 
   test("POST /api/run/:id returns 400 when no model configured", async () => {
-    const savedAgent = process.env.VET_AGENT_MODEL;
-    delete process.env.VET_AGENT_MODEL;
+    const savedAgent = process.env.GAUNTLET_AGENT_MODEL;
+    delete process.env.GAUNTLET_AGENT_MODEL;
 
     try {
       const app = new Hono();
@@ -78,7 +78,7 @@ describe("Run API", () => {
       const body = await res.json();
       expect(body.error).toContain("no model configured");
     } finally {
-      if (savedAgent !== undefined) process.env.VET_AGENT_MODEL = savedAgent;
+      if (savedAgent !== undefined) process.env.GAUNTLET_AGENT_MODEL = savedAgent;
     }
   });
 });

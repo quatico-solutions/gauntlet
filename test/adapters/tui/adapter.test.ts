@@ -59,7 +59,7 @@ describe.skipIf(!tmuxAvailable)("TUIAdapter", () => {
 
   test("executeTool dispatches correctly and logs actions", async () => {
     adapter = new TUIAdapter();
-    const logDir = mkdtempSync(join(tmpdir(), "vet-tui-exec-"));
+    const logDir = mkdtempSync(join(tmpdir(), "gauntlet-tui-exec-"));
     const logger = new EvidenceLogger(logDir);
 
     await adapter.start("bc -q");

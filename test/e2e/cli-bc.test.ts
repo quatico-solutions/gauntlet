@@ -12,7 +12,7 @@ describe("CLI adapter e2e — bc calculator", () => {
   test("pass: bc performs arithmetic", async () => {
     const card = loadStory("bc-arithmetic-pass.md");
     const adapter = new CLIAdapter();
-    const logDir = mkdtempSync(join(tmpdir(), "vet-bc-arith-"));
+    const logDir = mkdtempSync(join(tmpdir(), "gauntlet-bc-arith-"));
     const logger = new EvidenceLogger(logDir);
 
     const steps: AgentResponse[] = [
@@ -39,7 +39,7 @@ describe("CLI adapter e2e — bc calculator", () => {
   test("fail: bc has no help command", async () => {
     const card = loadStory("bc-help-fail.md");
     const adapter = new CLIAdapter();
-    const logDir = mkdtempSync(join(tmpdir(), "vet-bc-help-"));
+    const logDir = mkdtempSync(join(tmpdir(), "gauntlet-bc-help-"));
     const logger = new EvidenceLogger(logDir);
 
     const steps: AgentResponse[] = [

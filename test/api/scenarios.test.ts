@@ -9,7 +9,7 @@ describe("Scenarios API", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "vet-api-"));
+    dataDir = mkdtempSync(join(tmpdir(), "gauntlet-api-"));
     const storiesDir = join(dataDir, "stories");
     mkdirSync(storiesDir, { recursive: true });
 
@@ -69,7 +69,7 @@ describe("Scenarios API", () => {
   });
 
   test("GET /api/scenarios returns empty array when stories dir doesn't exist", async () => {
-    const emptyDir = mkdtempSync(join(tmpdir(), "vet-no-stories-"));
+    const emptyDir = mkdtempSync(join(tmpdir(), "gauntlet-no-stories-"));
     const emptyApp = createApp(emptyDir);
     const res = await emptyApp.request("/api/scenarios");
     expect(res.status).toBe(200);

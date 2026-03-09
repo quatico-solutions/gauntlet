@@ -42,7 +42,7 @@ describe("Web e2e — TodoMVC", () => {
       }
 
       const card = loadStory("todomvc-add-pass.md");
-      const logDir = mkdtempSync(join(tmpdir(), "vet-todomvc-add-"));
+      const logDir = mkdtempSync(join(tmpdir(), "gauntlet-todomvc-add-"));
       const logger = new EvidenceLogger(logDir);
       const server = serveTodomvc();
       const adapter = new WebAdapter();
@@ -102,7 +102,7 @@ describe("Web e2e — TodoMVC", () => {
       }
 
       const card = loadStory("todomvc-edit-fail.md");
-      const logDir = mkdtempSync(join(tmpdir(), "vet-todomvc-edit-"));
+      const logDir = mkdtempSync(join(tmpdir(), "gauntlet-todomvc-edit-"));
       const logger = new EvidenceLogger(logDir);
       const server = serveTodomvc();
       const adapter = new WebAdapter();

@@ -196,7 +196,7 @@ export class WebAdapter implements Adapter {
 
     const takeReturnScreenshot = async (): Promise<ToolResult["image"]> => {
       if (!args.return_screenshot) return undefined;
-      const tmpFile = join(tmpdir(), `vet-screenshot-${Date.now()}.png`);
+      const tmpFile = join(tmpdir(), `gauntlet-screenshot-${Date.now()}.png`);
       await chrome.screenshot(0, tmpFile, null, false);
       const data = readFileSync(tmpFile);
       logger.saveScreenshot(Buffer.from(data));
@@ -208,7 +208,7 @@ export class WebAdapter implements Adapter {
       case "screenshot": {
         const tmpFile = join(
           tmpdir(),
-          `vet-screenshot-${Date.now()}.png`
+          `gauntlet-screenshot-${Date.now()}.png`
         );
         await chrome.screenshot(
           0,

@@ -37,7 +37,7 @@ export function parseModelFlags(flags: string[]): ModelConfig {
 
   return {
     agent:
-      config.agent || process.env.VET_AGENT_MODEL || DEFAULT_AGENT_MODEL,
-    fanout: config.fanout || process.env.VET_FANOUT_MODEL,
+      config.agent || process.env.GAUNTLET_AGENT_MODEL || DEFAULT_AGENT_MODEL,
+    fanout: config.fanout || process.env.GAUNTLET_FANOUT_MODEL,
   };
 }

@@ -1,10 +1,10 @@
 {
-  "name": "vet",
+  "name": "gauntlet",
   "module": "index.ts",
   "type": "module",
   "private": true,
   "bin": {
-    "vet": "src/index.ts"
+    "gauntlet": "src/index.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

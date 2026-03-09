@@ -38,7 +38,7 @@ export class TUIAdapter implements Adapter {
   }
 
   async start(command: string): Promise<void> {
-    const id = `vet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = `gauntlet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this._sessionName = id;
 
     const result = Bun.spawnSync([

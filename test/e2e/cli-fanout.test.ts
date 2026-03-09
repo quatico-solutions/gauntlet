@@ -83,7 +83,7 @@ describe("fanout e2e: round-trip", () => {
     }
 
     // Write cards to temp dir, re-read, re-parse
-    const dir = mkdtempSync(join(tmpdir(), "vet-fanout-e2e-"));
+    const dir = mkdtempSync(join(tmpdir(), "gauntlet-fanout-e2e-"));
     for (let i = 0; i < cards.length; i++) {
       const filePath = join(dir, `card-${i}.md`);
       writeFileSync(filePath, cards[i], "utf-8");

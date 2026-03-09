@@ -10,8 +10,8 @@ import { findCard } from "./helpers";
 
 function resolveClient(clientFactory?: () => LLMClient): LLMClient | { error: string } {
   if (clientFactory) return clientFactory();
-  const model = process.env.VET_FANOUT_MODEL || process.env.VET_AGENT_MODEL;
-  if (!model) return { error: "no model configured (set VET_FANOUT_MODEL or VET_AGENT_MODEL)" };
+  const model = process.env.GAUNTLET_FANOUT_MODEL || process.env.GAUNTLET_AGENT_MODEL;
+  if (!model) return { error: "no model configured (set GAUNTLET_FANOUT_MODEL or GAUNTLET_AGENT_MODEL)" };
   return createClient(model);
 }
 

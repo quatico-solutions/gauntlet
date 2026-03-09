@@ -41,8 +41,8 @@ export function runRoutes(dataDir: string, broadcaster?: RunBroadcaster) {
     if (!target) return c.json({ error: "target is required" }, 400);
 
     const adapterType = (body.adapter as string) || "web";
-    const model = (body.model as string) || process.env.VET_AGENT_MODEL;
-    if (!model) return c.json({ error: "no model configured (set VET_AGENT_MODEL or pass model in body)" }, 400);
+    const model = (body.model as string) || process.env.GAUNTLET_AGENT_MODEL;
+    if (!model) return c.json({ error: "no model configured (set GAUNTLET_AGENT_MODEL or pass model in body)" }, 400);
 
     const client = createClient(model);
     const outDir = join(dataDir, "results", entry.card.id);

@@ -34,9 +34,9 @@ describe("parseModelFlags", () => {
   });
 
   test("falls back to env vars", () => {
-    process.env.VET_AGENT_MODEL = "gpt-4o";
+    process.env.GAUNTLET_AGENT_MODEL = "gpt-4o";
     const config = parseModelFlags([]);
     expect(config.agent).toBe("gpt-4o");
-    delete process.env.VET_AGENT_MODEL;
+    delete process.env.GAUNTLET_AGENT_MODEL;
   });
 });

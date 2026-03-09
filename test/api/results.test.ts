@@ -9,7 +9,7 @@ describe("Results API", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "vet-results-api-"));
+    dataDir = mkdtempSync(join(tmpdir(), "gauntlet-results-api-"));
     // Create stories dir (needed by scenarioRoutes)
     mkdirSync(join(dataDir, "stories"), { recursive: true });
     // Create results
@@ -77,7 +77,7 @@ describe("Results API", () => {
   });
 
   test("GET /api/results handles malformed result.json gracefully", async () => {
-    const badDir = mkdtempSync(join(tmpdir(), "vet-bad-json-"));
+    const badDir = mkdtempSync(join(tmpdir(), "gauntlet-bad-json-"));
     mkdirSync(join(badDir, "stories"), { recursive: true });
     const resultsDir = join(badDir, "results");
     mkdirSync(join(resultsDir, "bad-001"), { recursive: true });
@@ -93,7 +93,7 @@ describe("Results API", () => {
   });
 
   test("GET /api/results/:scenario returns 500 for malformed result.json", async () => {
-    const badDir = mkdtempSync(join(tmpdir(), "vet-bad-json2-"));
+    const badDir = mkdtempSync(join(tmpdir(), "gauntlet-bad-json2-"));
     mkdirSync(join(badDir, "stories"), { recursive: true });
     const resultsDir = join(badDir, "results");
     mkdirSync(join(resultsDir, "bad-002"), { recursive: true });
@@ -132,7 +132,7 @@ describe("Results API", () => {
   });
 
   test("GET /api/results returns empty array when no results dir", async () => {
-    const emptyDir = mkdtempSync(join(tmpdir(), "vet-empty-"));
+    const emptyDir = mkdtempSync(join(tmpdir(), "gauntlet-empty-"));
     mkdirSync(join(emptyDir, "stories"), { recursive: true });
     const emptyApp = createApp(emptyDir);
     const res = await emptyApp.request("/api/results");

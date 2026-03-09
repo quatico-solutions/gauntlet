@@ -9,7 +9,7 @@ describe("Static UI serving", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "vet-static-"));
+    dataDir = mkdtempSync(join(tmpdir(), "gauntlet-static-"));
     mkdirSync(join(dataDir, "stories"), { recursive: true });
   });
 
@@ -20,14 +20,14 @@ describe("Static UI serving", () => {
   test("serves index.html for unknown routes when UI is built", async () => {
     const uiDir = join(dataDir, "ui-dist");
     mkdirSync(uiDir, { recursive: true });
-    writeFileSync(join(uiDir, "index.html"), "<html><body>vet ui</body></html>");
+    writeFileSync(join(uiDir, "index.html"), "<html><body>gauntlet ui</body></html>");
 
     app = createApp(dataDir, uiDir);
     const res = await app.request("/cards");
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/html");
     const text = await res.text();
-    expect(text).toContain("vet ui");
+    expect(text).toContain("gauntlet ui");
   });
 
   test("serves static assets from UI dist", async () => {

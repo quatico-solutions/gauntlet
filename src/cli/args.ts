@@ -58,7 +58,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 function parseRunArgs(args: string[]): RunArgs {
   const positional = extractPositional(args);
   if (!positional) {
-    throw new Error("Missing scenario path\n\nUsage: vet run <scenario.md> --target <url>");
+    throw new Error("Missing scenario path\n\nUsage: gauntlet run <scenario.md> --target <url>");
   }
 
   const flags = parseFlags(args);
@@ -81,7 +81,7 @@ function parseRunArgs(args: string[]): RunArgs {
 function parseValidateArgs(args: string[]): ValidateArgs {
   const positional = extractPositional(args);
   if (!positional) {
-    throw new Error("Missing scenario path\n\nUsage: vet validate <scenario.md>");
+    throw new Error("Missing scenario path\n\nUsage: gauntlet validate <scenario.md>");
   }
 
   return {
@@ -96,7 +96,7 @@ function parseFanoutArgs(args: string[]): FanoutArgs {
   const resultDir = flags["from-result"];
 
   if (!positional && !resultDir) {
-    throw new Error("Missing scenario path or --from-result\n\nUsage: vet fanout <scenario.md> | --from-result <result-dir>");
+    throw new Error("Missing scenario path or --from-result\n\nUsage: gauntlet fanout <scenario.md> | --from-result <result-dir>");
   }
 
   return {
@@ -156,7 +156,7 @@ function parseFlags(args: string[]): Record<string, string> & { model?: string[]
 }
 
 function usage(): string {
-  return `Usage: vet <command> [options]
+  return `Usage: gauntlet <command> [options]
 
 Commands:
   run <scenario.md> --target <url>   Run a scenario

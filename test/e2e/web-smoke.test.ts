@@ -24,7 +24,7 @@ describe("Web e2e smoke test", () => {
         return;
       }
 
-      const outDir = mkdtempSync(join(tmpdir(), "vet-e2e-web-"));
+      const outDir = mkdtempSync(join(tmpdir(), "gauntlet-e2e-web-"));
       const logger = new EvidenceLogger(outDir);
 
       // Serve the test page

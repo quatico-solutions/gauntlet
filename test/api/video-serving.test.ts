@@ -9,7 +9,7 @@ describe("Video serving", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "vet-video-"));
+    dataDir = mkdtempSync(join(tmpdir(), "gauntlet-video-"));
     const resultsDir = join(dataDir, "results", "test-run");
     mkdirSync(resultsDir, { recursive: true });
     writeFileSync(join(resultsDir, "result.json"), JSON.stringify({ scenario: "test-run", status: "pass" }));

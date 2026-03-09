@@ -47,7 +47,7 @@ function makeScriptedClient(steps: AgentResponse[]): LLMClient {
 describe("CLI adapter e2e smoke test", () => {
   test("runs agent loop against a real CLI process", async () => {
     const adapter = new CLIAdapter();
-    const logDir = mkdtempSync(join(tmpdir(), "vet-cli-smoke-"));
+    const logDir = mkdtempSync(join(tmpdir(), "gauntlet-cli-smoke-"));
     const logger = new EvidenceLogger(logDir);
 
     const steps: AgentResponse[] = [

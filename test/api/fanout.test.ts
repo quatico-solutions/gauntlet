@@ -66,7 +66,7 @@ describe("Fanout API", () => {
   let storiesDir: string;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "vet-fanout-api-"));
+    dataDir = mkdtempSync(join(tmpdir(), "gauntlet-fanout-api-"));
     storiesDir = join(dataDir, "stories");
     mkdirSync(storiesDir, { recursive: true });
     writeFileSync(join(storiesDir, "story-001-test.md"), STORY_MD);
@@ -87,10 +87,10 @@ describe("Fanout API", () => {
   });
 
   test("POST /api/fanout/:id returns 400 when no model configured", async () => {
-    const savedFanout = process.env.VET_FANOUT_MODEL;
-    const savedAgent = process.env.VET_AGENT_MODEL;
-    delete process.env.VET_FANOUT_MODEL;
-    delete process.env.VET_AGENT_MODEL;
+    const savedFanout = process.env.GAUNTLET_FANOUT_MODEL;
+    const savedAgent = process.env.GAUNTLET_AGENT_MODEL;
+    delete process.env.GAUNTLET_FANOUT_MODEL;
+    delete process.env.GAUNTLET_AGENT_MODEL;
 
     try {
       const app = new Hono();
@@ -101,8 +101,8 @@ describe("Fanout API", () => {
       const body = await res.json();
       expect(body.error).toContain("no model configured");
     } finally {
-      if (savedFanout !== undefined) process.env.VET_FANOUT_MODEL = savedFanout;
-      if (savedAgent !== undefined) process.env.VET_AGENT_MODEL = savedAgent;
+      if (savedFanout !== undefined) process.env.GAUNTLET_FANOUT_MODEL = savedFanout;
+      if (savedAgent !== undefined) process.env.GAUNTLET_AGENT_MODEL = savedAgent;
     }
   });
 
@@ -195,7 +195,7 @@ describe("Fanout observations API", () => {
   let storiesDir: string;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "vet-fanout-obs-"));
+    dataDir = mkdtempSync(join(tmpdir(), "gauntlet-fanout-obs-"));
     storiesDir = join(dataDir, "stories");
     mkdirSync(storiesDir, { recursive: true });
   });
@@ -255,7 +255,7 @@ describe("Fanout failure API", () => {
   let storiesDir: string;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "vet-fanout-fail-"));
+    dataDir = mkdtempSync(join(tmpdir(), "gauntlet-fanout-fail-"));
     storiesDir = join(dataDir, "stories");
     mkdirSync(storiesDir, { recursive: true });
   });
