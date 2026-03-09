@@ -101,6 +101,21 @@ describe("Scenarios API", () => {
     expect(getRes.status).toBe(200);
   });
 
+  test("POST /api/scenarios rejects path traversal in id", async () => {
+    const res = await app.request("/api/scenarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "../../../etc/evil",
+        title: "Traversal attempt",
+        description: "",
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid id");
+  });
+
   test("POST /api/scenarios returns 400 for missing id", async () => {
     const res = await app.request("/api/scenarios", {
       method: "POST",

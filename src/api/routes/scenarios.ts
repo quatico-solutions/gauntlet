@@ -4,6 +4,7 @@ import { join } from "path";
 import { serializeStoryCard } from "../../format/story-card";
 import type { StoryCard } from "../../format/story-card";
 import { loadAllCards, findCard } from "./helpers";
+import { isSafePath } from "../safe-path";
 
 export function scenarioRoutes(dataDir: string) {
   const router = new Hono();
@@ -25,6 +26,11 @@ export function scenarioRoutes(dataDir: string) {
     const body = await c.req.json();
     if (!body.id || !body.title) {
       return c.json({ error: "id and title are required" }, 400);
+    }
+
+    const targetPath = join(storiesDir, `${body.id}.md`);
+    if (!isSafePath(storiesDir, targetPath)) {
+      return c.json({ error: "invalid id" }, 400);
     }
 
     const existing = findCard(storiesDir, body.id);
