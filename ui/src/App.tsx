@@ -3,6 +3,7 @@ import { AppShell } from "./components/AppShell";
 import { Sidebar } from "./components/Sidebar";
 import { CardsList } from "./components/CardsList";
 import { CardEditor } from "./components/CardEditor";
+import { NewCardForm } from "./components/NewCardForm";
 import { useCards } from "./hooks/useCards";
 import { useCard } from "./hooks/useCard";
 
@@ -45,6 +46,10 @@ function CardDetailPage({ onRefreshList }: { onRefreshList: () => void }) {
       }}
     />
   );
+}
+
+function NewCardPage({ onCreated, onCancel }: { onCreated: (id: string) => void; onCancel: () => void }) {
+  return <NewCardForm onCreated={onCreated} onCancel={onCancel} />;
 }
 
 function RunsPage() {
@@ -96,8 +101,8 @@ export default function App() {
   const activeTab = location.pathname.startsWith("/runs") ? "/runs" : "/cards";
   const { cards, loading, error, refresh: refreshCards } = useCards();
 
-  // Extract card ID from path like /cards/some-id
-  const cardIdMatch = location.pathname.match(/^\/cards\/(.+)/);
+  // Extract card ID from path like /cards/some-id (but not /cards/new)
+  const cardIdMatch = location.pathname.match(/^\/cards\/(?!new$)(.+)/);
   const selectedCardId = cardIdMatch?.[1];
 
   return (
@@ -107,6 +112,14 @@ export default function App() {
           tabs={TABS}
           activeTab={activeTab}
           onTabChange={(path) => navigate(path)}
+          action={activeTab === "/cards" ? (
+            <button
+              className="btn-primary w-full"
+              onClick={() => navigate("/cards/new")}
+            >
+              New Card
+            </button>
+          ) : undefined}
         >
           {activeTab === "/cards" ? (
             <CardsSidebar
@@ -125,6 +138,12 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/cards" replace />} />
         <Route path="/cards" element={<CardsPage />} />
+        <Route path="/cards/new" element={
+          <NewCardPage
+            onCreated={(id) => { navigate(`/cards/${id}`); refreshCards(); }}
+            onCancel={() => navigate("/cards")}
+          />
+        } />
         <Route path="/cards/:id" element={<CardDetailPage onRefreshList={refreshCards} />} />
         <Route path="/runs/*" element={<RunsPage />} />
       </Routes>
