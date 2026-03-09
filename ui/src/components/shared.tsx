@@ -70,9 +70,10 @@ export function Toast({ message }: { message: string | null }) {
   );
 }
 
-// --- Confirm Modal ---
+// --- Confirm Dialog (native <dialog>) ---
 
-interface ConfirmModalProps {
+interface ConfirmDialogProps {
+  open: boolean;
   title: string;
   message: string;
   confirmLabel?: string;
@@ -81,45 +82,55 @@ interface ConfirmModalProps {
   onCancel: () => void;
 }
 
-export function ConfirmModal({
+export function ConfirmDialog({
+  open,
   title,
   message,
   confirmLabel = "Confirm",
   danger = false,
   onConfirm,
   onCancel,
-}: ConfirmModalProps) {
+}: ConfirmDialogProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    if (open && !dialog.open) {
+      dialog.showModal();
+    } else if (!open && dialog.open) {
+      dialog.close();
     }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onCancel]);
+  }, [open]);
+
+  const confirmClass = danger
+    ? "btn-danger"
+    : "btn-primary";
+
+  if (!open) return <dialog ref={dialogRef} />;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-      onClick={onCancel}
+    <dialog
+      ref={dialogRef}
+      onCancel={(e) => {
+        e.preventDefault();
+        onCancel();
+      }}
+      className="backdrop:bg-ink/40 bg-white border border-edge rounded-lg p-0 max-w-sm w-full"
     >
-      <div
-        className="w-full max-w-sm bg-white border border-edge rounded-lg p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="heading-display text-lg mb-2">{title}</h2>
-        <p className="text-sm text-slate mb-5">{message}</p>
-        <div className="flex items-center gap-3">
-          <button
-            className={danger ? "btn-danger" : "btn-primary"}
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </button>
-          <button className="btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
+      <div className="px-5 pt-5 pb-4">
+        <h2 className="heading-display text-lg">{title}</h2>
+        <p className="text-sm text-slate mt-2 leading-relaxed">{message}</p>
       </div>
-    </div>
+      <div className="flex justify-end gap-2 px-5 pb-4">
+        <button className="btn-secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className={confirmClass} onClick={onConfirm}>
+          {confirmLabel}
+        </button>
+      </div>
+    </dialog>
   );
 }

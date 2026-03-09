@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useBlocker } from "react-router-dom";
 import { api, type CardDetail } from "../lib/api";
-import { useToast, Toast, ConfirmModal } from "./shared";
+import { useToast, Toast, ConfirmDialog } from "./shared";
 
 interface CardEditorProps {
   card: CardDetail;
@@ -233,27 +233,25 @@ export function CardEditor({ card, onSave, onDelete }: CardEditorProps) {
 
       <Toast message={toast.message} />
 
-      {confirmDelete && (
-        <ConfirmModal
-          title="Delete card"
-          message={`Delete "${card.title}"? This cannot be undone.`}
-          confirmLabel="Delete"
-          danger
-          onConfirm={handleDelete}
-          onCancel={() => setConfirmDelete(false)}
-        />
-      )}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete card"
+        message={`Delete "${card.title}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        danger
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDelete(false)}
+      />
 
-      {blocker.state === "blocked" && (
-        <ConfirmModal
-          title="Unsaved changes"
-          message="You have unsaved changes. Discard them?"
-          confirmLabel="Discard"
-          danger
-          onConfirm={() => blocker.proceed()}
-          onCancel={() => blocker.reset()}
-        />
-      )}
+      <ConfirmDialog
+        open={blocker.state === "blocked"}
+        title="Unsaved changes"
+        message="You have unsaved changes. Discard them?"
+        confirmLabel="Discard"
+        danger
+        onConfirm={() => blocker.state === "blocked" && blocker.proceed()}
+        onCancel={() => blocker.state === "blocked" && blocker.reset()}
+      />
     </div>
   );
 }
