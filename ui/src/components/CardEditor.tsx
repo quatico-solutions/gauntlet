@@ -15,6 +15,7 @@ export function CardEditor({ card, onSave, onDelete }: CardEditorProps) {
   const [description, setDescription] = useState(card.description);
   const [criteria, setCriteria] = useState(card.acceptanceCriteria.join("\n"));
   const [saving, setSaving] = useState(false);
+  const [fanning, setFanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,6 +72,20 @@ export function CardEditor({ card, onSave, onDelete }: CardEditorProps) {
       setError(e instanceof Error ? e.message : "Failed to delete");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleFanout() {
+    try {
+      setFanning(true);
+      setError(null);
+      const result = await api.fanout.generate(card.id);
+      onSave();
+      alert(`Generated ${result.generated.length} variation(s)`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to generate variations");
+    } finally {
+      setFanning(false);
     }
   }
 
@@ -167,6 +182,13 @@ export function CardEditor({ card, onSave, onDelete }: CardEditorProps) {
               Approve
             </button>
           )}
+          <button
+            className="btn-secondary"
+            onClick={handleFanout}
+            disabled={fanning}
+          >
+            {fanning ? "Generating..." : "Fanout"}
+          </button>
           <button
             className="btn-danger"
             onClick={handleDelete}
