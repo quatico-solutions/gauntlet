@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { api, type CardSummary } from "../lib/api";
+import { Spinner } from "./shared";
 
 interface NewRunModalProps {
   onClose: () => void;
@@ -73,7 +74,7 @@ export function NewRunModal({ onClose, onStarted }: NewRunModalProps) {
           <div>
             <label className="section-label block mb-1">Story Card</label>
             {loadingCards ? (
-              <div className="text-sm text-slate">Loading cards...</div>
+              <Spinner label="Loading cards..." />
             ) : cardError ? (
               <div className="text-sm text-red-700">{cardError}</div>
             ) : cards.length === 0 ? (

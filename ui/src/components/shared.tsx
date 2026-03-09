@@ -1,3 +1,12 @@
+export function Spinner({ label = "Loading..." }: { label?: string }) {
+  return (
+    <div className="flex items-center gap-2 text-sm text-slate">
+      <div className="spinner" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
 export function StatusBadge({
   status,
   size = "sm",

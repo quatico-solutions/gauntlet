@@ -9,6 +9,7 @@ import { RunsList } from "./components/RunsList";
 import { RunDetail } from "./components/RunDetail";
 import { NewRunModal } from "./components/NewRunModal";
 import { LiveRun } from "./components/LiveRun";
+import { Spinner } from "./components/shared";
 import { api, type VetResult } from "./lib/api";
 import { useCards } from "./hooks/useCards";
 import { useCard } from "./hooks/useCard";
@@ -33,7 +34,7 @@ function CardDetailPage({ onRefreshList }: { onRefreshList: () => void }) {
   const navigate = useNavigate();
 
   if (loading) {
-    return <div className="p-6 text-slate">Loading card...</div>;
+    return <div className="p-6"><Spinner label="Loading card..." /></div>;
   }
 
   if (error) {
@@ -88,7 +89,7 @@ function RunDetailPage({ onFanout }: { onFanout: () => void }) {
   }, [id]);
 
   if (loading) {
-    return <div className="p-6 text-slate">Loading run...</div>;
+    return <div className="p-6"><Spinner label="Loading run..." /></div>;
   }
 
   if (error) {
@@ -118,7 +119,7 @@ function CardsSidebar({
   const navigate = useNavigate();
 
   if (loading) {
-    return <div className="p-3 text-sm text-slate">Loading cards...</div>;
+    return <div className="p-3"><Spinner label="Loading cards..." /></div>;
   }
 
   if (error) {
@@ -157,7 +158,7 @@ function RunsSidebar({
   const navigate = useNavigate();
 
   if (loading) {
-    return <div className="p-3 text-sm text-slate">Loading runs...</div>;
+    return <div className="p-3"><Spinner label="Loading runs..." /></div>;
   }
 
   if (error) {
