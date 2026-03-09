@@ -25,6 +25,7 @@ describe("Static UI serving", () => {
     app = createApp(dataDir, uiDir);
     const res = await app.request("/cards");
     expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html");
     const text = await res.text();
     expect(text).toContain("vet ui");
   });
@@ -38,6 +39,7 @@ describe("Static UI serving", () => {
     app = createApp(dataDir, uiDir);
     const res = await app.request("/assets/main.js");
     expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("application/javascript");
     const text = await res.text();
     expect(text).toBe("console.log('hello')");
   });
