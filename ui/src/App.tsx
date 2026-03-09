@@ -8,6 +8,7 @@ import { NewCardForm } from "./components/NewCardForm";
 import { RunsList } from "./components/RunsList";
 import { RunDetail } from "./components/RunDetail";
 import { NewRunModal } from "./components/NewRunModal";
+import { LiveRun } from "./components/LiveRun";
 import { api, type VetResult } from "./lib/api";
 import { useCards } from "./hooks/useCards";
 import { useCard } from "./hooks/useCard";
@@ -178,13 +179,14 @@ export default function App() {
   const { cards, loading, error, refresh: refreshCards } = useCards();
   const { results, loading: runsLoading, error: runsError, refresh: refreshResults } = useResults();
   const [showRunModal, setShowRunModal] = useState(false);
+  const [liveRun, setLiveRun] = useState<{ scenarioId: string; cardTitle: string } | null>(null);
 
   // Extract card ID from path like /cards/some-id (but not /cards/new)
   const cardIdMatch = location.pathname.match(/^\/cards\/(?!new$)(.+)/);
   const selectedCardId = cardIdMatch?.[1];
 
-  // Extract run ID from path like /runs/some-id
-  const runIdMatch = location.pathname.match(/^\/runs\/(.+)/);
+  // Extract run ID from path like /runs/some-id (but not /runs/live)
+  const runIdMatch = location.pathname.match(/^\/runs\/(?!live$)(.+)/);
   const selectedRunId = runIdMatch?.[1];
 
   function handleFanout() {
@@ -247,6 +249,22 @@ export default function App() {
         } />
         <Route path="/cards/:id" element={<CardDetailPage onRefreshList={refreshCards} />} />
         <Route path="/runs" element={<RunsPage />} />
+        <Route path="/runs/live" element={
+          liveRun ? (
+            <LiveRun
+              runId={liveRun.scenarioId}
+              cardTitle={liveRun.cardTitle}
+              onComplete={() => {
+                const id = liveRun.scenarioId;
+                setLiveRun(null);
+                refreshResults();
+                navigate(`/runs/${id}`);
+              }}
+            />
+          ) : (
+            <Navigate to="/runs" replace />
+          )
+        } />
         <Route path="/runs/:id" element={<RunDetailPage onFanout={handleFanout} />} />
       </Routes>
     </AppShell>
@@ -254,16 +272,15 @@ export default function App() {
     {showRunModal && (
       <NewRunModal
         onClose={() => setShowRunModal(false)}
-        onStarted={async (scenarioId, config) => {
+        onStarted={(scenarioId, config) => {
           setShowRunModal(false);
-          try {
-            const result = await api.run.start(scenarioId, config);
+          const card = cards.find((c) => c.id === scenarioId);
+          setLiveRun({ scenarioId, cardTitle: card?.title || scenarioId });
+          navigate("/runs/live");
+          // Fire-and-forget: result arrives via WebSocket
+          api.run.start(scenarioId, config).catch(() => {
             refreshResults();
-            navigate(`/runs/${result.scenario}`);
-          } catch (e) {
-            // Run failed — still refresh to show whatever result was stored
-            refreshResults();
-          }
+          });
         }}
       />
     )}
