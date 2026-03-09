@@ -78,6 +78,69 @@ describe("Scenarios API", () => {
     rmSync(emptyDir, { recursive: true, force: true });
   });
 
+  test("POST /api/scenarios creates a new card", async () => {
+    const res = await app.request("/api/scenarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "new-card",
+        title: "New card",
+        status: "draft",
+        tags: ["test"],
+        description: "A new card",
+        acceptanceCriteria: ["Works correctly"],
+      }),
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.id).toBe("new-card");
+    expect(data.title).toBe("New card");
+
+    // Verify persisted
+    const getRes = await app.request("/api/scenarios/new-card");
+    expect(getRes.status).toBe(200);
+  });
+
+  test("POST /api/scenarios returns 400 for missing id", async () => {
+    const res = await app.request("/api/scenarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "No id" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("POST /api/scenarios returns 409 for duplicate id", async () => {
+    const res = await app.request("/api/scenarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "story-001",
+        title: "Duplicate",
+        description: "",
+        acceptanceCriteria: [],
+      }),
+    });
+    expect(res.status).toBe(409);
+  });
+
+  test("DELETE /api/scenarios/:id deletes a card", async () => {
+    const res = await app.request("/api/scenarios/story-001", {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(200);
+
+    const getRes = await app.request("/api/scenarios/story-001");
+    expect(getRes.status).toBe(404);
+  });
+
+  test("DELETE /api/scenarios/:id returns 404 for unknown card", async () => {
+    const res = await app.request("/api/scenarios/nonexistent", {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(404);
+  });
+
   test("POST /api/scenarios/:id/approve sets status to ready", async () => {
     const res = await app.request("/api/scenarios/story-001/approve", {
       method: "POST",
