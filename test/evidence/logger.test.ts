@@ -64,4 +64,24 @@ describe("EvidenceLogger", () => {
     expect(p1).toBe("screenshots/001.png");
     expect(p2).toBe("screenshots/002.png");
   });
+
+  test("calls onAction callback when logAction is called", () => {
+    const received: { action: string; params: Record<string, unknown> }[] = [];
+    logger.onAction = (action, params) => {
+      received.push({ action, params });
+    };
+
+    logger.logAction("click", { selector: "#btn" });
+    logger.logAction("screenshot", {});
+
+    expect(received).toEqual([
+      { action: "click", params: { selector: "#btn" } },
+      { action: "screenshot", params: {} },
+    ]);
+  });
+
+  test("works without onAction callback", () => {
+    // Should not throw
+    logger.logAction("click", { selector: "#btn" });
+  });
 });

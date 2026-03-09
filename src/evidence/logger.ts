@@ -5,6 +5,7 @@ export class EvidenceLogger {
   private outDir: string;
   private screenshotCount = 0;
   private _screenshots: string[] = [];
+  onAction?: (action: string, params: Record<string, unknown>) => void;
 
   constructor(outDir: string) {
     this.outDir = outDir;
@@ -25,6 +26,7 @@ export class EvidenceLogger {
       join(this.outDir, "run.jsonl"),
       JSON.stringify(entry) + "\n"
     );
+    this.onAction?.(action, params);
   }
 
   saveScreenshot(data: Buffer, name?: string): string {

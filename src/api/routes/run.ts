@@ -47,6 +47,16 @@ export function runRoutes(dataDir: string, broadcaster?: RunBroadcaster) {
     const client = createClient(model);
     const outDir = join(dataDir, "results", entry.card.id);
     const logger = new EvidenceLogger(outDir);
+    if (broadcaster) {
+      logger.onAction = (action, params) => {
+        broadcaster.send(entry.card.id, {
+          type: "progress",
+          message: `[${action}] ${JSON.stringify(params)}`,
+          status: "running",
+          card: entry.card.id,
+        });
+      };
+    }
     const adapter = createAdapter(adapterType, body.chrome);
 
     let streamer: ScreencastStreamerType | undefined;
