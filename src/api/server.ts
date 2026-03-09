@@ -6,6 +6,7 @@ import { resultRoutes } from "./routes/results";
 import { fanoutRoutes } from "./routes/fanout";
 import { runRoutes } from "./routes/run";
 import { isSafePath } from "./safe-path";
+import { getMimeType } from "./mime-types";
 import type { RunBroadcaster } from "./ws";
 
 export function createApp(dataDir: string, uiDir?: string, broadcaster?: RunBroadcaster) {
@@ -32,20 +33,8 @@ export function createApp(dataDir: string, uiDir?: string, broadcaster?: RunBroa
         if (existsSync(filePath) && statSync(filePath).isFile()) {
           const content = readFileSync(filePath);
           const ext = filePath.split(".").pop() || "";
-          const mimeTypes: Record<string, string> = {
-            html: "text/html",
-            js: "application/javascript",
-            css: "text/css",
-            json: "application/json",
-            png: "image/png",
-            jpg: "image/jpeg",
-            svg: "image/svg+xml",
-            woff2: "font/woff2",
-            webm: "video/webm",
-            mp4: "video/mp4",
-          };
           return new Response(content, {
-            headers: { "Content-Type": mimeTypes[ext] || "application/octet-stream" },
+            headers: { "Content-Type": getMimeType(ext) },
           });
         }
       } catch {

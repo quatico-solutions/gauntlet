@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isSafePath } from "../safe-path";
+import { getMimeType } from "../mime-types";
 
 export function resultRoutes(resultsDir: string) {
   const router = new Hono();
@@ -84,14 +85,8 @@ export function resultRoutes(resultsDir: string) {
 
     const content = readFileSync(filePath);
     const ext = name.split(".").pop() || "png";
-    const mimeTypes: Record<string, string> = {
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      webp: "image/webp",
-    };
     return new Response(content, {
-      headers: { "Content-Type": mimeTypes[ext] || "application/octet-stream" },
+      headers: { "Content-Type": getMimeType(ext) },
     });
   });
 
