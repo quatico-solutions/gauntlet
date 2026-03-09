@@ -7,6 +7,7 @@ import { writeResultFiles } from "../../evidence/writer";
 import { runAgent } from "../../agent/agent";
 import type { Adapter } from "../../adapters/adapter";
 import type { RunBroadcaster } from "../ws";
+import type { ScreencastStreamer as ScreencastStreamerType } from "../../streaming/screencast";
 
 function createAdapter(type: string, chromeEndpoint?: string): Adapter {
   switch (type) {
@@ -48,12 +49,33 @@ export function runRoutes(dataDir: string, broadcaster?: RunBroadcaster) {
     const logger = new EvidenceLogger(outDir);
     const adapter = createAdapter(adapterType, body.chrome);
 
+    let streamer: ScreencastStreamerType | undefined;
     try {
       await adapter.start(target);
+
+      if (adapterType === "web" && broadcaster) {
+        const { ScreencastStreamer } = await import("../../streaming/screencast");
+        streamer = new ScreencastStreamer(0, (frame) => {
+          broadcaster.send(entry.card.id, {
+            type: "frame",
+            data: frame.data,
+            width: frame.metadata.width,
+            height: frame.metadata.height,
+          });
+        });
+        await streamer.start();
+      }
+
       const result = await runAgent(entry.card, adapter, client, logger, target);
       writeResultFiles(outDir, result);
+
+      if (broadcaster) {
+        broadcaster.send(entry.card.id, { type: "complete", result });
+      }
+
       return c.json(result);
     } finally {
+      if (streamer) await streamer.stop();
       await adapter.close();
     }
   });

@@ -2276,6 +2276,24 @@ async function clearCookies(tabIndexOrWsUrl) {
   await sendCdpCommand(wsUrl, 'Network.clearBrowserCookies', {});
 }
 
+// Subscribe to CDP events on a tab's connection
+async function onCdpEvent(tabIndex, handler) {
+  const tabs = await getTabs();
+  if (!tabs[tabIndex]) throw new Error(`Tab ${tabIndex} not found`);
+  const wsUrl = tabs[tabIndex].webSocketDebuggerUrl;
+  const conn = await getPooledConnection(wsUrl);
+  conn.eventHandler = handler;
+}
+
+// Unsubscribe from CDP events
+async function offCdpEvent(tabIndex) {
+  const tabs = await getTabs();
+  if (!tabs[tabIndex]) return;
+  const wsUrl = tabs[tabIndex].webSocketDebuggerUrl;
+  const conn = connectionPool.get(wsUrl);
+  if (conn) conn.eventHandler = null;
+}
+
 module.exports = {
   // Core browser actions (click/fill now use CDP events by default for React compatibility)
   getTabs,
@@ -2354,6 +2372,11 @@ module.exports = {
 
   // Cookie management
   clearCookies,
+
+  // CDP raw access (for screencast streaming)
+  sendCdpCommand,
+  onCdpEvent,
+  offCdpEvent,
 
   // Legacy aliases (for backwards compatibility)
   cdpClick: click,
