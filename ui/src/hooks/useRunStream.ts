@@ -1,15 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import type { VetResult } from "../lib/api";
 
-interface RunMessage {
-  type: "frame" | "progress" | "complete";
-  data?: string;
-  width?: number;
-  height?: number;
-  message?: string;
-  status?: string;
-  result?: VetResult;
-}
+type RunMessage =
+  | { type: "frame"; data: string; width: number; height: number }
+  | { type: "progress"; message: string }
+  | { type: "complete"; result: VetResult };
 
 export function useRunStream(runId: string | null) {
   const [frame, setFrame] = useState<string | null>(null);
@@ -41,10 +36,10 @@ export function useRunStream(runId: string | null) {
           setFrame(`data:image/jpeg;base64,${msg.data}`);
           break;
         case "progress":
-          setMessages((prev) => [...prev, msg.message || ""]);
+          setMessages((prev) => [...prev, msg.message]);
           break;
         case "complete":
-          setResult(msg.result ?? null);
+          setResult(msg.result);
           break;
       }
     };

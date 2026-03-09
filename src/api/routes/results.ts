@@ -1,12 +1,7 @@
 import { Hono } from "hono";
-import { readdirSync, readFileSync, existsSync, realpathSync } from "fs";
-import { join, resolve } from "path";
-
-function isSafePath(base: string, target: string): boolean {
-  const resolvedBase = resolve(base);
-  const resolvedTarget = resolve(target);
-  return resolvedTarget.startsWith(resolvedBase + "/") || resolvedTarget === resolvedBase;
-}
+import { readdirSync, readFileSync, existsSync } from "fs";
+import { join } from "path";
+import { isSafePath } from "../safe-path";
 
 export function resultRoutes(resultsDir: string) {
   const router = new Hono();
