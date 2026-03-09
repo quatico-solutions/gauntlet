@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { join } from "path";
+import { mkdirSync } from "fs";
 import { findCard } from "./helpers";
 import { createClient } from "../../models/resolve";
 import { EvidenceLogger } from "../../evidence/logger";
@@ -55,6 +56,8 @@ export function runRoutes(dataDir: string, broadcaster?: RunBroadcaster) {
 
       if (adapterType === "web" && broadcaster) {
         const { ScreencastStreamer } = await import("../../streaming/screencast");
+        const framesDir = join(outDir, "frames");
+        mkdirSync(framesDir, { recursive: true });
         streamer = new ScreencastStreamer(0, (frame) => {
           broadcaster.send(entry.card.id, {
             type: "frame",
@@ -62,7 +65,7 @@ export function runRoutes(dataDir: string, broadcaster?: RunBroadcaster) {
             width: frame.metadata.width,
             height: frame.metadata.height,
           });
-        });
+        }, framesDir);
         await streamer.start();
       }
 

@@ -75,6 +75,15 @@ export function RunDetail({ result, onFanout }: RunDetailProps) {
         </div>
       )}
 
+      <video
+        controls
+        className="w-full rounded border border-edge mb-4"
+        src={`/api/results/${result.scenario}/video`}
+        onError={(e) => {
+          (e.target as HTMLVideoElement).style.display = "none";
+        }}
+      />
+
       <div className="space-y-4">
         <div className="card p-4">
           <h2 className="section-label mb-2">Summary</h2>

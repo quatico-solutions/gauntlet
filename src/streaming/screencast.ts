@@ -1,4 +1,6 @@
 const chrome = require("../adapters/web/lib/chrome-ws-lib");
+import { writeFileSync, mkdirSync } from "fs";
+import { join } from "path";
 
 export interface ScreencastFrame {
   data: string; // base64 jpeg
@@ -9,10 +11,16 @@ export class ScreencastStreamer {
   private running = false;
   private onFrame: (frame: ScreencastFrame) => void;
   private tabIndex: number;
+  private saveDir?: string;
+  private frameCount = 0;
 
-  constructor(tabIndex: number, onFrame: (frame: ScreencastFrame) => void) {
+  constructor(tabIndex: number, onFrame: (frame: ScreencastFrame) => void, saveDir?: string) {
     this.tabIndex = tabIndex;
     this.onFrame = onFrame;
+    this.saveDir = saveDir;
+    if (saveDir) {
+      mkdirSync(saveDir, { recursive: true });
+    }
   }
 
   async start(options?: {
@@ -38,6 +46,12 @@ export class ScreencastStreamer {
           height: params.metadata?.deviceHeight || 0,
         },
       });
+
+      if (this.saveDir) {
+        const filename = `frame-${String(this.frameCount).padStart(5, "0")}.jpg`;
+        writeFileSync(join(this.saveDir, filename), Buffer.from(params.data, "base64"));
+        this.frameCount++;
+      }
 
       // Acknowledge frame so Chrome sends the next one
       await chrome.sendCdpCommand(wsUrl, "Page.screencastFrameAck", {

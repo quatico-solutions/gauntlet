@@ -43,6 +43,22 @@ export function resultRoutes(resultsDir: string) {
     }
   });
 
+  router.get("/:scenario/video", (c) => {
+    const scenario = c.req.param("scenario");
+
+    for (const ext of ["webm", "mp4"]) {
+      const videoPath = join(resultsDir, scenario, `video.${ext}`);
+      if (existsSync(videoPath)) {
+        const content = readFileSync(videoPath);
+        return new Response(content, {
+          headers: { "Content-Type": `video/${ext}` },
+        });
+      }
+    }
+
+    return c.json({ error: "no video found" }, 404);
+  });
+
   router.get("/:scenario/screenshots/:name", (c) => {
     const scenario = c.req.param("scenario");
     const name = c.req.param("name");
