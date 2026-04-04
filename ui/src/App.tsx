@@ -212,6 +212,10 @@ export default function App() {
           tabs={TABS}
           activeTab={activeTab}
           onTabChange={(path) => navigate(path)}
+          liveRun={liveRun && !liveRunError ? {
+            title: liveRun.cardTitle,
+            onClick: () => navigate("/runs/live"),
+          } : null}
           action={activeTab === "/cards" ? (
             <button
               className="btn-primary w-full"
