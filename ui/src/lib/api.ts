@@ -53,9 +53,18 @@ export interface ServerConfig {
   defaultModel: string | null;
 }
 
+export interface ErrorEntry {
+  timestamp: string;
+  source: string;
+  message: string;
+}
+
 export const api = {
   config: {
     get: () => request<ServerConfig>("/config"),
+  },
+  errors: {
+    list: () => request<{ errors: ErrorEntry[] }>("/errors").then((r) => r.errors),
   },
   cards: {
     list: () => request<CardSummary[]>("/scenarios"),
