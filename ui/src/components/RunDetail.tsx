@@ -155,7 +155,7 @@ export function RunDetail({ result, onFanout }: RunDetailProps) {
               onClick={handleFromObservations}
               disabled={acting}
             >
-              {acting ? "Generating..." : "Generate from Observations"}
+              {acting ? "Generating..." : "Generate Test Cards from Observations"}
             </button>
           )}
           {result.status === "fail" && (
@@ -164,7 +164,7 @@ export function RunDetail({ result, onFanout }: RunDetailProps) {
               onClick={handleAnalyzeFailure}
               disabled={acting}
             >
-              {acting ? "Analyzing..." : "Analyze Failure"}
+              {acting ? "Generating..." : "Generate Test Cards from Failure"}
             </button>
           )}
         </div>
