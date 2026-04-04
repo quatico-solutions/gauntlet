@@ -42,6 +42,7 @@ async function main() {
       console.error(`gauntlet server listening on port ${port}`);
       Bun.serve({
         port,
+        idleTimeout: 255, // seconds; LLM calls can take minutes
         fetch(req, server) {
           const url = new URL(req.url);
           if (url.pathname === "/api/ws") {
