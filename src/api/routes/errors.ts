@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 
+export type ErrorSource = "run" | "fanout";
+
 export interface ErrorEntry {
   timestamp: string;
-  source: string;
+  source: ErrorSource;
   message: string;
 }
 
@@ -14,7 +16,7 @@ export class ErrorLog {
     this.capacity = capacity;
   }
 
-  add(source: string, message: string) {
+  add(source: ErrorSource, message: string) {
     this.buffer.push({
       timestamp: new Date().toISOString(),
       source,

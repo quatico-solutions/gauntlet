@@ -52,8 +52,8 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             <div className="p-4 text-sm text-slate">No errors recorded.</div>
           ) : (
             <ul className="divide-y divide-edge">
-              {errors.map((err, i) => (
-                <li key={i} className="px-4 py-2">
+              {errors.map((err) => (
+                <li key={`${err.timestamp}-${err.source}`} className="px-4 py-2">
                   <div className="flex items-center gap-2">
                     <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">{err.source}</span>
                     <span className="text-[10px] text-slate">{new Date(err.timestamp).toLocaleTimeString()}</span>
