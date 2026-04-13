@@ -1,0 +1,14 @@
+{
+  "name": "gauntlet-cli-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "module": "src/server.ts",
+  "scripts": {
+    "test": "bun test",
+    "start": "bun run src/bin.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
