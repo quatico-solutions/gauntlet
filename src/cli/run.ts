@@ -11,9 +11,11 @@ export async function run(
   scenarioPath: string,
   target: string,
   outDir: string,
-  adapterType: "web" | "cli" | "tui",
+  adapterType: "web" | "cli" | "tui" | "remote-cli",
   models: ModelConfig,
-  chromeEndpoint?: string
+  chromeEndpoint?: string,
+  relayUrl?: string,
+  relayToken?: string,
 ): Promise<void> {
   const content = readFileSync(scenarioPath, "utf-8");
   const card = parseStoryCard(content);
@@ -26,6 +28,14 @@ export async function run(
       adapter = new CLIAdapter();
       await adapter.start(target);
       break;
+    case "remote-cli": {
+      if (!relayUrl) throw new Error("--relay-url (or GAUNTLET_RELAY_URL) is required for --adapter remote-cli");
+      if (!relayToken) throw new Error("--relay-token (or GAUNTLET_RELAY_TOKEN) is required for --adapter remote-cli");
+      const { RemoteCLIAdapter } = await import("../adapters/cli/remote-adapter");
+      adapter = new RemoteCLIAdapter({ baseUrl: relayUrl, token: relayToken });
+      await adapter.start(target);
+      break;
+    }
     case "tui": {
       const { TUIAdapter } = await import("../adapters/tui/adapter");
       adapter = new TUIAdapter();

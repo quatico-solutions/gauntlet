@@ -142,6 +142,15 @@ The web adapter (`src/adapters/web/adapter.ts`) drives Chrome via CDP and expose
 
 Most tools support `return_screenshot` to automatically capture the page state after the action.
 
+### CLI adapters (local and remote)
+
+Gauntlet can also drive a command-line program instead of a browser. Two adapters share the same `type`/`press`/`read_output` tools:
+
+- **`cli`** — spawns the command as a local subprocess (`CLIAdapter` in `src/adapters/cli/adapter.ts`).
+- **`remote-cli`** — talks to a relay server on another machine that spawns the subprocess there and proxies its stdio over HTTP (`RemoteCLIAdapter` in `src/adapters/cli/remote-adapter.ts`). This lets Gauntlet run inside Docker or on CI while the subprocess-under-test runs on a dev workstation, an embedded device, or any host reachable over HTTP.
+
+The relay protocol is specified in [`docs/remote-cli.md`](docs/remote-cli.md). A reference Bun implementation lives in [`cli-runner/`](cli-runner/) — see its [README](cli-runner/README.md) for the full endpoint reference and curl examples.
+
 ### LLM providers
 
 Gauntlet supports two providers via a common `LLMClient` interface:
@@ -179,6 +188,13 @@ gauntlet run scenario.md --target http://localhost:3000
 # Run with a specific model and adapter
 gauntlet run scenario.md --target http://localhost:3000 --model claude-sonnet-4-20250514 --adapter web
 
+# Drive a CLI program running on a different machine via the remote relay
+gauntlet run scenario.md \
+  --adapter remote-cli \
+  --target "python3 -u my_cli.py" \
+  --relay-url http://my-host:4455 \
+  --relay-token "$GAUNTLET_RELAY_TOKEN"
+
 # Validate a story card's format
 gauntlet validate scenario.md
 
@@ -191,6 +207,134 @@ gauntlet fanout --from-result ./results/run-001 --out ./stories
 # Start the web server
 gauntlet serve --port 4400 --data-dir ./my-project
 ```
+
+### Remote CLI adapter
+
+The `remote-cli` adapter drives a subprocess on a **different machine** via an HTTP relay. Typical use: Gauntlet (and its LLM) runs inside Docker or on CI, but the CLI under test runs on your workstation — or on an embedded device, a VM, a staging host, etc.
+
+#### 1. Start the relay on the host that will run the subprocess
+
+Ship the reference relay (a small Bun server, see [`cli-runner/`](cli-runner/)). On the machine where your CLI lives:
+
+```bash
+# Inside cli-runner/
+bun install
+
+export GAUNTLET_RELAY_TOKEN=$(openssl rand -hex 32)
+bun run src/bin.ts
+# => gauntlet-relay listening on http://127.0.0.1:4455 (auth: bearer token)
+```
+
+Share the token out-of-band — the relay is remote-shell-equivalent behind it. Bind to `127.0.0.1` by default; expose to the network only behind `--allow-command` and ideally an HTTPS-terminating proxy:
+
+```bash
+bun run src/bin.ts \
+  --bind 0.0.0.0 \
+  --port 4455 \
+  --allow-command '^(python3|node|bun) '
+```
+
+Confirm it's up without auth:
+
+```bash
+curl -sS http://<host>:4455/health
+# => {"ok":true,"version":"0.1.0"}
+```
+
+#### 2a. `gauntlet run` against the relay
+
+On the Gauntlet side, point `--target` at the **shell command** you want the agent to drive (it gets run as `sh -c <command>` on the remote host), then pass the relay URL and token:
+
+```bash
+export GAUNTLET_RELAY_URL=http://my-host:4455
+export GAUNTLET_RELAY_TOKEN=...  # the token you printed above
+
+gauntlet run scenario.md \
+  --adapter remote-cli \
+  --target "python3 -u my_cli.py"
+```
+
+Flags can be passed explicitly instead of via env:
+
+```bash
+gauntlet run scenario.md \
+  --adapter remote-cli \
+  --target "python3 -u my_cli.py" \
+  --relay-url http://my-host:4455 \
+  --relay-token "$GAUNTLET_RELAY_TOKEN"
+```
+
+Inside the agent loop the model sees the same CLI toolset as with the local `cli` adapter (`type`, `press`, `read_output`) — it just happens to be typing into a shell on another machine.
+
+From Docker, point at the host's relay with `host.docker.internal`:
+
+```bash
+docker run --rm \
+  -e ANTHROPIC_API_KEY=sk-... \
+  -e GAUNTLET_AGENT_MODEL=claude-sonnet-4-20250514 \
+  -e GAUNTLET_RELAY_URL=http://host.docker.internal:4455 \
+  -e GAUNTLET_RELAY_TOKEN="$GAUNTLET_RELAY_TOKEN" \
+  -v "$PWD:/work" -w /work \
+  gauntlet run scenario.md \
+    --adapter remote-cli \
+    --target "python3 -u my_cli.py"
+```
+
+#### 2b. `gauntlet serve` + API / UI
+
+The HTTP API accepts the same options per-run. Start the server with the relay env vars set as defaults:
+
+```bash
+GAUNTLET_RELAY_URL=http://my-host:4455 \
+GAUNTLET_RELAY_TOKEN="$GAUNTLET_RELAY_TOKEN" \
+gauntlet serve --port 4400 --data-dir ./my-project
+```
+
+Then fire a run for a card with `POST /api/run/:id`:
+
+```bash
+curl -sS -X POST http://localhost:4400/api/run/my-card-001 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target": "python3 -u my_cli.py",
+    "adapter": "remote-cli",
+    "model": "claude-sonnet-4-20250514"
+  }'
+```
+
+Per-run overrides are supported — useful if you talk to multiple relays:
+
+```json
+{
+  "target": "bun run ./my-cli.ts",
+  "adapter": "remote-cli",
+  "model": "claude-sonnet-4-20250514",
+  "relay_url": "http://other-host:4455",
+  "relay_token": "..."
+}
+```
+
+If `relay_url` / `relay_token` aren't in the body, the server falls back to `GAUNTLET_RELAY_URL` / `GAUNTLET_RELAY_TOKEN` from its environment. Missing both → `400`.
+
+#### Protocol summary
+
+A run does roughly:
+
+```
+gauntlet (client)              relay (server)             child process
+      │  POST /start ──────────────▶ spawn sh -c "<target>"
+      │◀──── { ok, pid } ────────────
+      │
+      │  GET  /output?wait_ms=2000 ──▶  (long-poll)
+      │◀──── { data: base64(...) } ─── stdout+stderr merged
+      │         (repeats in background)
+      │
+      │  POST /stdin  (base64)    ──▶  write to child stdin
+      │
+      │  POST /close             ──▶  SIGTERM, grace, then SIGKILL
+```
+
+All stdio is base64'd through JSON so ANSI escapes survive intact. stdout and stderr are merged in arrival order (matches the local `CLIAdapter`). See [`docs/remote-cli.md`](docs/remote-cli.md) for the full wire contract and [`cli-runner/README.md`](cli-runner/README.md) for a per-endpoint reference with curl examples.
 
 ### Web UI
 
@@ -254,6 +398,8 @@ The Docker image includes Chrome, Bun, and the pre-built UI. It uses Debian book
 | `GAUNTLET_PORT` | Server port | 4400 |
 | `GAUNTLET_AGENT_MODEL` | Default model for test execution | -- |
 | `GAUNTLET_FANOUT_MODEL` | Model for scenario generation | -- |
+| `GAUNTLET_RELAY_URL` | Default relay base URL for `--adapter remote-cli` | -- |
+| `GAUNTLET_RELAY_TOKEN` | Bearer token for the remote-cli relay | -- |
 
 ## Project structure
 

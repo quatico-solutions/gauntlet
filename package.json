@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
-    "hono": "^4.12.5",
+    "hono": "^4.12.12",
     "openai": "^6.27.0"
   }
 }

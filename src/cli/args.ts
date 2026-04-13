@@ -6,9 +6,11 @@ export interface RunArgs {
   scenarioPath: string;
   target: string;
   outDir: string;
-  adapter: "web" | "cli" | "tui";
+  adapter: "web" | "cli" | "tui" | "remote-cli";
   models: ModelConfig;
   chrome?: string;
+  relayUrl?: string;
+  relayToken?: string;
 }
 
 export interface ValidateArgs {
@@ -72,9 +74,11 @@ function parseRunArgs(args: string[]): RunArgs {
     scenarioPath: positional,
     target,
     outDir: flags.out ?? "./evidence",
-    adapter: (flags.adapter as "web" | "cli" | "tui") ?? "web",
+    adapter: (flags.adapter as "web" | "cli" | "tui" | "remote-cli") ?? "web",
     models: parseModelFlags(flags.model ?? []),
     chrome: flags.chrome,
+    relayUrl: flags["relay-url"] ?? process.env.GAUNTLET_RELAY_URL,
+    relayToken: flags["relay-token"] ?? process.env.GAUNTLET_RELAY_TOKEN,
   };
 }
 

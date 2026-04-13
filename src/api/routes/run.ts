@@ -10,7 +10,16 @@ import type { RunBroadcaster } from "../ws";
 import type { ScreencastStreamer as ScreencastStreamerType } from "../../streaming/screencast";
 import type { ErrorLog } from "./errors";
 
-function createAdapter(type: string, chromeEndpoint?: string): Adapter {
+interface RemoteCliConfig {
+  relayUrl?: string;
+  relayToken?: string;
+}
+
+function createAdapter(
+  type: string,
+  chromeEndpoint?: string,
+  remote?: RemoteCliConfig,
+): Adapter {
   switch (type) {
     case "cli": {
       const { CLIAdapter } = require("../../adapters/cli/adapter");
@@ -23,6 +32,14 @@ function createAdapter(type: string, chromeEndpoint?: string): Adapter {
     case "web": {
       const { WebAdapter } = require("../../adapters/web/adapter");
       return new WebAdapter({ chrome: chromeEndpoint });
+    }
+    case "remote-cli": {
+      const relayUrl = remote?.relayUrl ?? process.env.GAUNTLET_RELAY_URL;
+      const relayToken = remote?.relayToken ?? process.env.GAUNTLET_RELAY_TOKEN;
+      if (!relayUrl) throw new Error("relay_url is required for remote-cli (body.relay_url or GAUNTLET_RELAY_URL)");
+      if (!relayToken) throw new Error("relay_token is required for remote-cli (body.relay_token or GAUNTLET_RELAY_TOKEN)");
+      const { RemoteCLIAdapter } = require("../../adapters/cli/remote-adapter");
+      return new RemoteCLIAdapter({ baseUrl: relayUrl, token: relayToken });
     }
     default:
       throw new Error(`Unknown adapter type: ${type}`);
@@ -58,7 +75,10 @@ export function runRoutes(dataDir: string, broadcaster?: RunBroadcaster, errorLo
         });
       };
     }
-    const adapter = createAdapter(adapterType, body.chrome);
+    const adapter = createAdapter(adapterType, body.chrome, {
+      relayUrl: body.relay_url as string | undefined,
+      relayToken: body.relay_token as string | undefined,
+    });
 
     let streamer: ScreencastStreamerType | undefined;
     try {
