@@ -14,9 +14,9 @@ Beyond single-scenario testing, Gauntlet can **generate test variations** ("fano
 ## Architecture
 
 ```
-                  ┌─────────────┐
+                  ┌──────────────┐
                   │  Story Cards │  (markdown files with YAML frontmatter)
-                  └──────┬──────┘
+                  └──────┬───────┘
                          │
         ┌────────────────┼────────────────┐
         │                │                │
@@ -25,7 +25,7 @@ Beyond single-scenario testing, Gauntlet can **generate test variations** ("fano
         │                │
         └────────┬───────┘
                  │
-           ┌─────┴─────┐
+           ┌─────┴──────┐
            │   Agent    │  (agentic loop: LLM + browser tools, up to 50 turns)
            └─────┬──────┘
                  │
