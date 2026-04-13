@@ -1,3 +1,7 @@
+// Bump when result.json format changes in a way downstream consumers must notice.
+// Documented in docs/format.md.
+export const RESULT_SCHEMA_VERSION = 1;
+
 export type VetStatus = "pass" | "fail" | "investigate";
 
 export type ObservationKind =
@@ -15,6 +19,7 @@ export interface Observation {
 }
 
 export interface VetResult {
+  schemaVersion: number;
   scenario: string;
   status: VetStatus;
   summary: string;

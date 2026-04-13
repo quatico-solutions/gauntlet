@@ -18,6 +18,7 @@ export interface CardDetail {
 }
 
 export interface VetResult {
+  schemaVersion: number;
   scenario: string;
   status: "pass" | "fail" | "investigate";
   summary: string;
@@ -87,6 +88,14 @@ export const api = {
   results: {
     list: () => request<VetResult[]>("/results"),
     get: (id: string) => request<VetResult>(`/results/${id}`),
+    // Build a URL for any file inside a run directory, given the relative
+    // path stored in the manifest (e.g. "screenshots/001.png", "run.jsonl").
+    // This is the one place in the FE that turns a manifest path into a URL.
+    fileUrl: (scenario: string, relPath: string) =>
+      `/api/results/${encodeURIComponent(scenario)}/file/${relPath
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/")}`,
   },
   fanout: {
     generate: (id: string) =>

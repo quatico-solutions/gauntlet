@@ -49,33 +49,18 @@ export function resultRoutes(resultsDir: string) {
     }
   });
 
-  router.get("/:scenario/video", (c) => {
+  // Manifest-controlled file route: serves any file within a run directory by
+  // its relative path. The manifest entries in result.json already store
+  // relative paths (e.g. "screenshots/001.png"), so the client just passes
+  // the manifest string through. Path traversal is blocked via isSafePath.
+  // See docs/format.md for the contract.
+  router.get("/:scenario/file/:path{.+}", (c) => {
     const scenario = c.req.param("scenario");
+    const relPath = c.req.param("path");
     const scenarioDir = join(resultsDir, scenario);
+    const filePath = join(scenarioDir, relPath);
 
-    if (!isSafePath(resultsDir, scenarioDir)) {
-      return c.json({ error: "invalid path" }, 400);
-    }
-
-    for (const ext of ["webm", "mp4"]) {
-      const videoPath = join(scenarioDir, `video.${ext}`);
-      if (existsSync(videoPath)) {
-        const content = readFileSync(videoPath);
-        return new Response(content, {
-          headers: { "Content-Type": `video/${ext}` },
-        });
-      }
-    }
-
-    return c.json({ error: "no video found" }, 404);
-  });
-
-  router.get("/:scenario/screenshots/:name", (c) => {
-    const scenario = c.req.param("scenario");
-    const name = c.req.param("name");
-    const filePath = join(resultsDir, scenario, name);
-
-    if (!isSafePath(resultsDir, filePath)) {
+    if (!isSafePath(scenarioDir, filePath)) {
       return c.json({ error: "invalid path" }, 400);
     }
 
@@ -84,7 +69,7 @@ export function resultRoutes(resultsDir: string) {
     }
 
     const content = readFileSync(filePath);
-    const ext = name.split(".").pop() || "png";
+    const ext = relPath.split(".").pop() || "";
     return new Response(content, {
       headers: { "Content-Type": getMimeType(ext) },
     });

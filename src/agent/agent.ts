@@ -3,6 +3,7 @@ import type { Adapter } from "../adapters/adapter";
 import type { EvidenceLogger } from "../evidence/logger";
 import type { StoryCard } from "../format/story-card";
 import type { VetResult, VetStatus, Observation } from "../types";
+import { RESULT_SCHEMA_VERSION } from "../types";
 import { buildSystemPrompt } from "./prompts";
 
 const MAX_TURNS = 50;
@@ -98,6 +99,7 @@ export async function runAgent(
     if (report) {
       const args = report.arguments;
       return {
+        schemaVersion: RESULT_SCHEMA_VERSION,
         scenario: card.id,
         status: args.status as VetStatus,
         summary: args.summary as string,
@@ -150,6 +152,7 @@ export async function runAgent(
 
   // Max turns reached
   return {
+    schemaVersion: RESULT_SCHEMA_VERSION,
     scenario: card.id,
     status: "investigate",
     summary: "Agent reached maximum turn limit without reporting a result",

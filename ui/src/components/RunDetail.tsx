@@ -79,14 +79,10 @@ export function RunDetail({ result, onFanout }: RunDetailProps) {
         </div>
       )}
 
-      <video
-        controls
-        className="w-full rounded border border-edge mb-4"
-        src={`/api/results/${result.scenario}/video`}
-        onError={(e) => {
-          (e.target as HTMLVideoElement).style.display = "none";
-        }}
-      />
+      {/* Video playback is not yet wired up — the writer records screencast
+          frames under frames/ but does not stitch them into a video. When that
+          lands, add the video to result.json's evidence manifest and render it
+          via api.results.fileUrl(). See docs/format.md. */}
 
       <div className="space-y-4">
         <div className="card p-4">
@@ -121,11 +117,11 @@ export function RunDetail({ result, onFanout }: RunDetailProps) {
           <div className="card p-4">
             <h2 className="section-label mb-2">Screenshots</h2>
             <div className="grid grid-cols-2 gap-3">
-              {result.evidence.screenshots.map((name) => (
+              {result.evidence.screenshots.map((relPath) => (
                 <img
-                  key={name}
-                  src={`/api/results/${result.scenario}/screenshots/${name}`}
-                  alt={name}
+                  key={relPath}
+                  src={api.results.fileUrl(result.scenario, relPath)}
+                  alt={relPath}
                   className="rounded border border-edge"
                 />
               ))}
