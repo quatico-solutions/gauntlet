@@ -1,0 +1,20 @@
+{"timestamp":"2026-04-13T23:16:30.272Z","action":"read_output","params":{}}
+{"timestamp":"2026-04-13T23:16:32.802Z","action":"type","params":{"text":"add buy milk"}}
+{"timestamp":"2026-04-13T23:16:34.649Z","action":"press","params":{"key":"Enter"}}
+{"timestamp":"2026-04-13T23:16:36.696Z","action":"read_output","params":{}}
+{"timestamp":"2026-04-13T23:16:38.381Z","action":"type","params":{"text":"add write tests"}}
+{"timestamp":"2026-04-13T23:16:39.664Z","action":"press","params":{"key":"Enter"}}
+{"timestamp":"2026-04-13T23:16:40.948Z","action":"read_output","params":{}}
+{"timestamp":"2026-04-13T23:16:43.181Z","action":"type","params":{"text":"list"}}
+{"timestamp":"2026-04-13T23:16:44.543Z","action":"press","params":{"key":"Enter"}}
+{"timestamp":"2026-04-13T23:16:46.132Z","action":"read_output","params":{}}
+{"timestamp":"2026-04-13T23:16:48.213Z","action":"type","params":{"text":"done 1"}}
+{"timestamp":"2026-04-13T23:16:49.451Z","action":"press","params":{"key":"Enter"}}
+{"timestamp":"2026-04-13T23:16:52.189Z","action":"read_output","params":{}}
+{"timestamp":"2026-04-13T23:16:54.223Z","action":"type","params":{"text":"list"}}
+{"timestamp":"2026-04-13T23:16:57.219Z","action":"press","params":{"key":"Enter"}}
+{"timestamp":"2026-04-13T23:16:58.269Z","action":"read_output","params":{}}
+{"timestamp":"2026-04-13T23:17:00.457Z","action":"type","params":{"text":"quit"}}
+{"timestamp":"2026-04-13T23:17:03.116Z","action":"press","params":{"key":"Enter"}}
+{"timestamp":"2026-04-13T23:17:04.340Z","action":"read_output","params":{}}
+{"timestamp":"2026-04-13T23:17:07.650Z","action":"read_output","params":{}}
