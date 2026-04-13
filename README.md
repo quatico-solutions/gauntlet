@@ -178,8 +178,7 @@ The HTTP API (Hono) serves at `/api`:
 | `/api/run/:id` | POST | Execute a scenario |
 | `/api/results` | GET | List all results |
 | `/api/results/:id` | GET | Get result metadata |
-| `/api/results/:id/video` | GET | Stream test video |
-| `/api/results/:id/screenshots/:name` | GET | Get a screenshot |
+| `/api/results/:id/file/:path` | GET | Fetch a file from a run (must be listed in result.json) |
 | `/api/fanout/:id` | POST | Generate test variations |
 | `/api/fanout/:id/observations` | POST | Generate cards from observations |
 | `/api/fanout/:id/failure` | POST | Generate cards from a failure |
