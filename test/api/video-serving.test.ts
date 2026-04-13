@@ -91,4 +91,35 @@ describe("Manifest-gated file route", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("image/png");
   });
+
+  test("404s a traversal path the manifest does not list", async () => {
+    makeRun("honest-manifest", {
+      schemaVersion: 1,
+      scenario: "honest-manifest",
+      status: "pass",
+      evidence: { screenshots: [], log: "run.jsonl" },
+    });
+
+    const res = await app.request("/api/results/honest-manifest/file/..%2F..%2Fresult.json");
+    expect([400, 404]).toContain(res.status);
+  });
+
+  test("rejects a traversal path even when the manifest lists it (defense-in-depth)", async () => {
+    // Tampered manifest: the evidence list contains a path that escapes the
+    // run directory. The manifest gate would allow it (string match succeeds),
+    // so only isSafePath prevents the route from serving a file outside the
+    // run dir. This test verifies that second layer still catches it.
+    makeRun("tampered", {
+      schemaVersion: 1,
+      scenario: "tampered",
+      status: "pass",
+      evidence: { screenshots: ["../../etc/passwd"], log: "run.jsonl" },
+    });
+
+    const res = await app.request("/api/results/tampered/file/..%2F..%2Fetc%2Fpasswd");
+    expect([400, 404]).toContain(res.status);
+    // Sanity: make sure the status is NOT 200 — if it were, we'd be leaking
+    // files outside the scenario directory.
+    expect(res.status).not.toBe(200);
+  });
 });
