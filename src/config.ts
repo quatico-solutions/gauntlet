@@ -44,7 +44,12 @@ export interface RunRequestBody {
 export interface EffectiveRunConfig {
   target: string;
   model: string;
-  chrome: ChromeEndpoint;
+  /**
+   * Undefined means: caller did not specify an endpoint and the server
+   * config is at its default — let WebAdapter auto-launch a local Chrome.
+   * A defined value means an explicit endpoint (from body, env, or flag).
+   */
+  chrome: ChromeEndpoint | undefined;
   adapter: "web" | "cli" | "tui";
   dataDir: string;
 }
@@ -74,9 +79,16 @@ export function validateRunBody(body: unknown): RunRequestBody {
 }
 
 export function mergeRunConfig(app: AppConfig, body: RunRequestBody): EffectiveRunConfig {
-  const chrome = body.chrome
+  // Precedence: explicit body > explicit server config (env/flag) > undefined (auto-launch).
+  // Source attribution is the tiebreaker — if the user never specified a
+  // chrome endpoint anywhere, leave it undefined so WebAdapter falls back
+  // to its auto-launch path instead of trying to attach to the default
+  // 127.0.0.1:9222 (which silently breaks plain `gauntlet run`).
+  const chrome: ChromeEndpoint | undefined = body.chrome
     ? parseChromeEndpoint(body.chrome, "body.chrome")
-    : app.defaultChrome;
+    : app.sources.defaultChrome === "default"
+      ? undefined
+      : app.defaultChrome;
   return {
     target: body.target,
     model: body.model ?? app.models.agent,

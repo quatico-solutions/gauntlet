@@ -42,7 +42,14 @@ export async function run(opts: RunCommandOptions): Promise<void> {
     }
     case "web": {
       const { WebAdapter } = await import("../adapters/web/adapter");
-      adapter = new WebAdapter({ chrome: config.defaultChrome });
+      // Only pass an endpoint if the user explicitly set one (env or flag).
+      // When the source is "default", leave it undefined so WebAdapter
+      // auto-launches a local headless Chrome — preserving the pre-refactor
+      // behavior of plain `gauntlet run card.md --target ...`.
+      const chromeOpt = config.sources.defaultChrome === "default"
+        ? undefined
+        : config.defaultChrome;
+      adapter = new WebAdapter({ chrome: chromeOpt });
       await adapter.start(target);
       break;
     }

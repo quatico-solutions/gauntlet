@@ -158,6 +158,33 @@ describe("Run API", () => {
     expect(registryHadEntryAtTerminal).toBe(false);
   });
 
+  test("POST /api/run/:id body chrome override wins over server default", async () => {
+    // Server default points at one host, body overrides with another.
+    // We use adapter: cli to avoid touching real Chrome — the assertion is
+    // that mergeRunConfig (called inside the route) honors the body override.
+    // We import mergeRunConfig directly to validate the threading.
+    const { mergeRunConfig, validateRunBody } = await import("../../src/config");
+    const config = loadConfig(
+      { dataDir },
+      { GAUNTLET_AGENT_MODEL: "claude-sonnet-4-6", GAUNTLET_CHROME: "server:9100" } as NodeJS.ProcessEnv,
+    );
+    const body = validateRunBody({ target: "http://localhost:3000", chrome: "override:9333", adapter: "cli" });
+    const eff = mergeRunConfig(config, body);
+    expect(eff.chrome).toEqual({ host: "override", port: 9333 });
+
+    // And confirm the route accepts the request (returns 202).
+    const app = new Hono();
+    app.route("/api/run", runRoutes(config));
+    const res = await app.request("/api/run/story-001", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: "http://localhost:3000", chrome: "override:9333", adapter: "cli" }),
+    });
+    expect(res.status).toBe(202);
+
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
   test("POST /api/run/:id returns 400 when model is not in allow-list", async () => {
     const config = loadConfig(
       { dataDir },

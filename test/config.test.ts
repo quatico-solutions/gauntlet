@@ -144,4 +144,22 @@ describe("mergeRunConfig", () => {
     expect(() => mergeRunConfig(app, { target: "http://x", chrome: "no-port" }))
       .toThrow(/chrome/i);
   });
+
+  test("chrome is undefined when neither body nor server config specified (default source)", () => {
+    const appDefault = loadConfig({}, {} as NodeJS.ProcessEnv);
+    const eff = mergeRunConfig(appDefault, { target: "http://x" });
+    expect(eff.chrome).toBeUndefined();
+  });
+
+  test("chrome uses server default when env set it explicitly", () => {
+    const appEnv = loadConfig({}, { GAUNTLET_CHROME: "svc:9000" } as NodeJS.ProcessEnv);
+    const eff = mergeRunConfig(appEnv, { target: "http://x" });
+    expect(eff.chrome).toEqual({ host: "svc", port: 9000 });
+  });
+
+  test("chrome uses server default when flag set it explicitly", () => {
+    const appFlag = loadConfig({ chrome: "flaghost:9001" }, {} as NodeJS.ProcessEnv);
+    const eff = mergeRunConfig(appFlag, { target: "http://x" });
+    expect(eff.chrome).toEqual({ host: "flaghost", port: 9001 });
+  });
 });
