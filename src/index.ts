@@ -1,5 +1,22 @@
 import { parseArgs } from "./cli/args";
 import { run } from "./cli/run";
+import type { AppConfig, CliArgsInput } from "./config";
+
+/**
+ * loadConfig throws on bad env/flag values. Surface those as a clean
+ * one-line error and exit, instead of letting Bun's top-level rejection
+ * print a full stack trace — particularly important for `gauntlet config`,
+ * whose whole purpose is to diagnose config problems.
+ */
+async function loadConfigOrExit(cli: CliArgsInput): Promise<AppConfig> {
+  const { loadConfig } = await import("./config");
+  try {
+    return loadConfig(cli, process.env);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+}
 
 async function main() {
   let args;
@@ -12,8 +29,7 @@ async function main() {
 
   switch (args.command) {
     case "run": {
-      const { loadConfig } = await import("./config");
-      const config = loadConfig(args.cli, process.env);
+      const config = await loadConfigOrExit(args.cli);
       await run({
         scenarioPath: args.scenarioPath,
         target: args.cli.target ?? "",
@@ -41,7 +57,12 @@ async function main() {
     }
     case "config": {
       const { runConfigCommand } = await import("./cli/config-command");
-      console.log(runConfigCommand(args, process.env));
+      try {
+        console.log(runConfigCommand(args, process.env));
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+      }
       break;
     }
     case "serve": {
@@ -49,10 +70,9 @@ async function main() {
       const { RunBroadcaster } = await import("./api/ws");
       const { ActiveRunRegistry } = await import("./api/active-runs");
       const { handleWsOpen } = await import("./api/ws-handlers");
-      const { loadConfig } = await import("./config");
       const { join } = await import("path");
 
-      const config = loadConfig(args.cli, process.env);
+      const config = await loadConfigOrExit(args.cli);
 
       const uiDir = join(import.meta.dir, "..", "ui", "dist");
       const broadcaster = new RunBroadcaster();

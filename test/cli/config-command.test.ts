@@ -29,6 +29,13 @@ describe("runConfigCommand", () => {
     expect(result).toMatch(/port:\s+5500\s+\(env\)/);
   });
 
+  test("runConfigCommand propagates loadConfig errors (caller responsible for display)", () => {
+    expect(() => runConfigCommand(
+      minimalArgs(),
+      { GAUNTLET_CHROME: "not-valid" } as NodeJS.ProcessEnv,
+    )).toThrow(/GAUNTLET_CHROME/);
+  });
+
   test("sdkEnv section only shows presence for secrets", () => {
     const result = runConfigCommand({ ...minimalArgs(), json: true }, {
       ANTHROPIC_API_KEY: "sk-ant-secret",
