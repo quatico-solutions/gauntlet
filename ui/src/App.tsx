@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { Sidebar } from "./components/Sidebar";
@@ -216,11 +216,11 @@ export default function App() {
     refreshResults();
   }
 
-  function handleRunComplete(id: string) {
+  const handleRunComplete = useCallback((id: string) => {
     refreshActive();
     refreshResults();
     navigate(`/runs/${id}`);
-  }
+  }, [refreshActive, refreshResults, navigate]);
 
   return (
     <>
