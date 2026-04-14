@@ -34,6 +34,7 @@ async function main() {
       const { createApp } = await import("./api/server");
       const { RunBroadcaster } = await import("./api/ws");
       const { ActiveRunRegistry } = await import("./api/active-runs");
+      const { handleWsOpen } = await import("./api/ws-handlers");
       const { join } = await import("path");
       const dataDir = args.dataDir ?? ".";
       const uiDir = join(import.meta.dir, "..", "ui", "dist");
@@ -61,18 +62,7 @@ async function main() {
         websocket: {
           open(ws) {
             const runId = (ws.data as any).runId;
-            if (!runId) return;
-            broadcaster.addClient(runId, ws as any);
-            const snap = registry.getSnapshot(runId);
-            if (snap) {
-              ws.send(JSON.stringify({
-                type: "snapshot",
-                lastFrame: snap.lastFrame,
-                progressLog: snap.progressLog,
-              }));
-            } else {
-              ws.send(JSON.stringify({ type: "gone" }));
-            }
+            if (runId) handleWsOpen(registry, broadcaster, runId, ws as any);
           },
           close(ws) {
             const runId = (ws.data as any).runId;
