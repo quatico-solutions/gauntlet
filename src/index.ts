@@ -40,6 +40,11 @@ async function main() {
       await fanout(args.scenarioPath, args.outDir, args.models, args.resultDir);
       break;
     }
+    case "config": {
+      const { runConfigCommand } = await import("./cli/config-command");
+      console.log(runConfigCommand(args, process.env));
+      break;
+    }
     case "serve": {
       const { createApp } = await import("./api/server");
       const { RunBroadcaster } = await import("./api/ws");

@@ -6,6 +6,7 @@ const RUN_ALLOWED = new Set(["target", "out", "adapter", "model", "chrome", "dat
 const VALIDATE_ALLOWED = new Set<string>([]);
 const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
 const SERVE_ALLOWED = new Set(["port", "data-dir", "chrome", "target", "model"]);
+const CONFIG_ALLOWED = new Set(["json", "data-dir", "port", "chrome", "target", "model"]);
 
 function rejectUnknownFlags(
   flags: Record<string, unknown>,
@@ -47,7 +48,13 @@ export interface ServeArgs {
   cli: CliArgsInput;
 }
 
-export type ParsedArgs = RunArgs | ValidateArgs | FanoutArgs | ServeArgs;
+export interface ConfigArgs {
+  command: "config";
+  json: boolean;
+  cli: CliArgsInput;
+}
+
+export type ParsedArgs = RunArgs | ValidateArgs | FanoutArgs | ServeArgs | ConfigArgs;
 
 export function parseArgs(argv: string[]): ParsedArgs {
   // Skip "bun" and script name
@@ -67,9 +74,36 @@ export function parseArgs(argv: string[]): ParsedArgs {
       return parseFanoutArgs(args.slice(1));
     case "serve":
       return parseServeArgs(args.slice(1));
+    case "config":
+      return parseConfigArgs(args.slice(1));
     default:
       throw new Error(`Unknown command: ${command}\n${usage()}`);
   }
+}
+
+function parseConfigArgs(args: string[]): ConfigArgs {
+  // `--json` is acceptable as a bareword (no value) or as `--json true`.
+  // We detect bareword first so parseFlags does not consume the next positional.
+  const hasBarewordJson = args.some((a, i) => a === "--json" && (args[i + 1] === undefined || args[i + 1].startsWith("--")));
+  const flags = parseFlags(args);
+  rejectUnknownFlags(flags, CONFIG_ALLOWED, "config");
+  const json = hasBarewordJson || flags.json === "true";
+  // If we picked up a positional value for --json, drop it from the dict so the cli
+  // input doesn't see a stray value.
+  if (flags.json && flags.json !== "true") {
+    // Treat anything else as bareword detection failure — leave json as-is.
+  }
+  return {
+    command: "config",
+    json,
+    cli: {
+      dataDir: flags["data-dir"],
+      port: flags.port ? parseInt(flags.port, 10) : undefined,
+      chrome: flags.chrome,
+      target: flags.target,
+      models: parseModelFlagArray(flags.model),
+    },
+  };
 }
 
 function parseRunArgs(args: string[]): RunArgs {
