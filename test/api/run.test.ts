@@ -1,11 +1,14 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { runRoutes } from "../../src/api/routes/run";
+import { runRoutes, executeRun } from "../../src/api/routes/run";
 import { ActiveRunRegistry } from "../../src/api/active-runs";
 import { RunBroadcaster } from "../../src/api/ws";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { Hono } from "hono";
+import type { Adapter } from "../../src/adapters/adapter";
+import type { LLMClient } from "../../src/models/provider";
+import type { StoryCard } from "../../src/format/story-card";
 
 const STORY_MD = `---
 id: story-001
@@ -85,6 +88,71 @@ describe("Run API", () => {
 
     // Give the detached task time to finish writing before afterEach rm's the dir.
     await new Promise((r) => setTimeout(r, 100));
+  });
+
+  test("executeRun unregisters before broadcasting terminal event", async () => {
+    // Stub adapter that throws on start — exercises the catch + finally
+    // path without needing a real LLM or Chrome.
+    const stubAdapter: Adapter = {
+      start: async () => { throw new Error("stub start failure"); },
+      close: async () => {},
+      // Unused by the error path, but required by the interface.
+      type: async () => {},
+      press: async () => {},
+      readOutput: () => "",
+    } as unknown as Adapter;
+
+    const stubClient: LLMClient = {} as unknown as LLMClient;
+
+    const card: StoryCard = {
+      id: "story-001",
+      title: "Test",
+      status: "draft",
+      tags: ["core"],
+      body: "",
+      acceptance: ["Something works"],
+    } as unknown as StoryCard;
+
+    const registry = new ActiveRunRegistry();
+    const broadcaster = new RunBroadcaster();
+    registry.register({
+      id: "story-001",
+      title: "Test",
+      target: "x",
+      model: "m",
+      startedAt: 1,
+    });
+
+    // Track the order of unregister vs. the terminal broadcast. A fake WS
+    // client captures whether the registry still held this run at the
+    // moment the terminal event arrived. It must already be empty.
+    let registryHadEntryAtTerminal: boolean | null = null;
+    const ws = {
+      readyState: 1,
+      send(data: string) {
+        const msg = JSON.parse(data);
+        if (msg.type === "complete" || msg.type === "error") {
+          registryHadEntryAtTerminal = registry.has("story-001");
+        }
+      },
+    };
+    broadcaster.addClient("story-001", ws as any);
+
+    await executeRun({
+      card,
+      adapter: stubAdapter,
+      adapterType: "cli",
+      client: stubClient,
+      target: "http://localhost:3000",
+      outDir: join(dataDir, "results", "story-001"),
+      broadcaster,
+      registry,
+    });
+
+    // After executeRun resolves, registry must be clean.
+    expect(registry.has("story-001")).toBe(false);
+    // And when the terminal event fired, the entry was already gone.
+    expect(registryHadEntryAtTerminal).toBe(false);
   });
 
   test("POST /api/run/:id returns 400 when no model configured", async () => {

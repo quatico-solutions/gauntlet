@@ -91,7 +91,7 @@ export function runRoutes(
   return router;
 }
 
-interface ExecuteRunOpts {
+export interface ExecuteRunOpts {
   card: StoryCard;
   adapter: Adapter;
   adapterType: string;
@@ -103,7 +103,7 @@ interface ExecuteRunOpts {
   errorLog?: ErrorLog;
 }
 
-async function executeRun(opts: ExecuteRunOpts): Promise<void> {
+export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
   const { card, adapter, adapterType, client, target, outDir, broadcaster, registry, errorLog } = opts;
   const logger = new EvidenceLogger(outDir);
 
@@ -121,6 +121,8 @@ async function executeRun(opts: ExecuteRunOpts): Promise<void> {
   }
 
   let streamer: ScreencastStreamerType | undefined;
+  let terminal: Record<string, unknown> | null = null;
+
   try {
     await adapter.start(target);
 
@@ -146,11 +148,11 @@ async function executeRun(opts: ExecuteRunOpts): Promise<void> {
     const result = await runAgent(card, adapter, client, logger, target);
     writeResultFiles(outDir, result);
 
-    broadcaster?.send(card.id, { type: "complete", result });
+    terminal = { type: "complete", result };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     errorLog?.add("run", `${card.id}: ${message}`);
-    broadcaster?.send(card.id, { type: "error", message });
+    terminal = { type: "error", message };
   } finally {
     if (streamer) {
       try {
@@ -165,5 +167,9 @@ async function executeRun(opts: ExecuteRunOpts): Promise<void> {
       /* ignore */
     }
     registry?.unregister(card.id);
+    // Emit the terminal event AFTER unregister so a late-connecting
+    // WebSocket sees an empty registry (and receives `gone`) instead of a
+    // stale snapshot that would never get a follow-up event.
+    if (terminal) broadcaster?.send(card.id, terminal);
   }
 }
