@@ -26,8 +26,7 @@ function createAdapter(type: string, chrome?: ChromeEndpoint): Adapter {
     }
     case "web": {
       const { WebAdapter } = require("../../adapters/web/adapter");
-      // WebAdapter still takes the legacy `chrome: string` shape until Task 6.
-      return new WebAdapter({ chrome: chrome ? `${chrome.host}:${chrome.port}` : undefined });
+      return new WebAdapter({ chrome });
     }
     default:
       throw new Error(`Unknown adapter type: ${type}`);

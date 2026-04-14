@@ -34,7 +34,13 @@ export async function run(
     }
     case "web": {
       const { WebAdapter } = await import("../adapters/web/adapter");
-      adapter = new WebAdapter({ chrome: chromeEndpoint });
+      let chrome: { host: string; port: number } | undefined;
+      if (chromeEndpoint) {
+        const idx = chromeEndpoint.lastIndexOf(":");
+        if (idx === -1) throw new Error(`Invalid --chrome "${chromeEndpoint}": expected host:port`);
+        chrome = { host: chromeEndpoint.slice(0, idx), port: parseInt(chromeEndpoint.slice(idx + 1), 10) };
+      }
+      adapter = new WebAdapter({ chrome });
       await adapter.start(target);
       break;
     }

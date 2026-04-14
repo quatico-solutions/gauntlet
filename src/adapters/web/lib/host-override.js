@@ -1,30 +1,49 @@
 const DEFAULT_PORT = 9222;
 const DEFAULT_HOST = '127.0.0.1';
 
-const CHROME_DEBUG_PORT = (() => {
+let debugHost = process.env.CHROME_WS_HOST || DEFAULT_HOST;
+let debugPort = (() => {
   const parsed = parseInt(process.env.CHROME_WS_PORT || `${DEFAULT_PORT}`, 10);
   return Number.isNaN(parsed) ? DEFAULT_PORT : parsed;
 })();
+let overrideEnabled =
+  process.env.CHROME_WS_HOST !== undefined || process.env.CHROME_WS_PORT !== undefined;
 
-const HAS_HOST_OVERRIDE = process.env.CHROME_WS_HOST !== undefined;
-const HAS_PORT_OVERRIDE = process.env.CHROME_WS_PORT !== undefined;
+function setDefaults(host, port) {
+  debugHost = host;
+  debugPort = port;
+  overrideEnabled = true;
+}
 
-const WS_OVERRIDE_ENABLED = HAS_HOST_OVERRIDE || HAS_PORT_OVERRIDE;
+function getHost() {
+  return debugHost;
+}
 
-const CHROME_DEBUG_HOST = HAS_HOST_OVERRIDE ? process.env.CHROME_WS_HOST : DEFAULT_HOST;
-const CHROME_DEBUG_BASE = `http://${CHROME_DEBUG_HOST}:${CHROME_DEBUG_PORT}`;
+function getPort() {
+  return debugPort;
+}
 
-function rewriteWsUrl(originalUrl, host = CHROME_DEBUG_HOST, port = CHROME_DEBUG_PORT) {
+function getBase() {
+  return `http://${debugHost}:${debugPort}`;
+}
+
+function isOverrideEnabled() {
+  return overrideEnabled;
+}
+
+function rewriteWsUrl(originalUrl, host, port) {
   if (!originalUrl || typeof originalUrl !== 'string') {
     return originalUrl;
   }
-  if (!WS_OVERRIDE_ENABLED) {
+  if (!overrideEnabled) {
     return originalUrl;
   }
+  const useHost = host !== undefined ? host : debugHost;
+  const usePort = port !== undefined ? port : debugPort;
   try {
     const url = new URL(originalUrl);
-    url.hostname = host;
-    url.port = `${port}`;
+    url.hostname = useHost;
+    url.port = `${usePort}`;
     return url.toString();
   } catch {
     return originalUrl;
@@ -32,9 +51,10 @@ function rewriteWsUrl(originalUrl, host = CHROME_DEBUG_HOST, port = CHROME_DEBUG
 }
 
 module.exports = {
-  CHROME_DEBUG_HOST,
-  CHROME_DEBUG_PORT,
-  CHROME_DEBUG_BASE,
+  setDefaults,
+  getHost,
+  getPort,
+  getBase,
+  isOverrideEnabled,
   rewriteWsUrl,
-  WS_OVERRIDE_ENABLED
 };

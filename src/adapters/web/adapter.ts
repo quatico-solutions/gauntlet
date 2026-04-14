@@ -4,12 +4,13 @@ import { tmpdir } from "os";
 import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
+import type { ChromeEndpoint } from "../../config";
 
 // The forked CDP library is CommonJS JS — use require for bun compatibility
 const chrome = require("./lib/chrome-ws-lib");
 
 export interface WebAdapterOptions {
-  chrome?: string; // host:port for remote Chrome (e.g. "localhost:9222")
+  chrome?: ChromeEndpoint;
 }
 
 export class WebAdapter implements Adapter {
@@ -18,11 +19,12 @@ export class WebAdapter implements Adapter {
   constructor(options?: WebAdapterOptions) {
     this.remote = false;
     if (options?.chrome) {
-      const [host, port] = options.chrome.split(":");
-      process.env.CHROME_WS_HOST = host;
-      process.env.CHROME_WS_PORT = port;
+      chrome.setEndpoint(options.chrome.host, options.chrome.port);
       this.remote = true;
     }
+    // If no chrome passed, chrome-ws-lib uses its startup defaults
+    // (which come from host-override.js's mutable state — set by setDefaults
+    // or seeded from CHROME_WS_HOST/CHROME_WS_PORT at module load).
   }
 
   async start(url: string): Promise<void> {

@@ -16,15 +16,22 @@
  * - JRV-129: Multi-element selector warnings
  */
 
-const {
-  CHROME_DEBUG_HOST,
-  CHROME_DEBUG_PORT,
-  rewriteWsUrl
-} = require('./host-override');
+const hostOverride = require('./host-override');
+const { rewriteWsUrl } = hostOverride;
 
 // Dynamic port: updated by startChrome() when Chrome launches or reconnects.
-// Defaults to CHROME_DEBUG_PORT (from env CHROME_WS_PORT or 9222).
-let activePort = CHROME_DEBUG_PORT;
+// Defaults to host-override's port (which itself defaults to env or 9222).
+let activePort = hostOverride.getPort();
+
+/**
+ * Set the Chrome endpoint that this module talks to. Called by WebAdapter
+ * during loadConfig wiring so the server can drive a remote Chrome without
+ * mutating process.env.
+ */
+function setEndpoint(host, port) {
+  hostOverride.setDefaults(host, port);
+  activePort = port;
+}
 
 // Port range for dynamic allocation (tried sequentially starting at 9222 for backward compat)
 const PORT_RANGE_START = 9222;
@@ -213,7 +220,7 @@ async function chromeHttpAt(host, port, path, method = 'GET') {
 
 // Helper to make HTTP requests to Chrome on the active port
 async function chromeHttp(path, method = 'GET') {
-  return chromeHttpAt(CHROME_DEBUG_HOST, activePort, path, method);
+  return chromeHttpAt(hostOverride.getHost(), activePort, path, method);
 }
 
 // Console message storage per tab
@@ -233,7 +240,7 @@ let chromeProfileName = 'superpowers-chrome'; // Default profile name
 async function resolveWsUrl(wsUrlOrIndex) {
   // If it's already a WebSocket URL, rewrite and return it
   if (typeof wsUrlOrIndex === 'string' && wsUrlOrIndex.startsWith('ws://')) {
-    return rewriteWsUrl(wsUrlOrIndex, CHROME_DEBUG_HOST, activePort);
+    return rewriteWsUrl(wsUrlOrIndex, hostOverride.getHost(), activePort);
   }
 
   // If it's a number (tab index), resolve it
@@ -431,7 +438,7 @@ async function getTabs() {
     .filter(tab => tab.type === 'page')
     .map(tab => ({
       ...tab,
-      webSocketDebuggerUrl: rewriteWsUrl(tab.webSocketDebuggerUrl, CHROME_DEBUG_HOST, activePort)
+      webSocketDebuggerUrl: rewriteWsUrl(tab.webSocketDebuggerUrl, hostOverride.getHost(), activePort)
     }));
 }
 
@@ -439,7 +446,7 @@ async function newTab(url = 'about:blank') {
   const encoded = encodeURIComponent(url);
   const tab = await chromeHttp(`/json/new?${encoded}`, 'PUT');
   if (tab && typeof tab === 'object') {
-    tab.webSocketDebuggerUrl = rewriteWsUrl(tab.webSocketDebuggerUrl, CHROME_DEBUG_HOST, activePort);
+    tab.webSocketDebuggerUrl = rewriteWsUrl(tab.webSocketDebuggerUrl, hostOverride.getHost(), activePort);
   }
   return tab;
 }
@@ -1210,7 +1217,7 @@ async function startChrome(headless = null, profileName = null, port = null) {
   if (!port) {
     const meta = readProfileMeta(chromeProfileName);
     if (meta && meta.port) {
-      if (await isPortAlive(CHROME_DEBUG_HOST, meta.port, meta.pid)) {
+      if (await isPortAlive(hostOverride.getHost(), meta.port, meta.pid)) {
         activePort = meta.port;
         console.error(`Reconnected to existing Chrome (port: ${meta.port}, PID: ${meta.pid}, profile: ${chromeProfileName})`);
         return;
@@ -1227,7 +1234,7 @@ async function startChrome(headless = null, profileName = null, port = null) {
   if (port) {
     chosenPort = port;
   } else if (HAS_ENV_PORT) {
-    chosenPort = CHROME_DEBUG_PORT; // already parsed from env by host-override.js
+    chosenPort = hostOverride.getPort(); // already parsed from env by host-override.js
   } else {
     chosenPort = await findAvailablePort();
   }
@@ -1358,7 +1365,7 @@ async function killChrome() {
   // Clean up meta.json so other sessions know this port is free
   clearProfileMeta(chromeProfileName);
   chromeProcess = null;
-  activePort = CHROME_DEBUG_PORT;
+  activePort = hostOverride.getPort();
 }
 
 async function showBrowser() {
@@ -2377,6 +2384,9 @@ module.exports = {
   sendCdpCommand,
   onCdpEvent,
   offCdpEvent,
+
+  // Endpoint configuration (set by WebAdapter during loadConfig wiring)
+  setEndpoint,
 
   // Legacy aliases (for backwards compatibility)
   cdpClick: click,
