@@ -5,9 +5,36 @@ describe("parseArgs", () => {
   test("parses run command with required args", () => {
     const args = parseArgs(["bun", "index.ts", "run", "story.md", "--target", "http://localhost:3000", "--out", "./evidence"]);
     expect(args.command).toBe("run");
-    expect(args.scenarioPath).toBe("story.md");
+    if (args.command !== "run") throw new Error("unreachable");
+    expect(args.scenarioPaths).toEqual(["story.md"]);
     expect(args.target).toBe("http://localhost:3000");
     expect(args.outDir).toBe("./evidence");
+  });
+
+  test("parses run command with multiple scenario paths", () => {
+    const args = parseArgs([
+      "bun", "index.ts", "run",
+      "a.md", "b.md", "c.md",
+      "--target", "http://localhost:3000",
+    ]);
+    expect(args.command).toBe("run");
+    if (args.command !== "run") throw new Error("unreachable");
+    expect(args.scenarioPaths).toEqual(["a.md", "b.md", "c.md"]);
+    expect(args.target).toBe("http://localhost:3000");
+  });
+
+  test("parses run command with multiple paths interleaved with flags", () => {
+    const args = parseArgs([
+      "bun", "index.ts", "run",
+      "a.md",
+      "--target", "http://localhost:3000",
+      "b.md",
+      "--adapter", "cli",
+    ]);
+    expect(args.command).toBe("run");
+    if (args.command !== "run") throw new Error("unreachable");
+    expect(args.scenarioPaths).toEqual(["a.md", "b.md"]);
+    expect(args.adapter).toBe("cli");
   });
 
   test("defaults adapter to web", () => {

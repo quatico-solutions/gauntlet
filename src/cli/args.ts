@@ -3,7 +3,7 @@ import type { ModelConfig } from "../types";
 
 export interface RunArgs {
   command: "run";
-  scenarioPath: string;
+  scenarioPaths: string[];
   target: string;
   outDir: string;
   adapter: "web" | "cli" | "tui";
@@ -56,9 +56,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 function parseRunArgs(args: string[]): RunArgs {
-  const positional = extractPositional(args);
-  if (!positional) {
-    throw new Error("Missing scenario path\n\nUsage: gauntlet run <scenario.md> --target <url>");
+  const positionals = extractPositionals(args);
+  if (positionals.length === 0) {
+    throw new Error("Missing scenario path\n\nUsage: gauntlet run <scenario.md> [<scenario.md> ...] --target <url>");
   }
 
   const flags = parseFlags(args);
@@ -69,7 +69,7 @@ function parseRunArgs(args: string[]): RunArgs {
 
   return {
     command: "run",
-    scenarioPath: positional,
+    scenarioPaths: positionals,
     target,
     outDir: flags.out ?? "./evidence",
     adapter: (flags.adapter as "web" | "cli" | "tui") ?? "web",
@@ -130,6 +130,19 @@ function extractPositional(args: string[]): string | undefined {
   return undefined;
 }
 
+/** Extract all positional arguments (non-flag, not flag values) */
+function extractPositionals(args: string[]): string[] {
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith("--")) {
+      i++; // skip flag value
+      continue;
+    }
+    positionals.push(args[i]);
+  }
+  return positionals;
+}
+
 /** Parse --flag value pairs. Repeatable flags (like --model) collect into arrays. */
 function parseFlags(args: string[]): Record<string, string> & { model?: string[] } {
   const flags: Record<string, string> = {};
@@ -159,7 +172,7 @@ function usage(): string {
   return `Usage: gauntlet <command> [options]
 
 Commands:
-  run <scenario.md> --target <url>   Run a scenario
+  run <scenario.md> [<scenario.md> ...] --target <url>   Run one or more scenarios
   validate <scenario.md>             Validate a scenario file
   fanout <scenario.md>               Fan out scenario into sub-scenarios
   serve                              Start the API server`;

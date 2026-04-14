@@ -87,7 +87,7 @@ The frontmatter parser is intentionally minimal: it splits on the first `:` per 
 
 You can validate a card's format with `gauntlet validate scenario.md`.
 
-Each file holds exactly one card: one frontmatter block, one description, one optional `## Acceptance Criteria` list. `gauntlet run` takes a single scenario path and executes it in one agent loop -- there is no built-in batch runner, so to run a suite you either script a shell loop over multiple files or drive `POST /api/run/:id` per card via the HTTP API.
+Each file holds exactly one card: one frontmatter block, one description, one optional `## Acceptance Criteria` list. `gauntlet run` accepts one or more scenario paths and executes each in its own agent loop, sharing a single browser/adapter session across them — so `gauntlet run a.md b.md c.md --target <url>` or `gauntlet run stories/*.md --target <url>` runs a small suite in a single invocation. To drive runs from the web server instead, `POST /api/run/:id` per card.
 
 **Copy-paste template** -- a minimal card you can drop into a new `scenario.md` and edit:
 
@@ -175,6 +175,12 @@ Results are written to a `results/` directory as `result.json` alongside the evi
 ```bash
 # Run a test scenario against a target URL
 gauntlet run scenario.md --target http://localhost:3000
+
+# Run multiple scenarios against the same target (shares a single browser session).
+# Each scenario's evidence is written to its own subdirectory under --out, named
+# after the story card id (falling back to the filename).
+gauntlet run smoke.md checkout.md login.md --target http://localhost:3000 --out ./evidence
+gauntlet run stories/*.md --target http://localhost:3000
 
 # Run with a specific model and adapter
 gauntlet run scenario.md --target http://localhost:3000 --model claude-sonnet-4-20250514 --adapter web

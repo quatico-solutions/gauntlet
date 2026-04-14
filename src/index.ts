@@ -12,7 +12,7 @@ async function main() {
 
   switch (args.command) {
     case "run":
-      await run(args.scenarioPath, args.target, args.outDir, args.adapter, args.models, args.chrome);
+      await run(args.scenarioPaths, args.target, args.outDir, args.adapter, args.models, args.chrome);
       break;
     case "validate": {
       const { validateScenario } = await import("./cli/validate");
