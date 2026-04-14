@@ -1,6 +1,25 @@
 import { parseModelFlags } from "../models/resolve";
 import type { ModelConfig } from "../types";
 
+const RUN_ALLOWED = new Set(["target", "out", "adapter", "model", "chrome"]);
+const VALIDATE_ALLOWED = new Set<string>([]);
+const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
+const SERVE_ALLOWED = new Set(["port", "data-dir", "chrome", "target", "model"]);
+
+function rejectUnknownFlags(
+  flags: Record<string, unknown>,
+  allowed: Set<string>,
+  command: string,
+): void {
+  const unknown = Object.keys(flags).filter((k) => !allowed.has(k));
+  if (unknown.length > 0) {
+    const validList = [...allowed].sort().map((f) => `--${f}`).join(", ");
+    throw new Error(
+      `Unknown flag${unknown.length > 1 ? "s" : ""} for "gauntlet ${command}": ${unknown.map((f) => `--${f}`).join(", ")}\n\nValid flags: ${validList || "(none)"}`,
+    );
+  }
+}
+
 export interface RunArgs {
   command: "run";
   scenarioPath: string;
@@ -62,6 +81,7 @@ function parseRunArgs(args: string[]): RunArgs {
   }
 
   const flags = parseFlags(args);
+  rejectUnknownFlags(flags, RUN_ALLOWED, "run");
   const target = flags.target;
   if (!target) {
     throw new Error("Missing required flag: --target <url>");
@@ -84,6 +104,9 @@ function parseValidateArgs(args: string[]): ValidateArgs {
     throw new Error("Missing scenario path\n\nUsage: gauntlet validate <scenario.md>");
   }
 
+  const flags = parseFlags(args);
+  rejectUnknownFlags(flags, VALIDATE_ALLOWED, "validate");
+
   return {
     command: "validate",
     scenarioPath: positional,
@@ -93,6 +116,7 @@ function parseValidateArgs(args: string[]): ValidateArgs {
 function parseFanoutArgs(args: string[]): FanoutArgs {
   const positional = extractPositional(args);
   const flags = parseFlags(args);
+  rejectUnknownFlags(flags, FANOUT_ALLOWED, "fanout");
   const resultDir = flags["from-result"];
 
   if (!positional && !resultDir) {
@@ -110,6 +134,7 @@ function parseFanoutArgs(args: string[]): FanoutArgs {
 
 function parseServeArgs(args: string[]): ServeArgs {
   const flags = parseFlags(args);
+  rejectUnknownFlags(flags, SERVE_ALLOWED, "serve");
 
   return {
     command: "serve",
