@@ -10,10 +10,11 @@ import { RunDetail } from "./components/RunDetail";
 import { NewRunModal } from "./components/NewRunModal";
 import { LiveRun } from "./components/LiveRun";
 import { Spinner } from "./components/shared";
-import { api, type VetResult } from "./lib/api";
+import { api, type VetResult, type ActiveRun } from "./lib/api";
 import { useCards } from "./hooks/useCards";
 import { useCard } from "./hooks/useCard";
 import { useResults } from "./hooks/useResults";
+import { useActiveRuns } from "./hooks/useActiveRuns";
 
 const TABS = [
   { label: "Cards", path: "/cards" },
@@ -145,19 +146,23 @@ function CardsSidebar({
 function RunsSidebar({
   selectedId,
   results,
+  activeRuns,
   loading,
   error,
   onRetry,
+  onSelectActive,
 }: {
   selectedId?: string;
   results: ReturnType<typeof useResults>["results"];
+  activeRuns: ActiveRun[];
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  onSelectActive: (id: string) => void;
 }) {
   const navigate = useNavigate();
 
-  if (loading) {
+  if (loading && activeRuns.length === 0) {
     return <div className="p-3"><Spinner label="Loading runs..." /></div>;
   }
 
@@ -175,8 +180,10 @@ function RunsSidebar({
   return (
     <RunsList
       results={results}
+      activeRuns={activeRuns}
       selectedId={selectedId}
       onSelect={(id) => navigate(`/runs/${id}`)}
+      onSelectActive={onSelectActive}
     />
   );
 }
@@ -187,125 +194,126 @@ export default function App() {
   const activeTab = location.pathname.startsWith("/runs") ? "/runs" : "/cards";
   const { cards, loading, error, refresh: refreshCards } = useCards();
   const { results, loading: runsLoading, error: runsError, refresh: refreshResults } = useResults();
+  const { runs: activeRuns, loaded: activeRunsLoaded, refresh: refreshActive } = useActiveRuns();
   const [showRunModal, setShowRunModal] = useState(false);
-  const [liveRun, setLiveRun] = useState<{ scenarioId: string; cardTitle: string } | null>(null);
-  const [liveRunError, setLiveRunError] = useState<string | null>(null);
 
-  // Extract card ID from path like /cards/some-id (but not /cards/new)
   const cardIdMatch = location.pathname.match(/^\/cards\/(?!new$)(.+)/);
   const selectedCardId = cardIdMatch?.[1];
 
-  // Extract run ID from path like /runs/some-id (but not /runs/live)
-  const runIdMatch = location.pathname.match(/^\/runs\/(?!live$)(.+)/);
+  // /runs/:id (but not /runs/live or /runs/live/:id)
+  const runIdMatch = location.pathname.match(/^\/runs\/(?!live(?:\/|$))(.+)/);
   const selectedRunId = runIdMatch?.[1];
+
+  // /runs/live/:id
+  const liveIdMatch = location.pathname.match(/^\/runs\/live\/(.+)/);
+  const liveRunId = liveIdMatch?.[1];
+
+  // Top of the active-runs list = the freshest in-flight run (registry sorts desc).
+  const topActiveRun = activeRuns[0] ?? null;
 
   function handleFanout() {
     refreshCards();
     refreshResults();
   }
 
+  function handleRunComplete(id: string) {
+    refreshActive();
+    refreshResults();
+    navigate(`/runs/${id}`);
+  }
+
   return (
     <>
-    <AppShell
-      sidebar={
-        <Sidebar
-          tabs={TABS}
-          activeTab={activeTab}
-          onTabChange={(path) => navigate(path)}
-          liveRun={liveRun && !liveRunError ? {
-            title: liveRun.cardTitle,
-            onClick: () => navigate("/runs/live"),
-          } : null}
-          action={activeTab === "/cards" ? (
-            <button
-              className="btn-primary w-full"
-              onClick={() => navigate("/cards/new")}
-            >
-              New Card
-            </button>
-          ) : (
-            <button
-              className="btn-primary w-full"
-              onClick={() => setShowRunModal(true)}
-            >
-              New Run
-            </button>
-          )}
-        >
-          {activeTab === "/cards" ? (
-            <CardsSidebar
-              selectedId={selectedCardId}
-              cards={cards}
-              loading={loading}
-              error={error}
-              onRetry={refreshCards}
+      <AppShell
+        sidebar={
+          <Sidebar
+            tabs={TABS}
+            activeTab={activeTab}
+            onTabChange={(path) => navigate(path)}
+            liveRun={topActiveRun ? {
+              title: topActiveRun.title,
+              onClick: () => navigate(`/runs/live/${topActiveRun.id}`),
+            } : null}
+            action={activeTab === "/cards" ? (
+              <button className="btn-primary w-full" onClick={() => navigate("/cards/new")}>
+                New Card
+              </button>
+            ) : (
+              <button className="btn-primary w-full" onClick={() => setShowRunModal(true)}>
+                New Run
+              </button>
+            )}
+          >
+            {activeTab === "/cards" ? (
+              <CardsSidebar
+                selectedId={selectedCardId}
+                cards={cards}
+                loading={loading}
+                error={error}
+                onRetry={refreshCards}
+              />
+            ) : (
+              <RunsSidebar
+                selectedId={selectedRunId ?? liveRunId}
+                results={results}
+                activeRuns={activeRuns}
+                loading={runsLoading}
+                error={runsError}
+                onRetry={refreshResults}
+                onSelectActive={(id) => navigate(`/runs/live/${id}`)}
+              />
+            )}
+          </Sidebar>
+        }
+      >
+        <Routes>
+          <Route path="/" element={<Navigate to="/cards" replace />} />
+          <Route path="/cards" element={<CardsPage />} />
+          <Route path="/cards/new" element={
+            <NewCardPage
+              onCreated={(id) => { navigate(`/cards/${id}`); refreshCards(); }}
+              onCancel={() => navigate("/cards")}
             />
-          ) : (
-            <RunsSidebar
-              selectedId={selectedRunId}
-              results={results}
-              loading={runsLoading}
-              error={runsError}
-              onRetry={refreshResults}
-            />
-          )}
-        </Sidebar>
-      }
-    >
-      <Routes>
-        <Route path="/" element={<Navigate to="/cards" replace />} />
-        <Route path="/cards" element={<CardsPage />} />
-        <Route path="/cards/new" element={
-          <NewCardPage
-            onCreated={(id) => { navigate(`/cards/${id}`); refreshCards(); }}
-            onCancel={() => navigate("/cards")}
-          />
-        } />
-        <Route path="/cards/:id" element={<CardDetailPage onRefreshList={refreshCards} />} />
-        <Route path="/runs" element={<RunsPage />} />
-        <Route path="/runs/live" element={
-          liveRun ? (
+          } />
+          <Route path="/cards/:id" element={<CardDetailPage onRefreshList={refreshCards} />} />
+          <Route path="/runs" element={<RunsPage />} />
+          <Route path="/runs/live" element={
+            topActiveRun
+              ? <Navigate to={`/runs/live/${topActiveRun.id}`} replace />
+              : <Navigate to="/runs" replace />
+          } />
+          <Route path="/runs/live/:id" element={
             <LiveRun
-              runId={liveRun.scenarioId}
-              cardTitle={liveRun.cardTitle}
-              error={liveRunError}
-              onComplete={() => {
-                const id = liveRun.scenarioId;
-                setLiveRun(null);
-                setLiveRunError(null);
-                refreshResults();
-                navigate(`/runs/${id}`);
-              }}
-              onBack={() => {
-                setLiveRun(null);
-                setLiveRunError(null);
-                navigate("/runs");
-              }}
+              activeRuns={activeRuns}
+              activeRunsLoaded={activeRunsLoaded}
+              onComplete={handleRunComplete}
             />
-          ) : (
-            <Navigate to="/runs" replace />
-          )
-        } />
-        <Route path="/runs/:id" element={<RunDetailPage onFanout={handleFanout} />} />
-      </Routes>
-    </AppShell>
+          } />
+          <Route path="/runs/:id" element={<RunDetailPage onFanout={handleFanout} />} />
+        </Routes>
+      </AppShell>
 
-    {showRunModal && (
-      <NewRunModal
-        onClose={() => setShowRunModal(false)}
-        onStarted={(scenarioId, config) => {
-          setShowRunModal(false);
-          setLiveRunError(null);
-          const card = cards.find((c) => c.id === scenarioId);
-          setLiveRun({ scenarioId, cardTitle: card?.title || scenarioId });
-          navigate("/runs/live");
-          api.run.start(scenarioId, config).catch((e) => {
-            setLiveRunError(e instanceof Error ? e.message : "Run failed to start");
-            refreshResults();
-          });
-        }}
-      />
-    )}
+      {showRunModal && (
+        <NewRunModal
+          onClose={() => setShowRunModal(false)}
+          onStarted={async (scenarioId, config) => {
+            setShowRunModal(false);
+            try {
+              const { id } = await api.run.start(scenarioId, config);
+              await refreshActive();
+              navigate(`/runs/live/${id}`);
+            } catch (e) {
+              // Start failed synchronously — surface error via refresh so
+              // any server-side error gets logged, then bounce to Runs tab.
+              refreshResults();
+              navigate("/runs");
+              // TODO: a toast would be nicer than an alert, but not in scope
+              // for this task.
+              alert(e instanceof Error ? e.message : "Run failed to start");
+            }
+          }}
+        />
+      )}
     </>
   );
 }
