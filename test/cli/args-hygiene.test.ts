@@ -42,6 +42,21 @@ describe("CLI flag hygiene", () => {
       .toThrow(/unknown flag.*--bogus/i);
   });
 
+  test("parseFanoutArgs yields undefined cli.models when no --model given", () => {
+    const args = parseArgs(["bun", "gauntlet", "fanout", "scenario.md"]) as any;
+    expect(args.command).toBe("fanout");
+    expect(args.cli.models).toBeUndefined();
+  });
+
+  test("parseFanoutArgs threads --model agent= into cli.models.agent", () => {
+    const args = parseArgs([
+      "bun", "gauntlet", "fanout", "scenario.md",
+      "--model", "agent=gpt-4o",
+    ]) as any;
+    expect(args.command).toBe("fanout");
+    expect(args.cli.models.agent).toBe("gpt-4o");
+  });
+
   test("parseValidateArgs rejects unknown flag", () => {
     expect(() => parseArgs(["bun", "gauntlet", "validate", "foo.md", "--bogus", "y"]))
       .toThrow(/unknown flag.*--bogus/i);

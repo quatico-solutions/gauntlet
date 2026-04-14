@@ -68,8 +68,18 @@ async function main() {
       break;
     }
     case "fanout": {
+      const config = await loadConfigOrExit(args.cli);
+      await requireLlmCapableOrExit(config);
       const { fanout } = await import("./cli/fanout");
-      await fanout(args.scenarioPath, args.outDir, args.models, args.resultDir);
+      // Prefer an explicit fanout model, else fall back to the agent model.
+      // The fanout implementation takes a ModelConfig where `agent` is the
+      // model it will actually call; `fanout` is kept on the struct for
+      // parity with other callers but is functionally redundant here.
+      const models = {
+        agent: config.models.fanout ?? config.models.agent,
+        fanout: config.models.fanout,
+      };
+      await fanout(args.scenarioPath, args.outDir, models, args.resultDir);
       break;
     }
     case "config": {

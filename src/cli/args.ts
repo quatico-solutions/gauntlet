@@ -1,5 +1,3 @@
-import { parseModelFlags } from "../models/resolve";
-import type { ModelConfig } from "../types";
 import type { CliArgsInput } from "../config";
 
 /**
@@ -55,7 +53,7 @@ export interface FanoutArgs {
   scenarioPath?: string;
   resultDir?: string;
   outDir: string;
-  models: ModelConfig;
+  cli: CliArgsInput;
 }
 
 export interface ServeArgs {
@@ -166,18 +164,14 @@ function parseFanoutArgs(args: string[]): FanoutArgs {
     throw new Error("Missing scenario path or --from-result\n\nUsage: gauntlet fanout <scenario.md> | --from-result <result-dir>");
   }
 
-  const parsed = parseModelFlags(flags.model ?? []);
-  const models: ModelConfig = {
-    agent: parsed.agent || process.env.GAUNTLET_AGENT_MODEL || "claude-sonnet-4-6",
-    fanout: parsed.fanout || process.env.GAUNTLET_FANOUT_MODEL,
-  };
-
   return {
     command: "fanout",
     scenarioPath: positional,
     resultDir,
     outDir: flags.out ?? "./",
-    models,
+    cli: {
+      models: parseModelFlagArray(flags.model),
+    },
   };
 }
 
