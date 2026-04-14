@@ -18,10 +18,8 @@ export interface RunCommandOptions {
 export async function run(opts: RunCommandOptions): Promise<void> {
   const { scenarioPath, target, outDir, adapterType, config } = opts;
 
-  if (!config.apiKeys.anthropic && !config.apiKeys.openai) {
-    console.error("ERROR: No API key set. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.");
-    process.exit(1);
-  }
+  // LLM-capable gate is enforced by the dispatch site (src/index.ts via
+  // requireLlmCapableOrExit). This function assumes a valid AppConfig.
 
   const content = readFileSync(scenarioPath, "utf-8");
   const card = parseStoryCard(content);

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { loadConfig, validateRunBody, mergeRunConfig } from "../src/config";
+import { loadConfig, validateRunBody, mergeRunConfig, requireLlmCapable } from "../src/config";
 
 describe("loadConfig", () => {
   const emptyEnv = {} as NodeJS.ProcessEnv;
@@ -161,5 +161,27 @@ describe("mergeRunConfig", () => {
     const appFlag = loadConfig({ chrome: "flaghost:9001" }, {} as NodeJS.ProcessEnv);
     const eff = mergeRunConfig(appFlag, { target: "http://x" });
     expect(eff.chrome).toEqual({ host: "flaghost", port: 9001 });
+  });
+});
+
+describe("requireLlmCapable", () => {
+  test("throws when neither anthropic nor openai key is set", () => {
+    const config = loadConfig({}, {} as NodeJS.ProcessEnv);
+    expect(() => requireLlmCapable(config)).toThrow(/No LLM provider configured/);
+  });
+
+  test("passes when only anthropic key is set", () => {
+    const config = loadConfig({}, { ANTHROPIC_API_KEY: "sk-ant-xxx" } as NodeJS.ProcessEnv);
+    expect(() => requireLlmCapable(config)).not.toThrow();
+  });
+
+  test("passes when only openai key is set", () => {
+    const config = loadConfig({}, { OPENAI_API_KEY: "sk-xxx" } as NodeJS.ProcessEnv);
+    expect(() => requireLlmCapable(config)).not.toThrow();
+  });
+
+  test("passes when both keys are set", () => {
+    const config = loadConfig({}, { ANTHROPIC_API_KEY: "sk-ant-xxx", OPENAI_API_KEY: "sk-xxx" } as NodeJS.ProcessEnv);
+    expect(() => requireLlmCapable(config)).not.toThrow();
   });
 });

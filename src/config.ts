@@ -128,6 +128,25 @@ function parsePortNumber(raw: string, label: string): number {
   return port;
 }
 
+/**
+ * Verify the loaded config has at least one LLM provider configured.
+ * Called by `serve` and `run` dispatch; NOT called by `config` (which
+ * needs to introspect broken environments without crashing).
+ *
+ * Throws a clean Error on failure. The SDK clients in src/models/*.ts
+ * also throw if you construct them without a key — this is belt-and-
+ * suspenders. The server-level throw here fails-fast at boot with a
+ * clear message, instead of letting the first run fail mid-agent.
+ */
+export function requireLlmCapable(config: AppConfig): void {
+  if (!config.apiKeys.anthropic && !config.apiKeys.openai) {
+    throw new Error(
+      "No LLM provider configured. Set ANTHROPIC_API_KEY (for Claude models) " +
+      "or OPENAI_API_KEY (for GPT models). Run 'gauntlet config' to see current state.",
+    );
+  }
+}
+
 export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfig {
   // dataDir
   let dataDir = DEFAULT_DATA_DIR;

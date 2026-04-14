@@ -18,6 +18,22 @@ async function loadConfigOrExit(cli: CliArgsInput): Promise<AppConfig> {
   }
 }
 
+/**
+ * Sibling to loadConfigOrExit: enforces the "at least one LLM provider
+ * configured" gate at dispatch time for `serve` and `run`. Deliberately
+ * NOT called from `config`, which must still work in broken environments
+ * so the user can see what's missing.
+ */
+async function requireLlmCapableOrExit(config: AppConfig): Promise<void> {
+  const { requireLlmCapable } = await import("./config");
+  try {
+    requireLlmCapable(config);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+}
+
 async function main() {
   let args;
   try {
@@ -30,6 +46,7 @@ async function main() {
   switch (args.command) {
     case "run": {
       const config = await loadConfigOrExit(args.cli);
+      await requireLlmCapableOrExit(config);
       await run({
         scenarioPath: args.scenarioPath,
         target: args.cli.target ?? "",
@@ -73,6 +90,7 @@ async function main() {
       const { join } = await import("path");
 
       const config = await loadConfigOrExit(args.cli);
+      await requireLlmCapableOrExit(config);
 
       const uiDir = join(import.meta.dir, "..", "ui", "dist");
       const broadcaster = new RunBroadcaster();
