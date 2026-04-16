@@ -23,11 +23,13 @@ export interface AgentOptions {
   contextTree?: string;
   /**
    * The run's primary identity, written into the result so the artifact
-   * is self-describing on disk. Defaults to "" when the caller does not
-   * provide one (e.g. ad-hoc test fixtures); production callers always
-   * supply it via `makeRunId(card.id)`.
+   * is self-describing on disk. Required: every caller must thread a
+   * real id through (production callers via `makeRunId(card.id)`, tests
+   * via `makeRunId` or a fixed string). Required rather than defaulted
+   * so a forgetful caller can't silently produce an empty-string runId
+   * in `result.json`.
    */
-  runId?: string;
+  runId: string;
 }
 
 const REPORT_TOOL: ToolDefinition = {
@@ -82,12 +84,12 @@ export async function runAgent(
   adapter: Adapter,
   client: LLMClient,
   logger: EvidenceLogger,
-  target?: string,
-  options?: AgentOptions
+  target: string | undefined,
+  options: AgentOptions,
 ): Promise<VetResult> {
   const startTime = Date.now();
-  const runId = options?.runId ?? "";
-  const systemPrompt = buildSystemPrompt(card, options?.contextTree);
+  const { runId } = options;
+  const systemPrompt = buildSystemPrompt(card, options.contextTree);
   const tools = [...adapter.toolDefinitions(), REPORT_TOOL];
 
   let initialMessage = "Begin testing. Use the available tools to interact with the application.";
@@ -207,7 +209,7 @@ export async function runAgent(
     if (response.toolCalls.length > 0) {
       messages.push(response.rawAssistantMessage);
 
-      const toolTimeout = options?.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+      const toolTimeout = options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
       const results: ToolResult[] = [];
       for (const tc of response.toolCalls) {
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;

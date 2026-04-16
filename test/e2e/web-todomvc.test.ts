@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { runAgent } from "../../src/agent/agent";
 import { EvidenceLogger } from "../../src/evidence/logger";
+import { makeRunId } from "../../src/util/id";
 import type { AgentResponse } from "../../src/models/provider";
 import { readFileSync, mkdtempSync } from "fs";
 import { join } from "path";
@@ -69,7 +70,7 @@ describe("Web e2e — TodoMVC", () => {
           "adapter.start()"
         );
         const result = await withTimeout(
-          runAgent(card, adapter, client, logger),
+          runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id) }),
           15_000,
           "runAgent()"
         );
@@ -132,7 +133,7 @@ describe("Web e2e — TodoMVC", () => {
           "adapter.start()"
         );
         const result = await withTimeout(
-          runAgent(card, adapter, client, logger),
+          runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id) }),
           15_000,
           "runAgent()"
         );

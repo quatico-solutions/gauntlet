@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { runAgent } from "../../src/agent/agent";
 import { EvidenceLogger } from "../../src/evidence/logger";
+import { makeRunId } from "../../src/util/id";
 import type { LLMClient, ToolCall, ToolResult } from "../../src/models/provider";
 import type { StoryCard } from "../../src/format/story-card";
 import { mkdtempSync, readFileSync } from "fs";
@@ -140,8 +141,9 @@ describe("Web e2e smoke test", () => {
           10_000,
           "adapter.start()"
         );
+        const card = makeCard();
         const result = await withTimeout(
-          runAgent(makeCard(), adapter, client, logger),
+          runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id) }),
           15_000,
           "runAgent()"
         );

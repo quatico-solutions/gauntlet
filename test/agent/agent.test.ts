@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { runAgent } from "../../src/agent/agent";
+import { makeRunId } from "../../src/util/id";
 import type { LLMClient, AgentResponse, ToolCall, ToolResult } from "../../src/models/provider";
 import type { Adapter } from "../../src/adapters/adapter";
 import type { EvidenceLogger } from "../../src/evidence/logger";
@@ -108,7 +109,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
     expect(result.status).toBe("pass");
     expect(result.summary).toBe("All good");
@@ -148,7 +149,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+    await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
     // Second chat() call should have: initial user message + rawAssistantMessage + tool result
     const secondCallMessages = (client as any)._chatCalls[1];
@@ -220,7 +221,7 @@ describe("runAgent", () => {
       click: "clicked .btn",
     });
 
-    const result = await runAgent(card, adapter, client, makeMockLogger());
+    const result = await runAgent(card, adapter, client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
     expect(result.status).toBe("pass");
     expect(result.summary).toBe("UI renders correctly");
@@ -293,7 +294,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
     expect(result.usage).toEqual({
       inputTokens: 750,
@@ -352,7 +353,7 @@ describe("runAgent", () => {
 
     const result = await runAgent(
       card, slowAdapter as any, client, makeMockLogger(), undefined,
-      { toolTimeoutMs: 500 }
+      { toolTimeoutMs: 500, runId: makeRunId(card.id) }
     );
 
     expect(result.status).toBe("fail");
@@ -371,7 +372,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
     expect(result.status).toBe("investigate");
     expect(result.summary).toContain("max_tokens");
@@ -390,7 +391,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
     expect(result.status).toBe("investigate");
     expect(result.summary).toContain("neither tool call nor text");
@@ -418,7 +419,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
     expect(result.status).toBe("investigate");
     expect(result.summary).toContain("malformed report_result");
@@ -459,7 +460,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
     expect(result.usage).toEqual({
       inputTokens: 1200,
@@ -495,7 +496,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, logger);
+    const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id) });
 
     expect(result.status).toBe("pass");
     // Exactly one logged dropped-tools event, and it names the two.
@@ -545,7 +546,7 @@ describe("runAgent", () => {
         },
       ]);
 
-      await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+      await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id) });
 
       // Every setTimeout in the race path should be matched by a clearTimeout.
       // We had at least one tool call, so created must be >= 1.
@@ -599,7 +600,9 @@ describe("runAgent", () => {
       card,
       failingAdapter,
       client,
-      makeMockLogger()
+      makeMockLogger(),
+      undefined,
+      { runId: makeRunId(card.id) }
     );
 
     expect(result.status).toBe("fail");

@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { runAgent } from "../../src/agent/agent";
 import { CLIAdapter } from "../../src/adapters/cli/adapter";
 import { EvidenceLogger } from "../../src/evidence/logger";
+import { makeRunId } from "../../src/util/id";
 import type { LLMClient, ToolCall, ToolResult, AgentResponse } from "../../src/models/provider";
 import type { StoryCard } from "../../src/format/story-card";
 import { join } from "path";
@@ -102,7 +103,7 @@ describe("CLI adapter e2e smoke test", () => {
 
     try {
       await adapter.start(`bash ${FIXTURE_PATH}`);
-      const result = await runAgent(card, adapter, client, logger);
+      const result = await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id) });
 
       expect(result.status).toBe("pass");
       expect(result.scenario).toBe("cli-smoke-001");

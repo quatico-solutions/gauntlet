@@ -2,6 +2,7 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { runAgent } from "../../src/agent/agent";
 import { TUIAdapter } from "../../src/adapters/tui/adapter";
 import { EvidenceLogger } from "../../src/evidence/logger";
+import { makeRunId } from "../../src/util/id";
 import type { AgentResponse } from "../../src/models/provider";
 import { mkdtempSync, writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
@@ -74,7 +75,7 @@ describe.skipIf(!hasTmux || !hasNano)("TUI adapter e2e — nano editor", () => {
     const client = makeScriptedClient(steps, 500);
 
     await adapter.start(`nano ${tempFile}`);
-    const result = await runAgent(card, adapter, client, logger);
+    const result = await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id) });
 
     expect(result.status).toBe("pass");
     expect(result.scenario).toBe("nano-open-save-pass");
@@ -101,7 +102,7 @@ describe.skipIf(!hasTmux || !hasNano)("TUI adapter e2e — nano editor", () => {
     const client = makeScriptedClient(steps, 500);
 
     await adapter.start(`nano ${tempFile}`);
-    const result = await runAgent(card, adapter, client, logger);
+    const result = await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id) });
 
     expect(result.status).toBe("fail");
     expect(result.scenario).toBe("nano-tabs-fail");
