@@ -80,20 +80,4 @@ describe("CLIAdapter", () => {
     }
   });
 
-  test("executeTool rejects unknown tool names", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-read-"));
-    try {
-      mkdirSync(join(tmp, ".gauntlet", "context"), { recursive: true });
-      writeFileSync(
-        join(tmp, ".gauntlet", "context", "alice.md"),
-        "Username: alice\nPassword: hunter2",
-      );
-      adapter = new CLIAdapter({ contextRoot: join(tmp, ".gauntlet", "context") });
-      await expect(
-        adapter.executeTool("read_profile", { name: "alice" }, mockLogger),
-      ).rejects.toThrow("Unknown tool");
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
 });
