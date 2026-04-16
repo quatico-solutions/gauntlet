@@ -169,8 +169,9 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
   // ad-hoc test fixtures continue to work without supplying a runId.
   const runId = optsRunId ?? card.id;
 
+  let unsubscribeObserver: (() => void) | undefined;
   if (broadcaster || registry) {
-    logger.onAction = (action, params) => {
+    unsubscribeObserver = logger.addObserver((action, params) => {
       const message = `[${action}] ${JSON.stringify(params)}`;
       broadcaster?.send(runId, {
         type: "progress",
@@ -179,7 +180,7 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
         card: card.id,
       });
       registry?.recordProgress(runId, message);
-    };
+    });
   }
 
   let streamer: ScreencastStreamerType | undefined;
@@ -219,6 +220,7 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
     errorLog?.add("run", `${runId}: ${message}`);
     terminal = { type: "error", message };
   } finally {
+    unsubscribeObserver?.();
     if (streamer) {
       try {
         await streamer.stop();

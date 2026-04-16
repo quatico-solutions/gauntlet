@@ -65,11 +65,11 @@ describe("EvidenceLogger", () => {
     expect(p2).toBe("screenshots/002.png");
   });
 
-  test("calls onAction callback when logAction is called", () => {
+  test("addObserver receives actions when logAction is called", () => {
     const received: { action: string; params: Record<string, unknown> }[] = [];
-    logger.onAction = (action, params) => {
+    logger.addObserver((action, params) => {
       received.push({ action, params });
-    };
+    });
 
     logger.logAction("click", { selector: "#btn" });
     logger.logAction("screenshot", {});
@@ -80,9 +80,48 @@ describe("EvidenceLogger", () => {
     ]);
   });
 
-  test("works without onAction callback", () => {
+  test("works with no observers registered", () => {
     // Should not throw
     logger.logAction("click", { selector: "#btn" });
+  });
+
+  test("addObserver returns an unsubscribe function that removes the observer", () => {
+    const received: string[] = [];
+    const unsubscribe = logger.addObserver((action) => {
+      received.push(action);
+    });
+
+    logger.logAction("first", {});
+    unsubscribe();
+    logger.logAction("second", {});
+
+    expect(received).toEqual(["first"]);
+  });
+
+  test("two observers both receive the action", () => {
+    const a: string[] = [];
+    const b: string[] = [];
+    logger.addObserver((action) => a.push(action));
+    logger.addObserver((action) => b.push(action));
+
+    logger.logAction("click", { selector: "#btn" });
+
+    expect(a).toEqual(["click"]);
+    expect(b).toEqual(["click"]);
+  });
+
+  test("an observer that throws doesn't prevent other observers from receiving the action", () => {
+    const received: string[] = [];
+    logger.addObserver(() => {
+      throw new Error("boom");
+    });
+    logger.addObserver((action) => {
+      received.push(action);
+    });
+
+    logger.logAction("click", { selector: "#btn" });
+
+    expect(received).toEqual(["click"]);
   });
 
   test("logBrowserEvent writes to a per-category jsonl file", () => {

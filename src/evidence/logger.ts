@@ -7,11 +7,16 @@ export type BrowserEventCategory =
   | "log"
   | "network-ws";
 
+export type ActionObserver = (
+  action: string,
+  params: Record<string, unknown>,
+) => void;
+
 export class EvidenceLogger {
   private outDir: string;
   private screenshotCount = 0;
   private _screenshots: string[] = [];
-  onAction?: (action: string, params: Record<string, unknown>) => void;
+  private observers: Set<ActionObserver> = new Set();
 
   constructor(outDir: string) {
     this.outDir = outDir;
@@ -20,6 +25,31 @@ export class EvidenceLogger {
 
   get screenshots(): string[] {
     return [...this._screenshots];
+  }
+
+  /**
+   * Register an observer for action events. Returns an unsubscribe function
+   * that removes the observer when called. A misbehaving observer (one that
+   * throws) will not prevent other observers from receiving the action.
+   */
+  addObserver(fn: ActionObserver): () => void {
+    this.observers.add(fn);
+    return () => {
+      this.observers.delete(fn);
+    };
+  }
+
+  private notifyObservers(
+    action: string,
+    params: Record<string, unknown>,
+  ): void {
+    for (const fn of this.observers) {
+      try {
+        fn(action, params);
+      } catch {
+        /* one observer shouldn't break another */
+      }
+    }
   }
 
   logAction(action: string, params: Record<string, unknown>): void {
@@ -32,7 +62,7 @@ export class EvidenceLogger {
       join(this.outDir, "run.jsonl"),
       JSON.stringify(entry) + "\n"
     );
-    this.onAction?.(action, params);
+    this.notifyObservers(action, params);
   }
 
   logBrowserEvent(
