@@ -7,6 +7,7 @@ import { mkdtempSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { withTimeout, isChromeUnavailable } from "./helpers";
+import { pickFreePort } from "../helpers/pick-free-port";
 
 const TEST_PAGE = join(import.meta.dir, "../fixtures/test-page.html");
 
@@ -29,7 +30,7 @@ describe("Web e2e smoke test", () => {
 
       // Serve the test page
       const server = Bun.serve({
-        port: 0,
+        port: await pickFreePort(),
         fetch() {
           const html = readFileSync(TEST_PAGE, "utf-8");
           return new Response(html, {

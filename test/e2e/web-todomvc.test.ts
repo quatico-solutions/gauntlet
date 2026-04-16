@@ -13,12 +13,13 @@ import {
   withTimeout,
   isChromeUnavailable,
 } from "./helpers";
+import { pickFreePort } from "../helpers/pick-free-port";
 
 const TODOMVC_HTML = join(import.meta.dir, "../fixtures/todomvc.html");
 
-function serveTodomvc() {
+async function serveTodomvc() {
   return Bun.serve({
-    port: 0,
+    port: await pickFreePort(),
     fetch() {
       const html = readFileSync(TODOMVC_HTML, "utf-8");
       return new Response(html, {
@@ -44,7 +45,7 @@ describe("Web e2e — TodoMVC", () => {
       const card = loadStory("todomvc-add-pass.md");
       const logDir = mkdtempSync(join(tmpdir(), "gauntlet-todomvc-add-"));
       const logger = new EvidenceLogger(logDir);
-      const server = serveTodomvc();
+      const server = await serveTodomvc();
       const adapter = new WebAdapter();
 
       const steps: AgentResponse[] = [
@@ -104,7 +105,7 @@ describe("Web e2e — TodoMVC", () => {
       const card = loadStory("todomvc-edit-fail.md");
       const logDir = mkdtempSync(join(tmpdir(), "gauntlet-todomvc-edit-"));
       const logger = new EvidenceLogger(logDir);
-      const server = serveTodomvc();
+      const server = await serveTodomvc();
       const adapter = new WebAdapter();
 
       const steps: AgentResponse[] = [
