@@ -2,9 +2,10 @@ import type { LLMClient, ToolDefinition, ToolResult } from "../models/provider";
 import type { Adapter } from "../adapters/adapter";
 import type { EvidenceLogger } from "../evidence/logger";
 import type { StoryCard } from "../format/story-card";
-import type { VetResult, VetStatus, Observation } from "../types";
+import type { VetResult, VetStatus } from "../types";
 import { RESULT_SCHEMA_VERSION } from "../types";
 import { buildSystemPrompt } from "./prompts";
+import { parseReportResult } from "./validators";
 
 const MAX_TURNS = 50;
 const DEFAULT_TOOL_TIMEOUT_MS = 30000;
@@ -100,40 +101,106 @@ export async function runAgent(
 
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  let totalCacheCreation = 0;
+  let totalCacheRead = 0;
   let turns = 0;
+
+  /**
+   * Build a terminal VetResult with shared scaffolding (schema, evidence,
+   * duration, usage). Used by every early-exit: report_result, max_tokens
+   * truncation, empty response, and the max-turns fallthrough.
+   */
+  const buildResult = (partial: {
+    status: VetStatus;
+    summary: string;
+    reasoning: string;
+    observations?: VetResult["observations"];
+  }): VetResult => ({
+    schemaVersion: RESULT_SCHEMA_VERSION,
+    runId,
+    scenario: card.id,
+    status: partial.status,
+    summary: partial.summary,
+    reasoning: partial.reasoning,
+    observations: partial.observations ?? [],
+    evidence: {
+      screenshots: logger.screenshots,
+      log: logger.logPath,
+    },
+    duration_ms: Date.now() - startTime,
+    usage: {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      cacheCreationInputTokens: totalCacheCreation > 0 ? totalCacheCreation : undefined,
+      cacheReadInputTokens: totalCacheRead > 0 ? totalCacheRead : undefined,
+      turns,
+    },
+  });
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const response = await client.chat(messages, tools, systemPrompt);
 
     totalInputTokens += response.usage.inputTokens;
     totalOutputTokens += response.usage.outputTokens;
+    totalCacheCreation += response.usage.cacheCreationInputTokens ?? 0;
+    totalCacheRead += response.usage.cacheReadInputTokens ?? 0;
     turns++;
 
-    // Check for report_result
+    // Check for report_result.
+    //
+    // Policy: if the LLM emits report_result *alongside* other tool calls
+    // in the same turn, the other tools are silently dropped. Acting on
+    // them would be dangerous — the agent has already decided the verdict
+    // and further tool calls (clicks, navigates) would be for a scenario
+    // the model considers finished. We log the dropped names to the
+    // evidence log so they're recoverable post-hoc.
     const report = response.toolCalls.find(
       (tc) => tc.name === "report_result"
     );
     if (report) {
-      const args = report.arguments;
-      return {
-        schemaVersion: RESULT_SCHEMA_VERSION,
-        runId,
-        scenario: card.id,
-        status: args.status as VetStatus,
-        summary: args.summary as string,
-        reasoning: args.reasoning as string,
-        observations: (args.observations as Observation[]) || [],
-        evidence: {
-          screenshots: logger.screenshots,
-          log: logger.logPath,
-        },
-        duration_ms: Date.now() - startTime,
-        usage: {
-          inputTokens: totalInputTokens,
-          outputTokens: totalOutputTokens,
-          turns,
-        },
-      };
+      const otherTools = response.toolCalls.filter(
+        (tc) => tc.name !== "report_result"
+      );
+      if (otherTools.length > 0) {
+        logger.logAction("report_with_other_tools_dropped", {
+          dropped: otherTools.map((tc) => tc.name),
+        });
+      }
+
+      const parsed = parseReportResult(report.arguments);
+      if (!parsed.ok) {
+        // Raw args in reasoning so a human post-mortem can reconstruct
+        // what the model tried to report.
+        let rawArgs = "<unserializable>";
+        try { rawArgs = JSON.stringify(report.arguments); } catch { /* ignore */ }
+        return buildResult({
+          status: "investigate",
+          summary: `LLM returned malformed report_result: ${parsed.reason}`,
+          reasoning: `Validator rejected report_result args. raw=${rawArgs}`,
+        });
+      }
+      return buildResult({
+        status: parsed.value.status,
+        summary: parsed.value.summary,
+        reasoning: parsed.value.reasoning,
+        observations: parsed.value.observations,
+      });
+    }
+
+    // Truncated output. Nudging an already-truncated turn just burns more
+    // tokens — break immediately with an investigate verdict so the human
+    // (or an escalating scheduler) sees the problem.
+    if (response.stopReason === "max_tokens") {
+      logger.logAction("stopped_max_tokens", {
+        turn: turns,
+        hasText: Boolean(response.text),
+        toolCallCount: response.toolCalls.length,
+      });
+      return buildResult({
+        status: "investigate",
+        summary: "LLM response truncated by max_tokens before reporting",
+        reasoning: `Stopped with max_tokens on turn ${turns}. Increase max_tokens or shorten the scenario.`,
+      });
     }
 
     // Process tool calls
@@ -143,17 +210,27 @@ export async function runAgent(
       const toolTimeout = options?.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
       const results: ToolResult[] = [];
       for (const tc of response.toolCalls) {
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         try {
           const result = await Promise.race([
             adapter.executeTool(tc.name, tc.arguments, logger),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`Tool "${tc.name}" timed out after ${toolTimeout}ms`)), toolTimeout)
-            ),
+            new Promise<never>((_, reject) => {
+              timeoutHandle = setTimeout(
+                () => reject(new Error(`Tool "${tc.name}" timed out after ${toolTimeout}ms`)),
+                toolTimeout,
+              );
+            }),
           ]);
           results.push(result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           results.push({ text: `Error: ${message}` });
+        } finally {
+          // Clear the timeout on the winning path so we don't leak a live
+          // timer for every tool call — at 30s each over a 50-turn run
+          // this adds up to dozens of pinned handles if the tool resolves
+          // first.
+          if (timeoutHandle) clearTimeout(timeoutHandle);
         }
       }
 
@@ -165,27 +242,26 @@ export async function runAgent(
           "Use the tools to interact with the application, or call report_result when done."
         )
       );
+    } else {
+      // Neither tool calls nor text. Re-sending the same prompt would
+      // produce the same empty response — break instead of spinning for
+      // the rest of MAX_TURNS.
+      logger.logAction("empty_response", {
+        turn: turns,
+        stopReason: response.stopReason,
+      });
+      return buildResult({
+        status: "investigate",
+        summary: "LLM returned neither tool call nor text",
+        reasoning: `Empty response on turn ${turns} with stopReason: ${response.stopReason}. Likely a model or prompt issue.`,
+      });
     }
   }
 
   // Max turns reached
-  return {
-    schemaVersion: RESULT_SCHEMA_VERSION,
-    runId,
-    scenario: card.id,
+  return buildResult({
     status: "investigate",
     summary: "Agent reached maximum turn limit without reporting a result",
     reasoning: `Exhausted ${MAX_TURNS} turns`,
-    observations: [],
-    evidence: {
-      screenshots: logger.screenshots,
-      log: logger.logPath,
-    },
-    duration_ms: Date.now() - startTime,
-    usage: {
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      turns,
-    },
-  };
+  });
 }

@@ -21,6 +21,7 @@ function makeMockLogger(): EvidenceLogger {
     logPath: "/tmp/test.log",
     logTool: () => {},
     logScreenshot: () => "/tmp/shot.png",
+    logAction: () => {},
   } as unknown as EvidenceLogger;
 }
 
@@ -356,6 +357,205 @@ describe("runAgent", () => {
 
     expect(result.status).toBe("fail");
   }, 10000);
+
+  test("max_tokens stop_reason returns investigate without retrying", async () => {
+    // Only one response is queued — a second call would throw "No more mock
+    // responses". Confirms the loop breaks immediately instead of nudging.
+    const client = makeMockClient([
+      {
+        text: "Partial thought cut off",
+        toolCalls: [],
+        stopReason: "max_tokens",
+        rawAssistantMessage: { role: "assistant", content: "truncated" },
+        usage: { inputTokens: 100, outputTokens: 4096 },
+      },
+    ]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toContain("max_tokens");
+    // Exactly one chat() call — did not retry.
+    expect((client as any)._chatCalls).toHaveLength(1);
+  });
+
+  test("empty response (no tool calls, no text) returns investigate", async () => {
+    const client = makeMockClient([
+      {
+        text: "",
+        toolCalls: [],
+        stopReason: "end_turn",
+        rawAssistantMessage: { role: "assistant", content: "" },
+        usage: { inputTokens: 50, outputTokens: 0 },
+      },
+    ]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toContain("neither tool call nor text");
+    expect((client as any)._chatCalls).toHaveLength(1);
+  });
+
+  test("malformed report_result returns investigate with raw args in reasoning", async () => {
+    const client = makeMockClient([
+      {
+        text: "reporting",
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "report_result",
+            arguments: {
+              status: "success", // not a valid VetStatus
+              summary: "x",
+              reasoning: "y",
+            },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: [] },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+    ]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toContain("malformed report_result");
+    expect(result.reasoning).toContain("success");
+  });
+
+  test("accumulates cache token usage across turns", async () => {
+    const client = makeMockClient([
+      {
+        text: "first",
+        toolCalls: [{ id: "c1", name: "screenshot", arguments: {} }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "t1" },
+        usage: {
+          inputTokens: 1000,
+          outputTokens: 50,
+          cacheCreationInputTokens: 800,
+          cacheReadInputTokens: 0,
+        },
+      },
+      {
+        text: "done",
+        toolCalls: [
+          {
+            id: "c2",
+            name: "report_result",
+            arguments: { status: "pass", summary: "ok", reasoning: "ok" },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "t2" },
+        usage: {
+          inputTokens: 200,
+          outputTokens: 30,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 800,
+        },
+      },
+    ]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+
+    expect(result.usage).toEqual({
+      inputTokens: 1200,
+      outputTokens: 80,
+      cacheCreationInputTokens: 800,
+      cacheReadInputTokens: 800,
+      turns: 2,
+    });
+  });
+
+  test("drops and logs other tool calls when report_result is in the same turn", async () => {
+    const actionLog: Array<{ action: string; params: Record<string, unknown> }> = [];
+    const logger = makeMockLogger();
+    (logger as any).logAction = (action: string, params: Record<string, unknown>) => {
+      actionLog.push({ action, params });
+    };
+
+    const client = makeMockClient([
+      {
+        text: "reporting and clicking",
+        toolCalls: [
+          { id: "c1", name: "click", arguments: { selector: "#x" } },
+          {
+            id: "c2",
+            name: "report_result",
+            arguments: { status: "pass", summary: "ok", reasoning: "ok" },
+          },
+          { id: "c3", name: "navigate", arguments: { url: "/foo" } },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "t" },
+        usage: { inputTokens: 5, outputTokens: 5 },
+      },
+    ]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, logger);
+
+    expect(result.status).toBe("pass");
+    // Exactly one logged dropped-tools event, and it names the two.
+    const dropped = actionLog.find((e) => e.action === "report_with_other_tools_dropped");
+    expect(dropped).toBeDefined();
+    expect(dropped?.params.dropped).toEqual(["click", "navigate"]);
+  });
+
+  test("clears timeout on tool success (no timer leak)", async () => {
+    // Track timeout lifecycle via a wrapper. The global setTimeout/clearTimeout
+    // are called by Promise.race's loser handler too, so we count matched
+    // pairs rather than assert exact timer counts.
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    let created = 0;
+    let cleared = 0;
+    (globalThis as any).setTimeout = ((fn: () => void, ms?: number) => {
+      created++;
+      return originalSetTimeout(fn, ms);
+    }) as typeof setTimeout;
+    (globalThis as any).clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+      cleared++;
+      return originalClearTimeout(handle);
+    }) as typeof clearTimeout;
+
+    try {
+      const client = makeMockClient([
+        {
+          text: "click",
+          toolCalls: [{ id: "c1", name: "screenshot", arguments: {} }],
+          stopReason: "tool_use",
+          rawAssistantMessage: { role: "assistant", content: "r1" },
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+        {
+          text: "done",
+          toolCalls: [
+            {
+              id: "c2",
+              name: "report_result",
+              arguments: { status: "pass", summary: "ok", reasoning: "ok" },
+            },
+          ],
+          stopReason: "tool_use",
+          rawAssistantMessage: { role: "assistant", content: "r2" },
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+      ]);
+
+      await runAgent(card, makeMockAdapter(), client, makeMockLogger());
+
+      // Every setTimeout in the race path should be matched by a clearTimeout.
+      // We had at least one tool call, so created must be >= 1.
+      expect(created).toBeGreaterThanOrEqual(1);
+      expect(cleared).toBeGreaterThanOrEqual(created);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
 
   test("handles tool execution errors gracefully", async () => {
     const failingAdapter = makeMockAdapter();

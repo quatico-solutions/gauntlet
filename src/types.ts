@@ -40,6 +40,18 @@ export interface VetResult {
   usage?: {
     inputTokens: number;
     outputTokens: number;
+    /**
+     * Tokens written to Anthropic's prompt cache across the whole run.
+     * Omitted when 0 or when the provider doesn't surface the metric
+     * (e.g. OpenAI today).
+     */
+    cacheCreationInputTokens?: number;
+    /**
+     * Tokens served from Anthropic's prompt cache across the whole run.
+     * A non-zero value means the cache breakpoints in anthropic.ts are
+     * actually hitting.
+     */
+    cacheReadInputTokens?: number;
     turns: number;
   };
 }

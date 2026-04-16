@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { LLMClient, ToolDefinition, AgentResponse, ToolCall, ToolResult } from "./provider";
+import type { LLMClient, ToolDefinition, AgentResponse, StopReason, ToolCall, ToolResult } from "./provider";
 
 export function createAnthropicClient(model: string): LLMClient {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -133,7 +133,12 @@ function withCacheBreakpointOnLastMessage(
   return result;
 }
 
-function convertResponse(response: Anthropic.Message): AgentResponse {
+/**
+ * Convert an Anthropic SDK `Message` into our provider-neutral
+ * `AgentResponse`. Exported for tests; the runtime path uses it via the
+ * `chat()` method above.
+ */
+export function convertResponse(response: Anthropic.Message): AgentResponse {
   const text = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
@@ -147,8 +152,20 @@ function convertResponse(response: Anthropic.Message): AgentResponse {
       arguments: b.input as Record<string, unknown>,
     }));
 
-  const stopReason =
-    response.stop_reason === "tool_use" ? "tool_use" : "end_turn";
+  // Pass through stop_reason faithfully. The Anthropic SDK's type already
+  // matches our StopReason union for the values we care about. If Anthropic
+  // ships a new value (current SDK includes `refusal` which we also cover),
+  // TS will complain here and we update the union.
+  const stopReason: StopReason =
+    (response.stop_reason as StopReason | null) ?? "end_turn";
+
+  // Capture cache breakpoint telemetry. `cache_creation_input_tokens` tells
+  // us how many tokens were written to the cache on this turn;
+  // `cache_read_input_tokens` tells us how many were served from cache. If
+  // both stay at 0 across an entire run, the three breakpoints in chat()
+  // are not hitting and we have a silent regression to investigate.
+  const cacheCreation = response.usage.cache_creation_input_tokens;
+  const cacheRead = response.usage.cache_read_input_tokens;
 
   return {
     text,
@@ -158,6 +175,8 @@ function convertResponse(response: Anthropic.Message): AgentResponse {
     usage: {
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
+      cacheCreationInputTokens: cacheCreation ?? undefined,
+      cacheReadInputTokens: cacheRead ?? undefined,
     },
   };
 }

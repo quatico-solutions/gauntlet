@@ -1,5 +1,9 @@
 import { describe, test, expect } from "bun:test";
-import { createOpenAIClient, openaiToolResultMessages } from "../../src/models/openai";
+import {
+  createOpenAIClient,
+  openaiToolResultMessages,
+  mapFinishReason,
+} from "../../src/models/openai";
 
 describe("OpenAI message helpers", () => {
   test("toolResultMessages creates one tool message per call", () => {
@@ -102,6 +106,30 @@ describe("OpenAI message helpers", () => {
       tool_call_id: "call_1",
       content: "clicked",
     });
+  });
+});
+
+describe("mapFinishReason", () => {
+  test("tool_calls → tool_use", () => {
+    expect(mapFinishReason("tool_calls")).toBe("tool_use");
+  });
+  test("function_call (legacy) → tool_use", () => {
+    expect(mapFinishReason("function_call")).toBe("tool_use");
+  });
+  test("length → max_tokens (surfaces truncation)", () => {
+    expect(mapFinishReason("length")).toBe("max_tokens");
+  });
+  test("stop → end_turn", () => {
+    expect(mapFinishReason("stop")).toBe("end_turn");
+  });
+  test("content_filter → stop_sequence (approximation)", () => {
+    expect(mapFinishReason("content_filter")).toBe("stop_sequence");
+  });
+  test("null → end_turn", () => {
+    expect(mapFinishReason(null)).toBe("end_turn");
+  });
+  test("unknown future value → end_turn (non-crashing default)", () => {
+    expect(mapFinishReason("some_new_reason")).toBe("end_turn");
   });
 });
 

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { LLMClient, ToolDefinition, AgentResponse, ToolCall, ToolResult } from "./provider";
+import type { LLMClient, ToolDefinition, AgentResponse, StopReason, ToolCall, ToolResult } from "./provider";
 
 export function createOpenAIClient(model: string): LLMClient {
   if (!process.env.OPENAI_API_KEY) {
@@ -94,8 +94,7 @@ function convertResponse(
     }
   }
 
-  const stopReason =
-    choice.finish_reason === "tool_calls" ? "tool_use" : "end_turn";
+  const stopReason = mapFinishReason(choice.finish_reason);
 
   return {
     text,
@@ -111,4 +110,37 @@ function convertResponse(
       outputTokens: response.usage?.completion_tokens ?? 0,
     },
   };
+}
+
+/**
+ * Map OpenAI's `finish_reason` to our provider-neutral StopReason.
+ *
+ * OpenAI values: `'stop' | 'length' | 'tool_calls' | 'content_filter' | 'function_call'`.
+ * The mapping is lossy but honest:
+ *   - `tool_calls` / `function_call` → `tool_use` (LLM invoked a tool)
+ *   - `length`                       → `max_tokens` (hit the token cap)
+ *   - `stop`                         → `end_turn` (natural completion)
+ *   - `content_filter`               → `stop_sequence` (best approximation;
+ *     OpenAI's filter is not a stop sequence but this is the closest
+ *     semantic: the provider intervened before model-driven end_turn)
+ *
+ * Exported for tests.
+ */
+export function mapFinishReason(reason: string | null): StopReason {
+  switch (reason) {
+    case "tool_calls":
+    case "function_call":
+      return "tool_use";
+    case "length":
+      return "max_tokens";
+    case "content_filter":
+      return "stop_sequence";
+    case "stop":
+    case null:
+      return "end_turn";
+    default:
+      // Unknown future value — fall through to end_turn so the agent loop
+      // doesn't crash, but log visibly via the string cast.
+      return "end_turn";
+  }
 }

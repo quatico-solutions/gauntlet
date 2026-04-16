@@ -1,0 +1,211 @@
+/**
+ * LLM boundary validators.
+ *
+ * The LLM is an untrusted producer of JSON. Everything it hands us is
+ * `unknown` until we narrow it. Historically we cast with `as T` and hoped
+ * for the best — bad output got silently persisted to result.json, or a
+ * mis-typed selector propagated as a string "[object Object]" all the way
+ * down to the CDP call. These helpers catch the bad shapes at the seam and
+ * let callers return a typed error instead.
+ *
+ * Scope note: we do not implement full JSON Schema. The tools' parameter
+ * schemas only use a narrow subset — `type`, `enum`, `required`, and
+ * `properties` — so a 50-line validator handles what actually ships.
+ */
+import type { ToolDefinition } from "../models/provider";
+import type { VetStatus, Observation, ObservationKind } from "../types";
+
+export type ParseOk<T> = { ok: true; value: T };
+export type ParseErr = { ok: false; reason: string };
+export type ParseResult<T> = ParseOk<T> | ParseErr;
+
+const OBSERVATION_KINDS: readonly ObservationKind[] = [
+  "bug",
+  "ux",
+  "typo",
+  "suggestion",
+  "a11y",
+  "performance",
+];
+const VET_STATUSES: readonly VetStatus[] = ["pass", "fail", "investigate"];
+
+/**
+ * Validate `report_result` tool call arguments against the VetResult shape.
+ *
+ * Required fields: status (enum), summary (string), reasoning (string).
+ * Optional: observations (array of {kind, description}).
+ */
+export function parseReportResult(args: unknown): ParseResult<{
+  status: VetStatus;
+  summary: string;
+  reasoning: string;
+  observations: Observation[];
+}> {
+  if (!isRecord(args)) {
+    return { ok: false, reason: `expected object, got ${typeName(args)}` };
+  }
+
+  const statusRaw = args.status;
+  if (typeof statusRaw !== "string") {
+    return { ok: false, reason: `status: expected string, got ${typeName(statusRaw)}` };
+  }
+  if (!VET_STATUSES.includes(statusRaw as VetStatus)) {
+    return {
+      ok: false,
+      reason: `status: "${statusRaw}" not in [${VET_STATUSES.join(", ")}]`,
+    };
+  }
+
+  if (typeof args.summary !== "string") {
+    return { ok: false, reason: `summary: expected string, got ${typeName(args.summary)}` };
+  }
+  if (typeof args.reasoning !== "string") {
+    return { ok: false, reason: `reasoning: expected string, got ${typeName(args.reasoning)}` };
+  }
+
+  const observations: Observation[] = [];
+  if (args.observations !== undefined && args.observations !== null) {
+    if (!Array.isArray(args.observations)) {
+      return {
+        ok: false,
+        reason: `observations: expected array, got ${typeName(args.observations)}`,
+      };
+    }
+    for (let i = 0; i < args.observations.length; i++) {
+      const obs = args.observations[i];
+      if (!isRecord(obs)) {
+        return { ok: false, reason: `observations[${i}]: expected object, got ${typeName(obs)}` };
+      }
+      if (typeof obs.kind !== "string" || !OBSERVATION_KINDS.includes(obs.kind as ObservationKind)) {
+        return {
+          ok: false,
+          reason: `observations[${i}].kind: "${String(obs.kind)}" not in [${OBSERVATION_KINDS.join(", ")}]`,
+        };
+      }
+      if (typeof obs.description !== "string") {
+        return {
+          ok: false,
+          reason: `observations[${i}].description: expected string, got ${typeName(obs.description)}`,
+        };
+      }
+      observations.push({
+        kind: obs.kind as ObservationKind,
+        description: obs.description,
+      });
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      status: statusRaw as VetStatus,
+      summary: args.summary,
+      reasoning: args.reasoning,
+      observations,
+    },
+  };
+}
+
+/**
+ * Validate tool-call arguments against a tool's declared JSON schema.
+ *
+ * Handles the narrow JSON Schema subset the tools actually declare today:
+ * - `type: "string" | "number" | "boolean" | "array" | "object"`
+ * - `enum`
+ * - `required`
+ *
+ * Unknown/unsupported schema constructs are passed through (permissive).
+ * The goal is to catch obviously-broken LLM output like
+ * `{selector: {css: "#foo"}}` when a string is expected, not to be a full
+ * JSON Schema validator.
+ */
+export function validateToolArgs(
+  toolName: string,
+  args: unknown,
+  schema: ToolDefinition["parameters"],
+): ParseResult<Record<string, unknown>> {
+  if (!isRecord(args)) {
+    return {
+      ok: false,
+      reason: `${toolName}: args must be an object, got ${typeName(args)}`,
+    };
+  }
+
+  const schemaType = (schema as Record<string, unknown>).type;
+  if (schemaType !== undefined && schemaType !== "object") {
+    // Top-level schema isn't an object — nothing we know how to check.
+    return { ok: true, value: args };
+  }
+
+  const required = (schema as Record<string, unknown>).required;
+  const requiredKeys = new Set<string>();
+  if (Array.isArray(required)) {
+    for (const key of required) {
+      if (typeof key !== "string") continue;
+      requiredKeys.add(key);
+      if (!(key in args)) {
+        return { ok: false, reason: `${toolName}: missing required property "${key}"` };
+      }
+      const v = args[key];
+      if (v === null || v === undefined) {
+        return { ok: false, reason: `${toolName}: required property "${key}" is ${v === null ? "null" : "undefined"}` };
+      }
+    }
+  }
+
+  const props = (schema as Record<string, unknown>).properties;
+  if (!isRecord(props)) {
+    return { ok: true, value: args };
+  }
+
+  for (const [key, rawDecl] of Object.entries(props)) {
+    if (!(key in args)) continue;
+    const value = args[key];
+    // Non-required null/undefined fields are skipped (treat as absent).
+    // Required nulls are caught above.
+    if (value === null || value === undefined) continue;
+    const propSchema = rawDecl as Record<string, unknown>;
+    const err = checkValue(`${toolName}.${key}`, value, propSchema);
+    if (err) return { ok: false, reason: err };
+  }
+
+  return { ok: true, value: args };
+}
+
+function checkValue(path: string, value: unknown, schema: Record<string, unknown>): string | null {
+  const type = schema.type;
+  if (typeof type === "string") {
+    if (type === "string" && typeof value !== "string") {
+      return `${path}: expected string, got ${typeName(value)}`;
+    }
+    if (type === "number" && typeof value !== "number") {
+      return `${path}: expected number, got ${typeName(value)}`;
+    }
+    if (type === "boolean" && typeof value !== "boolean") {
+      return `${path}: expected boolean, got ${typeName(value)}`;
+    }
+    if (type === "array" && !Array.isArray(value)) {
+      return `${path}: expected array, got ${typeName(value)}`;
+    }
+    if (type === "object" && !isRecord(value)) {
+      return `${path}: expected object, got ${typeName(value)}`;
+    }
+  }
+
+  const enumVals = schema.enum;
+  if (Array.isArray(enumVals) && !enumVals.includes(value as never)) {
+    return `${path}: "${String(value)}" not in [${enumVals.join(", ")}]`;
+  }
+
+  return null;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function typeName(v: unknown): string {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "array";
+  return typeof v;
+}

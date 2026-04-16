@@ -1,5 +1,10 @@
 import { describe, test, expect } from "bun:test";
-import { createAnthropicClient, anthropicToolResultMessages } from "../../src/models/anthropic";
+import {
+  createAnthropicClient,
+  anthropicToolResultMessages,
+  convertResponse,
+} from "../../src/models/anthropic";
+import type Anthropic from "@anthropic-ai/sdk";
 
 describe("anthropicToolResultMessages", () => {
   test("creates tool_result content blocks", () => {
@@ -81,6 +86,127 @@ describe("anthropicToolResultMessages", () => {
         { type: "text", text: "Screenshot saved to screenshots/001.png" },
       ],
     });
+  });
+});
+
+describe("convertResponse stop_reason pass-through", () => {
+  function makeMessage(overrides: Partial<Anthropic.Message> = {}): Anthropic.Message {
+    return {
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4-6",
+      content: [{ type: "text", text: "hello", citations: null }] as unknown as Anthropic.Message["content"],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      } as unknown as Anthropic.Message["usage"],
+      ...overrides,
+    } as Anthropic.Message;
+  }
+
+  test("end_turn passes through", () => {
+    const r = convertResponse(makeMessage({ stop_reason: "end_turn" }));
+    expect(r.stopReason).toBe("end_turn");
+  });
+
+  test("tool_use passes through", () => {
+    const r = convertResponse(makeMessage({ stop_reason: "tool_use" }));
+    expect(r.stopReason).toBe("tool_use");
+  });
+
+  test("max_tokens passes through (not collapsed to end_turn)", () => {
+    const r = convertResponse(makeMessage({ stop_reason: "max_tokens" }));
+    expect(r.stopReason).toBe("max_tokens");
+  });
+
+  test("stop_sequence passes through", () => {
+    const r = convertResponse(makeMessage({ stop_reason: "stop_sequence" }));
+    expect(r.stopReason).toBe("stop_sequence");
+  });
+
+  test("pause_turn passes through", () => {
+    const r = convertResponse(makeMessage({ stop_reason: "pause_turn" }));
+    expect(r.stopReason).toBe("pause_turn");
+  });
+
+  test("null stop_reason falls back to end_turn", () => {
+    const r = convertResponse(makeMessage({ stop_reason: null }));
+    expect(r.stopReason).toBe("end_turn");
+  });
+});
+
+describe("convertResponse cache token capture", () => {
+  function makeMessageWithUsage(usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number | null;
+    cache_read_input_tokens?: number | null;
+  }): Anthropic.Message {
+    return {
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4-6",
+      content: [{ type: "text", text: "hello", citations: null }] as unknown as Anthropic.Message["content"],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: usage as unknown as Anthropic.Message["usage"],
+    } as Anthropic.Message;
+  }
+
+  test("captures cache_creation_input_tokens", () => {
+    const r = convertResponse(
+      makeMessageWithUsage({
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 750,
+        cache_read_input_tokens: 0,
+      }),
+    );
+    expect(r.usage.cacheCreationInputTokens).toBe(750);
+    expect(r.usage.cacheReadInputTokens).toBe(0);
+  });
+
+  test("captures cache_read_input_tokens", () => {
+    const r = convertResponse(
+      makeMessageWithUsage({
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 900,
+      }),
+    );
+    expect(r.usage.cacheReadInputTokens).toBe(900);
+    expect(r.usage.cacheCreationInputTokens).toBe(0);
+  });
+
+  test("treats null cache values as undefined", () => {
+    const r = convertResponse(
+      makeMessageWithUsage({
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+      }),
+    );
+    expect(r.usage.cacheCreationInputTokens).toBeUndefined();
+    expect(r.usage.cacheReadInputTokens).toBeUndefined();
+  });
+
+  test("preserves input/output tokens", () => {
+    const r = convertResponse(
+      makeMessageWithUsage({
+        input_tokens: 123,
+        output_tokens: 45,
+      }),
+    );
+    expect(r.usage.inputTokens).toBe(123);
+    expect(r.usage.outputTokens).toBe(45);
   });
 });
 

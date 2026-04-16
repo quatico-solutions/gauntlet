@@ -12,6 +12,7 @@ import {
   type PasskeyTool,
   type WebAuthnDriver,
 } from "./passkey";
+import { validateToolArgs } from "../../agent/validators";
 
 // The forked CDP library is CommonJS JS — use require for bun compatibility
 const chrome = require("./lib/chrome-ws-lib");
@@ -64,6 +65,8 @@ export class WebAdapter implements Adapter {
   private logger: EvidenceLogger | null;
   private observerSession: ObserverSession | null = null;
   private chromeProfileName: string | null;
+  /** Lazy cache of tool name → parameter schema for O(1) validation. */
+  private toolSchemas: Map<string, ToolDefinition["parameters"]> | null = null;
 
   constructor(options?: WebAdapterOptions) {
     this.remote = false;
@@ -339,6 +342,23 @@ export class WebAdapter implements Adapter {
     logger: EvidenceLogger
   ): Promise<ToolResult> {
     logger.logAction(name, args);
+
+    // Validate the LLM's args shape against the tool schema before dispatch.
+    // A bad shape (e.g. `selector: {css: "#foo"}` where string expected)
+    // gets reported back to the LLM as a normal tool result so the next
+    // turn can correct — no exceptions, no silent cast.
+    if (!this.toolSchemas) {
+      this.toolSchemas = new Map(
+        this.toolDefinitions().map((t) => [t.name, t.parameters] as const),
+      );
+    }
+    const schema = this.toolSchemas.get(name);
+    if (schema) {
+      const check = validateToolArgs(name, args, schema);
+      if (!check.ok) {
+        return { text: `Error: invalid args for ${name}: ${check.reason}` };
+      }
+    }
 
     if (name === "read" && this.readTool) {
       return this.readTool.execute(args);

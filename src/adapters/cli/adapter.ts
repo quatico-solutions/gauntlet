@@ -2,6 +2,7 @@ import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
 import { buildReadTool, type ReadTool } from "../../context/read-tool";
+import { validateToolArgs } from "../../agent/validators";
 
 
 const KEY_MAP: Record<string, string> = {
@@ -24,6 +25,8 @@ export class CLIAdapter implements Adapter {
   private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null;
   private buffer = "";
   private readTool: ReadTool | null;
+  /** Lazy cache of tool name → parameter schema for O(1) validation. */
+  private toolSchemas: Map<string, ToolDefinition["parameters"]> | null = null;
 
   constructor(options?: CLIAdapterOptions) {
     this.readTool = options?.contextRoot
@@ -131,6 +134,22 @@ export class CLIAdapter implements Adapter {
     logger: EvidenceLogger
   ): Promise<ToolResult> {
     logger.logAction(name, args);
+
+    // See WebAdapter.executeTool for the rationale: validate the LLM's
+    // argument shape once, upfront, before dispatching to a handler that
+    // would otherwise `as` the types and crash on bad input.
+    if (!this.toolSchemas) {
+      this.toolSchemas = new Map(
+        this.toolDefinitions().map((t) => [t.name, t.parameters] as const),
+      );
+    }
+    const schema = this.toolSchemas.get(name);
+    if (schema) {
+      const check = validateToolArgs(name, args, schema);
+      if (!check.ok) {
+        return { text: `Error: invalid args for ${name}: ${check.reason}` };
+      }
+    }
 
     if (name === "read" && this.readTool) {
       return this.readTool.execute(args);
