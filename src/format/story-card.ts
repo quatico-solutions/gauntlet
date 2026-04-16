@@ -3,6 +3,14 @@ export interface StoryCard {
   title: string;
   status: string;
   tags: string[];
+  /**
+   * Parent card id, set by fanout to record lineage. This is
+   * informational: it does NOT imply run order or dependency.
+   * Cards must be runnable in any order and in isolation — the
+   * runner provides fresh browser state per story (Gauntlet
+   * v1.5). If a card needs setup state, it must perform that
+   * setup itself.
+   */
   parent?: string;
   stakeholder?: string;
   description: string;

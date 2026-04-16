@@ -1,4 +1,5 @@
 import { readFileSync, unlinkSync } from "fs";
+import { rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { Adapter } from "../adapter";
@@ -6,11 +7,12 @@ import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger, BrowserEventCategory } from "../../evidence/logger";
 import type { ChromeEndpoint } from "../../config";
 import { buildReadProfileTool, type ProfileTool } from "../profile-tool";
+import { buildReadTool, type ReadTool } from "../../context/read-tool";
 import {
   buildInstallPasskeyTool,
   type PasskeyTool,
   type WebAuthnDriver,
-} from "../passkey-tool";
+} from "./passkey";
 
 // The forked CDP library is CommonJS JS — use require for bun compatibility
 const chrome = require("./lib/chrome-ws-lib");
@@ -34,7 +36,7 @@ interface ObserverSession {
 
 export interface WebAdapterOptions {
   chrome?: ChromeEndpoint;
-  profilesDir?: string;
+  contextRoot?: string;
   /**
    * Optional evidence logger. When provided, the adapter opens a background
    * observer session on start() and streams browser console messages,
@@ -43,14 +45,27 @@ export interface WebAdapterOptions {
    * directory. When omitted, no background logging happens.
    */
   logger?: EvidenceLogger;
+  /**
+   * Per-run Chrome profile name used for browser state isolation (spec
+   * §5.1). The runner generates a unique name per run and hands it in
+   * here; WebAdapter passes it to `chrome.startChrome()` so each run gets
+   * its own `--user-data-dir`. On `close()` the adapter recursively
+   * deletes that directory (local mode only; remote Chrome's data dir
+   * is not under our control, and the remote branch resets state via
+   * `clearBrowserData` on start instead). Must match the regex
+   * `/^[a-zA-Z0-9_-]+$/` enforced by chrome-ws-lib.setProfileName.
+   */
+  chromeProfileName?: string;
 }
 
 export class WebAdapter implements Adapter {
   private remote: boolean;
   private profileTool: ProfileTool | null;
+  private readTool: ReadTool | null;
   private passkeyTool: PasskeyTool | null;
   private logger: EvidenceLogger | null;
   private observerSession: ObserverSession | null = null;
+  private chromeProfileName: string | null;
 
   constructor(options?: WebAdapterOptions) {
     this.remote = false;
@@ -62,12 +77,16 @@ export class WebAdapter implements Adapter {
     // (which come from host-override.js's mutable state — set by setDefaults
     // or seeded from CHROME_WS_HOST/CHROME_WS_PORT at module load).
     this.logger = options?.logger ?? null;
-    this.profileTool = options?.profilesDir
-      ? buildReadProfileTool(options.profilesDir)
+    this.chromeProfileName = options?.chromeProfileName ?? null;
+    this.profileTool = options?.contextRoot
+      ? buildReadProfileTool(options.contextRoot)
       : null;
-    this.passkeyTool = options?.profilesDir
+    this.readTool = options?.contextRoot
+      ? buildReadTool(options.contextRoot)
+      : null;
+    this.passkeyTool = options?.contextRoot
       ? buildInstallPasskeyTool(
-          options.profilesDir,
+          options.contextRoot,
           PASSKEY_TAB,
           webAuthnDriver,
           this.logger,
@@ -77,9 +96,22 @@ export class WebAdapter implements Adapter {
 
   async start(url: string): Promise<void> {
     if (!this.remote) {
-      await chrome.startChrome(true); // headless
+      // Pass the per-run profile name (spec §5.1) so each run gets its
+      // own --user-data-dir. Falls back to chrome-ws-lib's default when
+      // the runner did not provide one (kept for test backwards-compat).
+      await chrome.startChrome(true, this.chromeProfileName ?? null); // headless
     }
     await chrome.navigate(0, url);
+
+    // Remote-Chrome state reset (spec §5.1): we cannot delete the
+    // remote's --user-data-dir ourselves, so we fall back to a
+    // best-effort CDP-level clear. Happens after the initial navigate
+    // (so `location.origin` is populated) and BEFORE the observer
+    // session opens (so the clear is not itself streamed as a noisy
+    // first event).
+    if (this.remote) {
+      await chrome.clearBrowserData(0);
+    }
 
     // Open the observer session *after* navigation so the initial page
     // load and LiveSocket handshake are captured as the first events we see.
@@ -124,6 +156,22 @@ export class WebAdapter implements Adapter {
     }
     if (!this.remote) {
       await chrome.killChrome();
+      // Recursively delete the per-run Chrome profile directory (spec
+      // §5.1). Best-effort: failures are logged as an action-log entry
+      // but never thrown — a leftover stale dir is preferable to
+      // failing the close path. Skipped when no profile name was
+      // provided (e.g., legacy/test usage without a runner).
+      if (this.chromeProfileName) {
+        const dir = chrome.getChromeProfileDir(this.chromeProfileName);
+        try {
+          await rm(dir, { recursive: true, force: true });
+        } catch (err) {
+          this.logger?.logAction("chrome_profile_cleanup_failed", {
+            dir,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
     }
   }
 
@@ -284,6 +332,9 @@ export class WebAdapter implements Adapter {
     if (this.profileTool) {
       tools.push(this.profileTool.definition);
     }
+    if (this.readTool) {
+      tools.push(this.readTool.definition);
+    }
     if (this.passkeyTool) {
       tools.push(this.passkeyTool.definition);
     }
@@ -299,6 +350,10 @@ export class WebAdapter implements Adapter {
 
     if (name === "read_profile" && this.profileTool) {
       return this.profileTool.execute(args);
+    }
+
+    if (name === "read" && this.readTool) {
+      return this.readTool.execute(args);
     }
 
     if (name === "install_passkey" && this.passkeyTool) {

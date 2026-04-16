@@ -20,14 +20,14 @@ describe("buildReadProfileTool", () => {
   });
 
   test("returns null when the profiles directory is empty", () => {
-    const dir = join(tmp, "profiles");
-    mkdirSync(dir);
+    const dir = join(tmp, ".gauntlet", "context");
+    mkdirSync(dir, { recursive: true });
     expect(buildReadProfileTool(dir)).toBeNull();
   });
 
   test("returns a tool with the read_profile name when profiles exist", () => {
-    const dir = join(tmp, "profiles");
-    mkdirSync(dir);
+    const dir = join(tmp, ".gauntlet", "context");
+    mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "alice.md"), "Alice body");
     const tool = buildReadProfileTool(dir);
     expect(tool).not.toBeNull();
@@ -35,8 +35,8 @@ describe("buildReadProfileTool", () => {
   });
 
   test("tool parameter does not enumerate profile names", () => {
-    const dir = join(tmp, "profiles");
-    mkdirSync(dir);
+    const dir = join(tmp, ".gauntlet", "context");
+    mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "alice.md"), "A");
     writeFileSync(join(dir, "bob.md"), "B");
     const tool = buildReadProfileTool(dir)!;
@@ -47,8 +47,8 @@ describe("buildReadProfileTool", () => {
   });
 
   test("execute returns file contents verbatim on hit", () => {
-    const dir = join(tmp, "profiles");
-    mkdirSync(dir);
+    const dir = join(tmp, ".gauntlet", "context");
+    mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "alice.md"),
       "Username: alice@example.com\nPassword: hunter2\n",
@@ -60,8 +60,8 @@ describe("buildReadProfileTool", () => {
   });
 
   test("execute returns an error listing available names on miss", () => {
-    const dir = join(tmp, "profiles");
-    mkdirSync(dir);
+    const dir = join(tmp, ".gauntlet", "context");
+    mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "alice.md"), "A");
     writeFileSync(join(dir, "bob.md"), "B");
     const tool = buildReadProfileTool(dir)!;
@@ -73,8 +73,8 @@ describe("buildReadProfileTool", () => {
   });
 
   test("execute returns an error when name argument is missing", () => {
-    const dir = join(tmp, "profiles");
-    mkdirSync(dir);
+    const dir = join(tmp, ".gauntlet", "context");
+    mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "alice.md"), "A");
     const tool = buildReadProfileTool(dir)!;
     const result = tool.execute({});
@@ -83,8 +83,8 @@ describe("buildReadProfileTool", () => {
   });
 
   test("execute refuses path-escape names", () => {
-    const dir = join(tmp, "profiles");
-    mkdirSync(dir);
+    const dir = join(tmp, ".gauntlet", "context");
+    mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "alice.md"), "A");
     writeFileSync(join(tmp, "secret.md"), "nope");
     const tool = buildReadProfileTool(dir)!;
@@ -94,8 +94,8 @@ describe("buildReadProfileTool", () => {
   });
 
   test("execute re-reads the directory on every miss (picks up new files)", () => {
-    const dir = join(tmp, "profiles");
-    mkdirSync(dir);
+    const dir = join(tmp, ".gauntlet", "context");
+    mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "alice.md"), "A");
     const tool = buildReadProfileTool(dir)!;
     writeFileSync(join(dir, "dave.md"), "D");

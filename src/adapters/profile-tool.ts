@@ -12,8 +12,8 @@ const TOOL_DESCRIPTION =
   "ssh key, API token, notes on behavior, etc. Call this when a story " +
   "refers to a profile by name and you need the details to proceed.";
 
-export function buildReadProfileTool(profilesDir: string): ProfileTool | null {
-  if (listProfiles(profilesDir).length === 0) return null;
+export function buildReadProfileTool(contextRoot: string): ProfileTool | null {
+  if (listProfiles(contextRoot).length === 0) return null;
 
   const definition: ToolDefinition = {
     name: "read_profile",
@@ -33,15 +33,15 @@ export function buildReadProfileTool(profilesDir: string): ProfileTool | null {
   const execute = (args: Record<string, unknown>): ToolResult => {
     const name = typeof args.name === "string" ? args.name.trim() : "";
     if (!name) {
-      const available = listProfiles(profilesDir);
+      const available = listProfiles(contextRoot);
       return {
         text: `Error: read_profile requires a "name" argument. Available: ${available.join(", ") || "(none)"}`,
       };
     }
     try {
-      return { text: readProfile(profilesDir, name) };
+      return { text: readProfile(contextRoot, name) };
     } catch {
-      const available = listProfiles(profilesDir);
+      const available = listProfiles(contextRoot);
       return {
         text: `Error: no profile named "${name}". Available: ${available.join(", ") || "(none)"}`,
       };

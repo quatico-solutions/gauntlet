@@ -6,6 +6,8 @@ import { writeResultFiles } from "../evidence/writer";
 import { runAgent } from "../agent/agent";
 import { createClient } from "../models/resolve";
 import { CLIAdapter } from "../adapters/cli/adapter";
+import { renderContextTree } from "../context/tree";
+import { makeRunId, sanitizeProfileSegment } from "../util/id";
 import type { AppConfig } from "../config";
 
 export interface RunCommandOptions {
@@ -26,17 +28,20 @@ export async function run(opts: RunCommandOptions): Promise<void> {
   const card = parseStoryCard(content);
   const logger = new EvidenceLogger(outDir);
   const client = createClient(config.models.agent);
-  const profilesDir = join(config.dataDir, "profiles");
+  const contextRoot = join(config.dataDir, ".gauntlet", "context");
+  // Render the tree **once per run** — the immutability invariant
+  // (spec §4.2) forbids re-rendering during the run.
+  const contextTree = renderContextTree(contextRoot);
 
   let adapter;
   switch (adapterType) {
     case "cli":
-      adapter = new CLIAdapter({ profilesDir });
+      adapter = new CLIAdapter({ contextRoot });
       await adapter.start(target);
       break;
     case "tui": {
       const { TUIAdapter } = await import("../adapters/tui/adapter");
-      adapter = new TUIAdapter({ profilesDir });
+      adapter = new TUIAdapter({ contextRoot });
       await adapter.start(target);
       break;
     }
@@ -49,14 +54,25 @@ export async function run(opts: RunCommandOptions): Promise<void> {
       const chromeOpt = config.sources.defaultChrome === "default"
         ? undefined
         : config.defaultChrome;
-      adapter = new WebAdapter({ chrome: chromeOpt, profilesDir, logger });
+      // Per-run Chrome profile name for browser state isolation (spec
+      // §5.1). Sanitized to match chrome-ws-lib's profile-name regex.
+      const runId = makeRunId();
+      const chromeProfileName = `gauntlet-run-${runId}-${sanitizeProfileSegment(card.id)}`;
+      adapter = new WebAdapter({
+        chrome: chromeOpt,
+        contextRoot,
+        logger,
+        chromeProfileName,
+      });
       await adapter.start(target);
       break;
     }
   }
 
   try {
-    const result = await runAgent(card, adapter, client, logger, target);
+    const result = await runAgent(card, adapter, client, logger, target, {
+      contextTree,
+    });
     writeResultFiles(outDir, result);
     console.log(JSON.stringify(result, null, 2));
   } finally {

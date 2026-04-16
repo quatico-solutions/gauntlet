@@ -2337,6 +2337,37 @@ async function clearCookies(tabIndexOrWsUrl) {
   await sendCdpCommand(wsUrl, 'Network.clearBrowserCookies', {});
 }
 
+/**
+ * Best-effort reset of the given tab's browser state for the
+ * remote-Chrome case where we cannot delete the `--user-data-dir`
+ * ourselves. Cookies, cache, and the current origin's storage are
+ * cleared. Silently swallows errors — a thrown error from any sub-step
+ * is not fatal; this is a weaker reset than the local-Chrome profile-dir
+ * deletion and is documented as such (spec §5.1). The local-Chrome case
+ * uses profile-dir deletion instead, which is strictly stronger.
+ *
+ * Parameter is named `tab` (not `tabIndex`) to match its neighbors
+ * (`navigate(tab, url)`, `webAuthnOpenSession(tab)`, `screenshot(tab, ...)`).
+ */
+async function clearBrowserData(tab) {
+  try {
+    const wsUrl = await resolveWsUrl(tab);
+    try { await sendCdpCommand(wsUrl, 'Network.clearBrowserCookies', {}); } catch { /* best-effort */ }
+    try { await sendCdpCommand(wsUrl, 'Network.clearBrowserCache', {}); } catch { /* best-effort */ }
+    // Storage.clearDataForOrigin needs an origin — use the current page's
+    // origin if it has one, else no-op.
+    try {
+      const origin = await evaluate(wsUrl, 'location.origin');
+      if (origin && typeof origin === 'string' && origin !== 'null') {
+        await sendCdpCommand(wsUrl, 'Storage.clearDataForOrigin', {
+          origin,
+          storageTypes: 'all',
+        });
+      }
+    } catch { /* best-effort */ }
+  } catch { /* best-effort */ }
+}
+
 // =============================================================================
 // WebAuthn — virtual authenticator support (for installing test passkeys)
 // =============================================================================
@@ -2660,6 +2691,7 @@ module.exports = {
 
   // Cookie management
   clearCookies,
+  clearBrowserData,
 
   // WebAuthn virtual authenticator (pinned session — see comment on
   // webAuthnOpenSession for why we bypass the pool).

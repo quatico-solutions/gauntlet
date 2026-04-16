@@ -2,6 +2,7 @@ import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
 import { buildReadProfileTool, type ProfileTool } from "../profile-tool";
+import { buildReadTool, type ReadTool } from "../../context/read-tool";
 
 
 const KEY_MAP: Record<string, string> = {
@@ -14,17 +15,21 @@ const KEY_MAP: Record<string, string> = {
 };
 
 export interface CLIAdapterOptions {
-  profilesDir?: string;
+  contextRoot?: string;
 }
 
 export class CLIAdapter implements Adapter {
   private proc: ReturnType<typeof Bun.spawn> | null = null;
   private buffer = "";
   private profileTool: ProfileTool | null;
+  private readTool: ReadTool | null;
 
   constructor(options?: CLIAdapterOptions) {
-    this.profileTool = options?.profilesDir
-      ? buildReadProfileTool(options.profilesDir)
+    this.profileTool = options?.contextRoot
+      ? buildReadProfileTool(options.contextRoot)
+      : null;
+    this.readTool = options?.contextRoot
+      ? buildReadTool(options.contextRoot)
       : null;
   }
 
@@ -119,6 +124,9 @@ export class CLIAdapter implements Adapter {
     if (this.profileTool) {
       tools.push(this.profileTool.definition);
     }
+    if (this.readTool) {
+      tools.push(this.readTool.definition);
+    }
     return tools;
   }
 
@@ -131,6 +139,10 @@ export class CLIAdapter implements Adapter {
 
     if (name === "read_profile" && this.profileTool) {
       return this.profileTool.execute(args);
+    }
+
+    if (name === "read" && this.readTool) {
+      return this.readTool.execute(args);
     }
 
     switch (name) {

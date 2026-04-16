@@ -5,6 +5,8 @@ import { createClient } from "../../models/resolve";
 import { EvidenceLogger } from "../../evidence/logger";
 import { writeResultFiles } from "../../evidence/writer";
 import { runAgent } from "../../agent/agent";
+import { renderContextTree } from "../../context/tree";
+import { makeRunId, sanitizeProfileSegment } from "../../util/id";
 import { mergeRunConfig, validateRunBody, type AppConfig, type ChromeEndpoint } from "../../config";
 import type { Adapter } from "../../adapters/adapter";
 import type { RunBroadcaster } from "../ws";
@@ -17,21 +19,22 @@ import type { LLMClient } from "../../models/provider";
 function createAdapter(
   type: string,
   chrome: ChromeEndpoint | undefined,
-  profilesDir: string,
+  contextRoot: string,
   logger: EvidenceLogger,
+  chromeProfileName: string | undefined,
 ): Adapter {
   switch (type) {
     case "cli": {
       const { CLIAdapter } = require("../../adapters/cli/adapter");
-      return new CLIAdapter({ profilesDir });
+      return new CLIAdapter({ contextRoot });
     }
     case "tui": {
       const { TUIAdapter } = require("../../adapters/tui/adapter");
-      return new TUIAdapter({ profilesDir });
+      return new TUIAdapter({ contextRoot });
     }
     case "web": {
       const { WebAdapter } = require("../../adapters/web/adapter");
-      return new WebAdapter({ chrome, profilesDir, logger });
+      return new WebAdapter({ chrome, contextRoot, logger, chromeProfileName });
     }
     default:
       throw new Error(`Unknown adapter type: ${type}`);
@@ -46,7 +49,7 @@ export function runRoutes(
 ) {
   const router = new Hono();
   const storiesDir = join(config.dataDir, "stories");
-  const profilesDir = join(config.dataDir, "profiles");
+  const contextRoot = join(config.dataDir, ".gauntlet", "context");
 
   router.post("/:id", async (c) => {
     const entry = findCard(storiesDir, c.req.param("id"));
@@ -76,7 +79,15 @@ export function runRoutes(
     // Create the logger *before* the adapter so WebAdapter can open its
     // background observer session against it in start().
     const logger = new EvidenceLogger(outDir);
-    const adapter = createAdapter(effective.adapter, effective.chrome, profilesDir, logger);
+    // Per-run Chrome profile name for browser state isolation (spec
+    // §5.1). Generated here so concurrent POSTs against the same card
+    // still get distinct profile dirs.
+    const runId = makeRunId();
+    const chromeProfileName = `gauntlet-run-${runId}-${sanitizeProfileSegment(entry.card.id)}`;
+    const adapter = createAdapter(effective.adapter, effective.chrome, contextRoot, logger, chromeProfileName);
+    // Render the tree **once per run** — the immutability invariant
+    // (spec §4.2) forbids re-rendering during the run.
+    const contextTree = renderContextTree(contextRoot);
 
     const startedAt = Date.now();
     if (registry) {
@@ -102,6 +113,7 @@ export function runRoutes(
       registry,
       errorLog,
       startedAt,
+      contextTree,
     }).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       errorLog?.add("run", `${entry.card.id}: ${message}`);
@@ -126,10 +138,16 @@ export interface ExecuteRunOpts {
   errorLog?: ErrorLog;
   /** Token used to guard against clobbering a fresh same-card run. */
   startedAt?: number;
+  /**
+   * Rendered context tree from `renderContextTree`. Built once per run
+   * by the route handler and threaded to `runAgent` so the system
+   * prompt's Context section can be assembled at turn 0. See spec §4.2.
+   */
+  contextTree?: string;
 }
 
 export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
-  const { card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt } = opts;
+  const { card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt, contextTree } = opts;
 
   if (broadcaster || registry) {
     logger.onAction = (action, params) => {
@@ -169,7 +187,9 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
       await streamer.start();
     }
 
-    const result = await runAgent(card, adapter, client, logger, target);
+    const result = await runAgent(card, adapter, client, logger, target, {
+      contextTree,
+    });
     writeResultFiles(outDir, result);
 
     terminal = { type: "complete", result };

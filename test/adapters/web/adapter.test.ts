@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { WebAdapter } from "../../../src/adapters/web/adapter";
@@ -47,16 +47,16 @@ describe("WebAdapter", () => {
     expect(props.return_screenshot).toBeUndefined();
   });
 
-  test("omits read_profile when no profiles directory is set", () => {
+  test("omits read_profile when no context root is set", () => {
     const adapter = new WebAdapter();
     const names = adapter.toolDefinitions().map((t) => t.name);
     expect(names).not.toContain("read_profile");
   });
 
-  test("omits read_profile when profiles directory is empty", () => {
+  test("omits read_profile when context root is empty", () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-web-empty-"));
     try {
-      const adapter = new WebAdapter({ profilesDir: tmp });
+      const adapter = new WebAdapter({ contextRoot: tmp });
       const names = adapter.toolDefinitions().map((t) => t.name);
       expect(names).not.toContain("read_profile");
     } finally {
@@ -64,13 +64,13 @@ describe("WebAdapter", () => {
     }
   });
 
-  test("includes read_profile when profiles directory has at least one file", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-web-profiles-"));
+  test("includes read_profile when context root has at least one file", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-web-context-"));
     try {
-      mkdirSync(join(tmp, "profiles"));
-      writeFileSync(join(tmp, "profiles", "alice.md"), "A");
-      writeFileSync(join(tmp, "profiles", "bob.md"), "B");
-      const adapter = new WebAdapter({ profilesDir: join(tmp, "profiles") });
+      mkdirSync(join(tmp, ".gauntlet", "context"), { recursive: true });
+      writeFileSync(join(tmp, ".gauntlet", "context", "alice.md"), "A");
+      writeFileSync(join(tmp, ".gauntlet", "context", "bob.md"), "B");
+      const adapter = new WebAdapter({ contextRoot: join(tmp, ".gauntlet", "context") });
       const tools = adapter.toolDefinitions();
       const readProfile = tools.find((t) => t.name === "read_profile");
       expect(readProfile).toBeDefined();
@@ -84,12 +84,11 @@ describe("WebAdapter", () => {
     }
   });
 
-  test("omits install_passkey when profiles directory has no passkey files", () => {
+  test("omits install_passkey when context root is empty", () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-web-nopasskey-"));
     try {
-      mkdirSync(join(tmp, "profiles"));
-      writeFileSync(join(tmp, "profiles", "alice.md"), "A");
-      const adapter = new WebAdapter({ profilesDir: join(tmp, "profiles") });
+      mkdirSync(join(tmp, ".gauntlet", "context"), { recursive: true });
+      const adapter = new WebAdapter({ contextRoot: join(tmp, ".gauntlet", "context") });
       const names = adapter.toolDefinitions().map((t) => t.name);
       expect(names).not.toContain("install_passkey");
     } finally {
@@ -97,13 +96,50 @@ describe("WebAdapter", () => {
     }
   });
 
-  test("includes install_passkey when a subdir has passkey.json", () => {
+  test("omits `read` tool when no context root is set", () => {
+    const adapter = new WebAdapter();
+    const names = adapter.toolDefinitions().map((t) => t.name);
+    expect(names).not.toContain("read");
+  });
+
+  test("omits `read` tool when context root is empty", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-web-read-empty-"));
+    try {
+      const adapter = new WebAdapter({ contextRoot: tmp });
+      const names = adapter.toolDefinitions().map((t) => t.name);
+      expect(names).not.toContain("read");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("includes `read` tool when context root is non-empty", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-web-read-"));
+    try {
+      mkdirSync(join(tmp, ".gauntlet", "context"), { recursive: true });
+      writeFileSync(join(tmp, ".gauntlet", "context", "alice.md"), "A");
+      const adapter = new WebAdapter({
+        contextRoot: join(tmp, ".gauntlet", "context"),
+      });
+      const names = adapter.toolDefinitions().map((t) => t.name);
+      expect(names).toContain("read");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("includes install_passkey whenever context root is non-empty (predicate does not scan filenames)", () => {
+    // v1.5 (WP1.5) changed the predicate: the adapter registers
+    // install_passkey whenever the context root exists and is non-empty.
+    // It deliberately does NOT scan for `passkey.json` — that would
+    // teach the runner about filename conventions, which spec §2.1
+    // forbids. If the author has no passkeys, the agent sees the tool
+    // in its registry but never calls it.
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-web-passkey-"));
     try {
-      mkdirSync(join(tmp, "profiles"));
-      mkdirSync(join(tmp, "profiles", "matt"));
+      mkdirSync(join(tmp, ".gauntlet", "context", "matt"), { recursive: true });
       writeFileSync(
-        join(tmp, "profiles", "matt", "passkey.json"),
+        join(tmp, ".gauntlet", "context", "matt", "passkey.json"),
         JSON.stringify({
           credentialId: "dGVzdA",
           isResidentCredential: true,
@@ -111,12 +147,177 @@ describe("WebAdapter", () => {
           privateKey: "TEST_KEY",
         }),
       );
-      const adapter = new WebAdapter({ profilesDir: join(tmp, "profiles") });
+      const adapter = new WebAdapter({ contextRoot: join(tmp, ".gauntlet", "context") });
       const names = adapter.toolDefinitions().map((t) => t.name);
       expect(names).toContain("install_passkey");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  // WP1.2 — browser state reset between stories (spec §5.1)
+  //
+  // These tests stub the chrome-ws-lib module so we can verify the
+  // ordering and arguments of the lifecycle calls without actually
+  // launching Chrome. The stubs are restored in `finally` so the rest
+  // of the test suite (and the e2e smoke tests that use real Chrome)
+  // is unaffected.
+  describe("WP1.2 — browser state reset", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const chromeLib = require("../../../src/adapters/web/lib/chrome-ws-lib");
+
+    type Call = [string, unknown[]];
+
+    function stubChrome(overrides: Record<string, (...args: unknown[]) => unknown> = {}) {
+      const calls: Call[] = [];
+      const record = (name: string) => (...args: unknown[]) => {
+        calls.push([name, args]);
+        const o = overrides[name];
+        return o ? o(...args) : undefined;
+      };
+      const originals: Record<string, unknown> = {};
+      const keys = [
+        "startChrome",
+        "navigate",
+        "clearBrowserData",
+        "killChrome",
+        "openObserverSession",
+        "getChromeProfileDir",
+      ];
+      for (const k of keys) {
+        originals[k] = chromeLib[k];
+        chromeLib[k] = record(k);
+      }
+      return {
+        calls,
+        restore() {
+          for (const k of keys) {
+            chromeLib[k] = originals[k];
+          }
+        },
+      };
+    }
+
+    test("local mode: startChrome receives the per-run profile name", async () => {
+      const stub = stubChrome();
+      try {
+        const adapter = new WebAdapter({ chromeProfileName: "gauntlet-run-abc123-card1" });
+        await adapter.start("http://localhost:3000/");
+        const startCall = stub.calls.find((c) => c[0] === "startChrome");
+        expect(startCall).toBeDefined();
+        // signature: startChrome(headless, profileName, port?)
+        expect(startCall![1][0]).toBe(true);
+        expect(startCall![1][1]).toBe("gauntlet-run-abc123-card1");
+        // clearBrowserData must NOT fire in local mode
+        const clear = stub.calls.find((c) => c[0] === "clearBrowserData");
+        expect(clear).toBeUndefined();
+      } finally {
+        stub.restore();
+      }
+    });
+
+    test("local mode: close() deletes the per-run profile dir after killChrome", async () => {
+      const tmpRoot = mkdtempSync(join(tmpdir(), "gauntlet-profile-cleanup-"));
+      const fakeProfileDir = join(tmpRoot, "gauntlet-run-xyz-cardA");
+      mkdirSync(fakeProfileDir, { recursive: true });
+      writeFileSync(join(fakeProfileDir, "sentinel"), "x");
+
+      const order: string[] = [];
+      const stub = stubChrome({
+        killChrome: () => { order.push("killChrome"); },
+        getChromeProfileDir: (name: unknown) => {
+          order.push(`getChromeProfileDir:${name}`);
+          return fakeProfileDir;
+        },
+      });
+      try {
+        const adapter = new WebAdapter({ chromeProfileName: "gauntlet-run-xyz-cardA" });
+        await adapter.close();
+        // Ordering: killChrome runs BEFORE the profile-dir lookup/cleanup.
+        const killIdx = order.indexOf("killChrome");
+        const lookupIdx = order.findIndex((s) => s.startsWith("getChromeProfileDir"));
+        expect(killIdx).toBeGreaterThanOrEqual(0);
+        expect(lookupIdx).toBeGreaterThan(killIdx);
+        // Directory must be gone.
+        expect(existsSync(fakeProfileDir)).toBe(false);
+      } finally {
+        stub.restore();
+        rmSync(tmpRoot, { recursive: true, force: true });
+      }
+    });
+
+    test("local mode without chromeProfileName: close() skips profile cleanup", async () => {
+      const stub = stubChrome();
+      try {
+        const adapter = new WebAdapter();
+        await adapter.close();
+        const lookup = stub.calls.find((c) => c[0] === "getChromeProfileDir");
+        expect(lookup).toBeUndefined();
+      } finally {
+        stub.restore();
+      }
+    });
+
+    test("local mode: cleanup of a missing profile dir does not throw (best-effort contract)", async () => {
+      // rm with recursive+force swallows ENOENT, but we verify the
+      // best-effort contract at the adapter level: if the profile dir
+      // doesn't exist (e.g., Chrome never actually launched), close()
+      // must still succeed.
+      const stub = stubChrome({
+        getChromeProfileDir: () => "/nonexistent/should/not/matter/gauntlet-run-ghost",
+      });
+      try {
+        const adapter = new WebAdapter({ chromeProfileName: "gauntlet-run-ghost-card" });
+        await adapter.close();
+        // Just having reached here is the contract: no throw.
+        expect(true).toBe(true);
+      } finally {
+        stub.restore();
+      }
+    });
+
+    test("remote mode: clearBrowserData is invoked on start() after navigate", async () => {
+      const order: string[] = [];
+      const stub = stubChrome({
+        navigate: () => { order.push("navigate"); },
+        clearBrowserData: () => { order.push("clearBrowserData"); },
+      });
+      try {
+        const adapter = new WebAdapter({
+          chrome: { host: "remote-host", port: 9333 },
+          chromeProfileName: "gauntlet-run-remote-card",
+        });
+        await adapter.start("http://localhost:3000/");
+        // startChrome must NOT be called in remote mode.
+        const startCall = stub.calls.find((c) => c[0] === "startChrome");
+        expect(startCall).toBeUndefined();
+        // navigate -> clearBrowserData ordering
+        const navIdx = order.indexOf("navigate");
+        const clearIdx = order.indexOf("clearBrowserData");
+        expect(navIdx).toBeGreaterThanOrEqual(0);
+        expect(clearIdx).toBeGreaterThan(navIdx);
+        // clearBrowserData's argument is the tab index (0)
+        const clearCall = stub.calls.find((c) => c[0] === "clearBrowserData");
+        expect(clearCall![1][0]).toBe(0);
+      } finally {
+        stub.restore();
+      }
+    });
+
+    test("remote mode: close() does not kill Chrome or clean up any profile dir", async () => {
+      const stub = stubChrome();
+      try {
+        const adapter = new WebAdapter({
+          chrome: { host: "remote-host", port: 9334 },
+          chromeProfileName: "gauntlet-run-remote-card",
+        });
+        await adapter.close();
+        expect(stub.calls.find((c) => c[0] === "killChrome")).toBeUndefined();
+        expect(stub.calls.find((c) => c[0] === "getChromeProfileDir")).toBeUndefined();
+      } finally {
+        stub.restore();
+      }
+    });
   });
 
   // The whole AppConfig refactor depends on this thread:

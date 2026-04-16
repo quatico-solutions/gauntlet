@@ -42,16 +42,16 @@ describe("CLIAdapter", () => {
     expect(names).toContain("read_output");
   });
 
-  test("omits read_profile when no profiles directory is set", () => {
+  test("omits read_profile when no context root is set", () => {
     adapter = new CLIAdapter();
     const names = adapter.toolDefinitions().map((t) => t.name);
     expect(names).not.toContain("read_profile");
   });
 
-  test("omits read_profile when profiles directory is empty", () => {
+  test("omits read_profile when context root is empty", () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-empty-"));
     try {
-      adapter = new CLIAdapter({ profilesDir: tmp });
+      adapter = new CLIAdapter({ contextRoot: tmp });
       const names = adapter.toolDefinitions().map((t) => t.name);
       expect(names).not.toContain("read_profile");
     } finally {
@@ -59,14 +59,52 @@ describe("CLIAdapter", () => {
     }
   });
 
-  test("includes read_profile when profiles directory has at least one file", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-profiles-"));
+  test("includes read_profile when context root has at least one file", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-context-"));
     try {
-      mkdirSync(join(tmp, "profiles"));
-      writeFileSync(join(tmp, "profiles", "alice.md"), "Alice body");
-      adapter = new CLIAdapter({ profilesDir: join(tmp, "profiles") });
+      mkdirSync(join(tmp, ".gauntlet", "context"), { recursive: true });
+      writeFileSync(join(tmp, ".gauntlet", "context", "alice.md"), "Alice body");
+      adapter = new CLIAdapter({ contextRoot: join(tmp, ".gauntlet", "context") });
       const names = adapter.toolDefinitions().map((t) => t.name);
       expect(names).toContain("read_profile");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("includes `read` tool when context root is non-empty", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-read-wire-"));
+    try {
+      mkdirSync(join(tmp, ".gauntlet", "context"), { recursive: true });
+      writeFileSync(join(tmp, ".gauntlet", "context", "alice.md"), "A");
+      adapter = new CLIAdapter({
+        contextRoot: join(tmp, ".gauntlet", "context"),
+      });
+      const names = adapter.toolDefinitions().map((t) => t.name);
+      expect(names).toContain("read");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("executeTool(read) returns file contents via the `read` tool", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-read-exec-"));
+    try {
+      mkdirSync(join(tmp, ".gauntlet", "context", "alice"), { recursive: true });
+      writeFileSync(
+        join(tmp, ".gauntlet", "context", "alice", "credentials.md"),
+        "Username: alice\nPassword: hunter2",
+      );
+      adapter = new CLIAdapter({
+        contextRoot: join(tmp, ".gauntlet", "context"),
+      });
+      const result = await adapter.executeTool(
+        "read",
+        { path: "alice/credentials.md" },
+        mockLogger,
+      );
+      expect(result.text).toContain("Username: alice");
+      expect(result.text).toContain("Password: hunter2");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -75,12 +113,12 @@ describe("CLIAdapter", () => {
   test("executeTool(read_profile) returns the file contents verbatim", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-read-"));
     try {
-      mkdirSync(join(tmp, "profiles"));
+      mkdirSync(join(tmp, ".gauntlet", "context"), { recursive: true });
       writeFileSync(
-        join(tmp, "profiles", "alice.md"),
+        join(tmp, ".gauntlet", "context", "alice.md"),
         "Username: alice\nPassword: hunter2",
       );
-      adapter = new CLIAdapter({ profilesDir: join(tmp, "profiles") });
+      adapter = new CLIAdapter({ contextRoot: join(tmp, ".gauntlet", "context") });
       const result = await adapter.executeTool(
         "read_profile",
         { name: "alice" },

@@ -11,6 +11,15 @@ const DEFAULT_TOOL_TIMEOUT_MS = 30000;
 
 export interface AgentOptions {
   toolTimeoutMs?: number;
+  /**
+   * Rendered tree listing for the system prompt's Context section,
+   * produced by `renderContextTree` in `src/context/tree.ts`. May be
+   * undefined or empty, in which case the Context section is omitted.
+   * Per Gauntlet v1.5 spec §4.2, the tree is built **once per run** —
+   * the runner calls `renderContextTree` and passes the result here.
+   * `runAgent` does not re-render or refresh it.
+   */
+  contextTree?: string;
 }
 
 const REPORT_TOOL: ToolDefinition = {
@@ -69,7 +78,7 @@ export async function runAgent(
   options?: AgentOptions
 ): Promise<VetResult> {
   const startTime = Date.now();
-  const systemPrompt = buildSystemPrompt(card);
+  const systemPrompt = buildSystemPrompt(card, options?.contextTree);
   const tools = [...adapter.toolDefinitions(), REPORT_TOOL];
 
   let initialMessage = "Begin testing. Use the available tools to interact with the application.";

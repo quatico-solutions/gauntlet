@@ -79,7 +79,7 @@ Test the login flow for a registered user.
 | `status` | no | `draft` or `ready` (defaults to `draft`). Only `ready` cards are surfaced for routine runs |
 | `tags` | no | Comma-separated list (e.g. `auth, smoke`) |
 | `stakeholder` | no | Whose perspective the test takes (e.g. `end-user`, `admin`) |
-| `parent` | no | `id` of the parent card -- set automatically on fanout-generated variations to link back to the source |
+| `parent` | no | `id` of the parent card -- set automatically on fanout-generated variations to link back to the source. Lineage only; it does **not** imply run order or a dependency between cards. |
 
 The frontmatter parser is intentionally minimal: it splits on the first `:` per line, so values are plain strings -- do not quote them and do not use nested YAML structures.
 
@@ -177,7 +177,7 @@ Results are written to a `results/` directory as `result.json` alongside the evi
 gauntlet run scenario.md --target http://localhost:3000
 
 # Run with a specific model and adapter
-gauntlet run scenario.md --target http://localhost:3000 --model claude-sonnet-4-20250514 --adapter web
+gauntlet run scenario.md --target http://localhost:3000 --model claude-sonnet-4-6 --adapter web
 
 # Validate a story card's format
 gauntlet validate scenario.md
