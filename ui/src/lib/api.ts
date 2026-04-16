@@ -35,6 +35,14 @@ export interface VetResult {
   usage?: { inputTokens: number; outputTokens: number; turns: number };
 }
 
+/** Paginated `GET /api/results` response. */
+export interface ResultsPage {
+  results: VetResult[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface FanoutResult {
   parent: string;
   generated: { id: string; title: string; filename: string }[];
@@ -112,7 +120,18 @@ export const api = {
       request<void>(`/scenarios/${id}`, { method: "DELETE" }),
   },
   results: {
-    list: () => request<VetResult[]>("/results"),
+    // Paginated listing. See `GET /api/results` in src/api/routes/results.ts.
+    // Server clamps `limit` to [1,200] and `offset` to ≥0; callers can pass
+    // a raw user intent without guarding. `cardId` narrows to a single
+    // card's run history.
+    list: (params?: { limit?: number; offset?: number; cardId?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.limit !== undefined) q.set("limit", String(params.limit));
+      if (params?.offset !== undefined) q.set("offset", String(params.offset));
+      if (params?.cardId) q.set("cardId", params.cardId);
+      const qs = q.toString();
+      return request<ResultsPage>(`/results${qs ? `?${qs}` : ""}`);
+    },
     get: (runId: string) => request<VetResult>(`/results/${runId}`),
     // Build a URL for any file inside a run directory, given the relative
     // path stored in the manifest (e.g. "screenshots/001.png", "run.jsonl").

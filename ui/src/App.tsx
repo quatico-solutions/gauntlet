@@ -154,6 +154,8 @@ function RunsSidebar({
   error,
   onRetry,
   onSelectActive,
+  hasMore,
+  onLoadMore,
 }: {
   selectedId?: string;
   results: ReturnType<typeof useResults>["results"];
@@ -162,10 +164,12 @@ function RunsSidebar({
   error: string | null;
   onRetry: () => void;
   onSelectActive: (runId: string) => void;
+  hasMore: boolean;
+  onLoadMore: () => void;
 }) {
   const navigate = useNavigate();
 
-  if (loading && activeRuns.length === 0) {
+  if (loading && activeRuns.length === 0 && results.length === 0) {
     return <div className="p-3"><Spinner label="Loading runs..." /></div>;
   }
 
@@ -187,6 +191,8 @@ function RunsSidebar({
       selectedId={selectedId}
       onSelect={(runId) => navigate(`/runs/${runId}`)}
       onSelectActive={onSelectActive}
+      hasMore={hasMore}
+      onLoadMore={onLoadMore}
     />
   );
 }
@@ -196,7 +202,14 @@ export default function App() {
   const location = useLocation();
   const activeTab = location.pathname.startsWith("/runs") ? "/runs" : "/cards";
   const { cards, loading, error, refresh: refreshCards } = useCards();
-  const { results, loading: runsLoading, error: runsError, refresh: refreshResults } = useResults();
+  const {
+    results,
+    loading: runsLoading,
+    error: runsError,
+    refresh: refreshResults,
+    loadMore: loadMoreResults,
+    hasMore: hasMoreResults,
+  } = useResults();
   const { runs: activeRuns, loaded: activeRunsLoaded, refresh: refreshActive } = useActiveRuns();
   const [showRunModal, setShowRunModal] = useState(false);
 
@@ -264,6 +277,8 @@ export default function App() {
                 error={runsError}
                 onRetry={refreshResults}
                 onSelectActive={(runId) => navigate(`/runs/live/${runId}`)}
+                hasMore={hasMoreResults}
+                onLoadMore={loadMoreResults}
               />
             )}
           </Sidebar>

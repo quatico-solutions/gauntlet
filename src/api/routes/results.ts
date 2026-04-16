@@ -4,19 +4,70 @@ import { join } from "path";
 import { isSafePath } from "../../paths";
 import { getMimeType } from "../mime-types";
 
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
+/**
+ * Parse an integer query param, defaulting and clamping to a valid range.
+ * A value that doesn't parse as an integer collapses to `fallback` rather
+ * than erroring — matches the tolerant convention used elsewhere in this API.
+ */
+function parseIntParam(raw: string | undefined, fallback: number, min: number, max: number): number {
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
 export function resultRoutes(resultsDir: string) {
   const router = new Hono();
 
+  // Paginated list. Response shape:
+  //   { results: VetResult[]; total: number; limit: number; offset: number }
+  //
+  // Query params:
+  //   ?limit=<n>   max entries (default 50, clamped to 1..200)
+  //   ?offset=<n>  skip N entries (default 0, clamped to >=0)
+  //   ?cardId=<s>  only include runs whose scenario matches this cardId
+  //
+  // Sort is runId-desc before offset/limit. The runId's composite shape
+  // (`<cardId>_<YYYYMMDDTHHMMSSZ>_<nonce>`) makes lex-desc equivalent to
+  // chrono-desc *per card*. Across cards the ordering interleaves by cardId
+  // first, timestamp second — which is acceptable: the primary consumer
+  // groups by cardId in the UI anyway, and the older flat listing was in
+  // whatever order readdir returned (no guarantee).
   router.get("/", (c) => {
+    const limit = parseIntParam(c.req.query("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT);
+    const offset = parseIntParam(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+    const cardId = c.req.query("cardId");
+
     if (!existsSync(resultsDir)) {
-      return c.json([]);
+      return c.json({ results: [], total: 0, limit, offset });
     }
 
     const entries = readdirSync(resultsDir, { withFileTypes: true });
+    // Sort directory names desc up front — cheap, avoids loading files
+    // for rows the caller is going to page past anyway.
+    const runIds = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+
+    // Apply cardId filter before loading. runIds are shaped
+    // `<cardId>_<ts>_<nonce>` (see `makeRunId`) and cardIds can't contain
+    // `_` (story-card parse enforces `[a-zA-Z0-9-]`), so a `<cardId>_`
+    // prefix match is unambiguous and lets us skip file reads for
+    // non-matching dirs.
+    const filteredRunIds = cardId
+      ? runIds.filter((id) => id.startsWith(`${cardId}_`))
+      : runIds;
+
+    const total = filteredRunIds.length;
+    const page = filteredRunIds.slice(offset, offset + limit);
+
     const results: unknown[] = [];
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const path = join(resultsDir, e.name, "result.json");
+    for (const runId of page) {
+      const path = join(resultsDir, runId, "result.json");
       if (!existsSync(path)) continue;
       try {
         const content = readFileSync(path, "utf-8");
@@ -26,7 +77,7 @@ export function resultRoutes(resultsDir: string) {
       }
     }
 
-    return c.json(results);
+    return c.json({ results, total, limit, offset });
   });
 
   // `:runId` is the run directory name on disk — produced by `makeRunId`
