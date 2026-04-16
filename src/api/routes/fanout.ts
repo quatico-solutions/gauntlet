@@ -28,12 +28,44 @@ function writeCards(storiesDir: string, cardTexts: string[], prefix: string) {
   });
 }
 
+type Mode = "observations" | "failure";
+
+interface ModeConfig {
+  generator: (result: VetResult, client: LLMClient) => Promise<string[]>;
+  filenameSuffix: string;
+  errorLabel: string;
+  // Returns an error message to send as 400, or null to proceed.
+  // Observations has no precondition check (zero observations is a success
+  // with empty results, handled separately below); failure requires
+  // status === "fail".
+  preflight?: (result: VetResult) => string | null;
+}
+
+const MODES: Record<Mode, ModeConfig> = {
+  observations: {
+    generator: generateFromObservations,
+    filenameSuffix: "obs",
+    errorLabel: "observations",
+  },
+  failure: {
+    generator: generateFromFailure,
+    filenameSuffix: "fail",
+    errorLabel: "failure analysis",
+    preflight: (r) => (r.status !== "fail" ? "result is not a failure" : null),
+  },
+};
+
+function isMode(s: string): s is Mode {
+  return s === "observations" || s === "failure";
+}
+
 export function fanoutRoutes(projectRoot: string, clientFactory?: () => LLMClient, errorLog?: ErrorLog) {
   const router = new Hono();
   const storiesDir = gauntletPath(projectRoot, "stories");
 
   router.post("/:id", async (c) => {
-    const entry = findCard(projectRoot, c.req.param("id"), errorLog);
+    const cardId = c.req.param("id");
+    const entry = findCard(projectRoot, cardId, errorLog);
     if (!entry) return c.json({ error: "not found" }, 404);
 
     const clientOrError = resolveClient(clientFactory);
@@ -50,46 +82,37 @@ export function fanoutRoutes(projectRoot: string, clientFactory?: () => LLMClien
     }
   });
 
-  router.post("/:id/observations", async (c) => {
-    const id = c.req.param("id");
-    const resultPath = gauntletPath(projectRoot, "results", id, "result.json");
+  router.post("/:id/:mode", async (c) => {
+    const mode = c.req.param("mode");
+    if (!isMode(mode)) return c.json({ error: "unknown mode" }, 404);
+    const config = MODES[mode];
+
+    const runId = c.req.param("id");
+    const resultPath = gauntletPath(projectRoot, "results", runId, "result.json");
     if (!existsSync(resultPath)) return c.json({ error: "not found" }, 404);
 
     const result: VetResult = JSON.parse(readFileSync(resultPath, "utf-8"));
-    if (result.observations.length === 0) return c.json({ parent: id, generated: [] });
+    const cardId = result.scenario;
 
-    const clientOrError = resolveClient(clientFactory);
-    if ("error" in clientOrError) return c.json({ error: clientOrError.error }, 400);
+    const preflightError = config.preflight?.(result);
+    if (preflightError) return c.json({ error: preflightError }, 400);
 
-    try {
-      const cardTexts = await generateFromObservations(result, clientOrError);
-      const generated = writeCards(storiesDir, cardTexts, `${id}-obs`);
-      return c.json({ parent: id, generated });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      errorLog?.add("fanout", `observations for ${id}: ${message}`);
-      return c.json({ error: message }, 500);
+    // Observations mode: zero observations is a legitimate zero-result
+    // success, not an error. Skip the LLM call and return empty generated.
+    if (mode === "observations" && result.observations.length === 0) {
+      return c.json({ parent: cardId, runId, generated: [] });
     }
-  });
-
-  router.post("/:id/failure", async (c) => {
-    const id = c.req.param("id");
-    const resultPath = gauntletPath(projectRoot, "results", id, "result.json");
-    if (!existsSync(resultPath)) return c.json({ error: "not found" }, 404);
-
-    const result: VetResult = JSON.parse(readFileSync(resultPath, "utf-8"));
-    if (result.status !== "fail") return c.json({ error: "result is not a failure" }, 400);
 
     const clientOrError = resolveClient(clientFactory);
     if ("error" in clientOrError) return c.json({ error: clientOrError.error }, 400);
 
     try {
-      const cardTexts = await generateFromFailure(result, clientOrError);
-      const generated = writeCards(storiesDir, cardTexts, `${id}-fail`);
-      return c.json({ parent: id, generated });
+      const cardTexts = await config.generator(result, clientOrError);
+      const generated = writeCards(storiesDir, cardTexts, `${cardId}-${config.filenameSuffix}`);
+      return c.json({ parent: cardId, runId, generated });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      errorLog?.add("fanout", `failure analysis for ${id}: ${message}`);
+      errorLog?.add("fanout", `${config.errorLabel} for ${cardId} (run ${runId}): ${message}`);
       return c.json({ error: message }, 500);
     }
   });

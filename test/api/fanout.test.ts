@@ -206,11 +206,13 @@ describe("Fanout observations API", () => {
   });
 
   test("POST /api/fanout/:id/observations promotes observations to story cards", async () => {
-    const resultsDir = gauntletPath(projectRoot, "results", "test-001");
+    const runId = "test-001_20260416T142301Z_k3xm";
+    const resultsDir = gauntletPath(projectRoot, "results", runId);
     mkdirSync(resultsDir, { recursive: true });
     writeFileSync(
       join(resultsDir, "result.json"),
       JSON.stringify({
+        runId,
         scenario: "test-001",
         status: "pass",
         summary: "Passed with observations",
@@ -228,18 +230,51 @@ describe("Fanout observations API", () => {
     const app = new Hono();
     app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient(responseText)));
 
-    const res = await app.request("/api/fanout/test-001/observations", { method: "POST" });
+    const res = await app.request(`/api/fanout/${runId}/observations`, { method: "POST" });
     expect(res.status).toBe(200);
 
     const body = await res.json();
+    // parent is the cardId (for linking fanout children to their source card),
+    // runId is the run provenance.
     expect(body.parent).toBe("test-001");
+    expect(body.runId).toBe(runId);
     expect(body.generated).toHaveLength(2);
     expect(body.generated[0].id).toBe("test-001-obs-1");
     expect(body.generated[1].id).toBe("test-001-obs-2");
 
+    // Filename prefix is cardId, not runId.
     const files = readdirSync(storiesDir).sort();
     expect(files).toContain("test-001-obs-a.md");
     expect(files).toContain("test-001-obs-b.md");
+  });
+
+  test("POST /api/fanout/:id/observations returns empty generated when no observations", async () => {
+    const runId = "test-noobs_20260416T142301Z_q9x2";
+    const resultsDir = gauntletPath(projectRoot, "results", runId);
+    mkdirSync(resultsDir, { recursive: true });
+    writeFileSync(
+      join(resultsDir, "result.json"),
+      JSON.stringify({
+        runId,
+        scenario: "test-noobs",
+        status: "pass",
+        summary: "Clean pass",
+        reasoning: "Nothing observed",
+        observations: [],
+        evidence: { screenshots: [], log: "run.jsonl" },
+        duration_ms: 500,
+      })
+    );
+
+    const app = new Hono();
+    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient("")));
+
+    const res = await app.request(`/api/fanout/${runId}/observations`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.parent).toBe("test-noobs");
+    expect(body.runId).toBe(runId);
+    expect(body.generated).toEqual([]);
   });
 
   test("POST /api/fanout/:id/observations returns 404 when no result exists", async () => {
@@ -248,6 +283,16 @@ describe("Fanout observations API", () => {
 
     const res = await app.request("/api/fanout/nonexistent/observations", { method: "POST" });
     expect(res.status).toBe(404);
+  });
+
+  test("POST /api/fanout/:id/:mode returns 404 for unknown mode", async () => {
+    const app = new Hono();
+    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient("")));
+
+    const res = await app.request("/api/fanout/anything/bogus", { method: "POST" });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("unknown mode");
   });
 });
 
@@ -266,11 +311,13 @@ describe("Fanout failure API", () => {
   });
 
   test("POST /api/fanout/:id/failure generates follow-up stories from a failed run", async () => {
-    const resultsDir = gauntletPath(projectRoot, "results", "test-002");
+    const runId = "test-002_20260416T142301Z_f7v1";
+    const resultsDir = gauntletPath(projectRoot, "results", runId);
     mkdirSync(resultsDir, { recursive: true });
     writeFileSync(
       join(resultsDir, "result.json"),
       JSON.stringify({
+        runId,
         scenario: "test-002",
         status: "fail",
         summary: "Login crashed",
@@ -285,26 +332,31 @@ describe("Fanout failure API", () => {
     const app = new Hono();
     app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient(responseText)));
 
-    const res = await app.request("/api/fanout/test-002/failure", { method: "POST" });
+    const res = await app.request(`/api/fanout/${runId}/failure`, { method: "POST" });
     expect(res.status).toBe(200);
 
     const body = await res.json();
+    // parent is the cardId; runId is returned for provenance.
     expect(body.parent).toBe("test-002");
+    expect(body.runId).toBe(runId);
     expect(body.generated).toHaveLength(2);
     expect(body.generated[0].id).toBe("test-002-fail-1");
     expect(body.generated[1].id).toBe("test-002-fail-2");
 
+    // Filename prefix is cardId, not runId.
     const files = readdirSync(storiesDir).sort();
     expect(files).toContain("test-002-fail-a.md");
     expect(files).toContain("test-002-fail-b.md");
   });
 
   test("POST /api/fanout/:id/failure returns 400 when result is not a failure", async () => {
-    const resultsDir = gauntletPath(projectRoot, "results", "test-003");
+    const runId = "test-003_20260416T142301Z_p2xq";
+    const resultsDir = gauntletPath(projectRoot, "results", runId);
     mkdirSync(resultsDir, { recursive: true });
     writeFileSync(
       join(resultsDir, "result.json"),
       JSON.stringify({
+        runId,
         scenario: "test-003",
         status: "pass",
         summary: "All good",
@@ -318,7 +370,7 @@ describe("Fanout failure API", () => {
     const app = new Hono();
     app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient("")));
 
-    const res = await app.request("/api/fanout/test-003/failure", { method: "POST" });
+    const res = await app.request(`/api/fanout/${runId}/failure`, { method: "POST" });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toContain("not a failure");
