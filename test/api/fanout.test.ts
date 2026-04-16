@@ -6,6 +6,26 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { Hono } from "hono";
 import type { LLMClient } from "../../src/models/provider";
+import type { AppConfig } from "../../src/config";
+
+function makeConfig(projectRoot: string, overrides: Partial<AppConfig> = {}): AppConfig {
+  return {
+    projectRoot,
+    port: 4400,
+    defaultChrome: { host: "127.0.0.1", port: 9222 },
+    models: { agent: "claude-sonnet-4-6", fanout: undefined, available: [] },
+    apiKeys: { anthropic: false, openai: false },
+    sources: {
+      projectRoot: "default",
+      port: "default",
+      defaultChrome: "default",
+      "models.agent": "default",
+      "models.fanout": "unset",
+      "models.available": "default",
+    },
+    ...overrides,
+  };
+}
 
 const STORY_MD = `---
 id: story-001
@@ -79,7 +99,7 @@ describe("Fanout API", () => {
 
   test("POST /api/fanout/:id returns 404 for unknown scenario", async () => {
     const app = new Hono();
-    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient("")));
+    app.route("/api/fanout", fanoutRoutes(makeConfig(projectRoot), () => makeFakeClient("")));
 
     const res = await app.request("/api/fanout/story-999", { method: "POST" });
     expect(res.status).toBe(404);
@@ -87,24 +107,18 @@ describe("Fanout API", () => {
     expect(body.error).toBe("not found");
   });
 
-  test("POST /api/fanout/:id returns 400 when no model configured", async () => {
-    const savedFanout = process.env.GAUNTLET_FANOUT_MODEL;
-    const savedAgent = process.env.GAUNTLET_AGENT_MODEL;
-    delete process.env.GAUNTLET_FANOUT_MODEL;
-    delete process.env.GAUNTLET_AGENT_MODEL;
+  test("POST /api/fanout/:id returns 400 when fanout model not in allow-list", async () => {
+    const app = new Hono();
+    const config = makeConfig(projectRoot, {
+      models: { agent: "claude-sonnet-4-6", fanout: "claude-opus-4-6", available: ["claude-sonnet-4-6"] },
+    });
+    app.route("/api/fanout", fanoutRoutes(config));
 
-    try {
-      const app = new Hono();
-      app.route("/api/fanout", fanoutRoutes(projectRoot));
-
-      const res = await app.request("/api/fanout/story-001", { method: "POST" });
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain("no model configured");
-    } finally {
-      if (savedFanout !== undefined) process.env.GAUNTLET_FANOUT_MODEL = savedFanout;
-      if (savedAgent !== undefined) process.env.GAUNTLET_AGENT_MODEL = savedAgent;
-    }
+    const res = await app.request("/api/fanout/story-001", { method: "POST" });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("allow-list");
+    expect(body.error).toContain("claude-opus-4-6");
   });
 
   test("POST /api/fanout/:id generates cards and writes to stories dir", async () => {
@@ -112,7 +126,7 @@ describe("Fanout API", () => {
     const client = makeFakeClient(responseText);
 
     const app = new Hono();
-    app.route("/api/fanout", fanoutRoutes(projectRoot, () => client));
+    app.route("/api/fanout", fanoutRoutes(makeConfig(projectRoot), () => client));
 
     const res = await app.request("/api/fanout/story-001", { method: "POST" });
     expect(res.status).toBe(200);
@@ -228,7 +242,7 @@ describe("Fanout observations API", () => {
 
     const responseText = `${OBS_CARD_A}---CARD---${OBS_CARD_B}`;
     const app = new Hono();
-    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient(responseText)));
+    app.route("/api/fanout", fanoutRoutes(makeConfig(projectRoot), () => makeFakeClient(responseText)));
 
     const res = await app.request(`/api/fanout/${runId}/observations`, { method: "POST" });
     expect(res.status).toBe(200);
@@ -267,7 +281,7 @@ describe("Fanout observations API", () => {
     );
 
     const app = new Hono();
-    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient("")));
+    app.route("/api/fanout", fanoutRoutes(makeConfig(projectRoot), () => makeFakeClient("")));
 
     const res = await app.request(`/api/fanout/${runId}/observations`, { method: "POST" });
     expect(res.status).toBe(200);
@@ -279,7 +293,7 @@ describe("Fanout observations API", () => {
 
   test("POST /api/fanout/:id/observations returns 404 when no result exists", async () => {
     const app = new Hono();
-    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient("")));
+    app.route("/api/fanout", fanoutRoutes(makeConfig(projectRoot), () => makeFakeClient("")));
 
     const res = await app.request("/api/fanout/nonexistent/observations", { method: "POST" });
     expect(res.status).toBe(404);
@@ -287,7 +301,7 @@ describe("Fanout observations API", () => {
 
   test("POST /api/fanout/:id/:mode returns 404 for unknown mode", async () => {
     const app = new Hono();
-    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient("")));
+    app.route("/api/fanout", fanoutRoutes(makeConfig(projectRoot), () => makeFakeClient("")));
 
     const res = await app.request("/api/fanout/anything/bogus", { method: "POST" });
     expect(res.status).toBe(404);
@@ -330,7 +344,7 @@ describe("Fanout failure API", () => {
 
     const responseText = `${FAIL_CARD_A}---CARD---${FAIL_CARD_B}`;
     const app = new Hono();
-    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient(responseText)));
+    app.route("/api/fanout", fanoutRoutes(makeConfig(projectRoot), () => makeFakeClient(responseText)));
 
     const res = await app.request(`/api/fanout/${runId}/failure`, { method: "POST" });
     expect(res.status).toBe(200);
@@ -368,7 +382,7 @@ describe("Fanout failure API", () => {
     );
 
     const app = new Hono();
-    app.route("/api/fanout", fanoutRoutes(projectRoot, () => makeFakeClient("")));
+    app.route("/api/fanout", fanoutRoutes(makeConfig(projectRoot), () => makeFakeClient("")));
 
     const res = await app.request(`/api/fanout/${runId}/failure`, { method: "POST" });
     expect(res.status).toBe(400);

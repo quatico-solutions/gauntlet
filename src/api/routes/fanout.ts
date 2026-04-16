@@ -7,13 +7,16 @@ import { createClient } from "../../models/resolve";
 import { gauntletPath } from "../../paths";
 import type { LLMClient } from "../../models/provider";
 import type { VetResult } from "../../types";
+import type { AppConfig } from "../../config";
 import { findCard } from "../../cards/store";
 import type { ErrorLog } from "./errors";
 
-function resolveClient(clientFactory?: () => LLMClient): LLMClient | { error: string } {
+function resolveClient(config: AppConfig, clientFactory?: () => LLMClient): LLMClient | { error: string } {
   if (clientFactory) return clientFactory();
-  const model = process.env.GAUNTLET_FANOUT_MODEL || process.env.GAUNTLET_AGENT_MODEL;
-  if (!model) return { error: "no model configured (set GAUNTLET_FANOUT_MODEL or GAUNTLET_AGENT_MODEL)" };
+  const model = config.models.fanout ?? config.models.agent;
+  if (config.models.available.length > 0 && !config.models.available.includes(model)) {
+    return { error: `model "${model}" is not in GAUNTLET_MODELS allow-list` };
+  }
   return createClient(model);
 }
 
@@ -59,8 +62,9 @@ function isMode(s: string): s is Mode {
   return s === "observations" || s === "failure";
 }
 
-export function fanoutRoutes(projectRoot: string, clientFactory?: () => LLMClient, errorLog?: ErrorLog) {
+export function fanoutRoutes(config: AppConfig, clientFactory?: () => LLMClient, errorLog?: ErrorLog) {
   const router = new Hono();
+  const projectRoot = config.projectRoot;
   const storiesDir = gauntletPath(projectRoot, "stories");
 
   router.post("/:id", async (c) => {
@@ -68,7 +72,7 @@ export function fanoutRoutes(projectRoot: string, clientFactory?: () => LLMClien
     const entry = findCard(projectRoot, cardId, errorLog);
     if (!entry) return c.json({ error: "not found" }, 404);
 
-    const clientOrError = resolveClient(clientFactory);
+    const clientOrError = resolveClient(config, clientFactory);
     if ("error" in clientOrError) return c.json({ error: clientOrError.error }, 400);
 
     try {
@@ -85,7 +89,7 @@ export function fanoutRoutes(projectRoot: string, clientFactory?: () => LLMClien
   router.post("/:id/:mode", async (c) => {
     const mode = c.req.param("mode");
     if (!isMode(mode)) return c.json({ error: "unknown mode" }, 404);
-    const config = MODES[mode];
+    const modeConfig = MODES[mode];
 
     const runId = c.req.param("id");
     const resultPath = gauntletPath(projectRoot, "results", runId, "result.json");
@@ -94,7 +98,7 @@ export function fanoutRoutes(projectRoot: string, clientFactory?: () => LLMClien
     const result: VetResult = JSON.parse(readFileSync(resultPath, "utf-8"));
     const cardId = result.scenario;
 
-    const preflightError = config.preflight?.(result);
+    const preflightError = modeConfig.preflight?.(result);
     if (preflightError) return c.json({ error: preflightError }, 400);
 
     // Observations mode: zero observations is a legitimate zero-result
@@ -103,16 +107,16 @@ export function fanoutRoutes(projectRoot: string, clientFactory?: () => LLMClien
       return c.json({ parent: cardId, runId, generated: [] });
     }
 
-    const clientOrError = resolveClient(clientFactory);
+    const clientOrError = resolveClient(config, clientFactory);
     if ("error" in clientOrError) return c.json({ error: clientOrError.error }, 400);
 
     try {
-      const cardTexts = await config.generator(result, clientOrError);
-      const generated = writeCards(storiesDir, cardTexts, `${cardId}-${config.filenameSuffix}`);
+      const cardTexts = await modeConfig.generator(result, clientOrError);
+      const generated = writeCards(storiesDir, cardTexts, `${cardId}-${modeConfig.filenameSuffix}`);
       return c.json({ parent: cardId, runId, generated });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      errorLog?.add("fanout", `${config.errorLabel} for ${cardId} (run ${runId}): ${message}`);
+      errorLog?.add("fanout", `${modeConfig.errorLabel} for ${cardId} (run ${runId}): ${message}`);
       return c.json({ error: message }, 500);
     }
   });
