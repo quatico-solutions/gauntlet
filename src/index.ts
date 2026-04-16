@@ -111,7 +111,7 @@ async function main() {
         console.error("WARNING: No model configured. Set GAUNTLET_AGENT_MODEL or GAUNTLET_MODELS environment variable.");
       }
       console.error(`gauntlet server listening on port ${port}`);
-      Bun.serve({
+      Bun.serve<{ runId: string }>({
         port,
         idleTimeout: 255, // seconds; LLM calls can take minutes
         fetch(req, server) {

@@ -18,7 +18,10 @@ export interface CLIAdapterOptions {
 }
 
 export class CLIAdapter implements Adapter {
-  private proc: ReturnType<typeof Bun.spawn> | null = null;
+  // Narrow the stdio triple so stdin is a FileSink and stdout/stderr are
+  // ReadableStreams. Bun.spawn's return type widens to the full union when
+  // the stdio option is only known by value, which loses these guarantees.
+  private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null;
   private buffer = "";
   private readTool: ReadTool | null;
 
