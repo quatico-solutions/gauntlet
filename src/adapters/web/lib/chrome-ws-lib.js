@@ -33,9 +33,11 @@ function setEndpoint(host, port) {
   activePort = port;
 }
 
-// Port range for dynamic allocation (tried sequentially starting at 9222 for backward compat)
-const PORT_RANGE_START = 9222;
-const PORT_RANGE_END = 12111;
+// Free-port picker used in launch mode. When no endpoint is configured
+// via CHROME_WS_PORT or setEndpoint(), we let the OS assign an ephemeral
+// port for --remote-debugging-port so multiple Gauntlet instances (and
+// co-tenants on 9222) don't collide.
+const { pickFreePort } = require('../../../util/pick-free-port');
 
 // WebSocket client using the standard WebSocket API (works in both Node and Bun)
 class WebSocketClient {
@@ -1281,19 +1283,7 @@ async function startChrome(headless = null, profileName = null, port = null) {
     }
   }
 
-  // --- Step 2: Determine which port to use ---
-  // Priority: explicit port param > CHROME_WS_PORT env var > dynamic allocation
-  const HAS_ENV_PORT = process.env.CHROME_WS_PORT !== undefined;
-  let chosenPort;
-  if (port) {
-    chosenPort = port;
-  } else if (HAS_ENV_PORT) {
-    chosenPort = hostOverride.getPort(); // already parsed from env by host-override.js
-  } else {
-    chosenPort = await findAvailablePort();
-  }
-
-  // --- Step 3: Find Chrome binary ---
+  // --- Step 2: Find Chrome binary ---
   const chromePaths = {
     darwin: [
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -1331,51 +1321,108 @@ async function startChrome(headless = null, profileName = null, port = null) {
     mkdirSync(chromeUserDataDir, { recursive: true });
   }
 
-  // --- Step 4: Launch Chrome with the chosen port ---
-  const args = [
-    `--remote-debugging-port=${chosenPort}`,
-    `--user-data-dir=${chromeUserDataDir}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-background-networking',
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-breakpad',
-    '--disable-client-side-phishing-detection',
-    '--disable-component-update',
-    '--disable-default-apps',
-    '--disable-dev-shm-usage',
-    '--disable-extensions',
-    '--disable-features=TranslateUI',
-    '--disable-hang-monitor',
-    '--disable-ipc-flooding-protection',
-    '--disable-popup-blocking',
-    '--disable-prompt-on-repost',
-    '--disable-sync',
-    '--force-color-profile=srgb',
-    '--metrics-recording-only',
-    '--no-sandbox',
-    '--safebrowsing-disable-auto-update',
-    '--disable-blink-features=AutomationControlled'
-  ];
+  // Builds Chrome's CLI args for a given port. Extracted so we can retry
+  // spawning with a fresh port if the first pick loses a TOCTOU race.
+  const buildArgs = (listenPort) => {
+    const args = [
+      `--remote-debugging-port=${listenPort}`,
+      `--user-data-dir=${chromeUserDataDir}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-background-networking',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-breakpad',
+      '--disable-client-side-phishing-detection',
+      '--disable-component-update',
+      '--disable-default-apps',
+      '--disable-dev-shm-usage',
+      '--disable-extensions',
+      '--disable-features=TranslateUI',
+      '--disable-hang-monitor',
+      '--disable-ipc-flooding-protection',
+      '--disable-popup-blocking',
+      '--disable-prompt-on-repost',
+      '--disable-sync',
+      '--force-color-profile=srgb',
+      '--metrics-recording-only',
+      '--no-sandbox',
+      '--safebrowsing-disable-auto-update',
+      '--disable-blink-features=AutomationControlled'
+    ];
+    if (chromeHeadless) {
+      args.push('--headless=new');
+    }
+    return args;
+  };
 
-  if (chromeHeadless) {
-    args.push('--headless=new');
+  // Spawn Chrome on the given port, wait for it to come up, and verify
+  // /json/version responds. Returns the proc on success, null if the
+  // port was already in use (Chrome failed to bind — DevTools port is
+  // taken). Throws on any other error.
+  const trySpawn = async (listenPort) => {
+    const proc = spawn(chromePath, buildArgs(listenPort), {
+      detached: true,
+      stdio: 'ignore'
+    });
+    proc.unref();
+
+    // Wait for Chrome to initialize (or fail). The prior fixed 2s sleep
+    // is kept so slower startups still succeed; isPortAlive is the real
+    // liveness gate.
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    if (await isPortAlive(hostOverride.getHost(), listenPort, proc.pid)) {
+      return proc;
+    }
+    // Chrome did not come up on the port. Most likely cause: another
+    // process is already bound to it (TOCTOU window, or CHROME_WS_PORT
+    // was pointed at an occupied port). Kill anything still running and
+    // report failure up to the caller.
+    try { process.kill(proc.pid, 'SIGTERM'); } catch { /* already gone */ }
+    return null;
+  };
+
+  // --- Step 3: Decide port strategy and launch ---
+  // - Explicit port arg (e.g. from showBrowser()/hideBrowser() which
+  //   preserve the in-use port across restarts) → use it as-is.
+  // - CHROME_WS_PORT env → attach/launch on that port as configured.
+  // - Otherwise: let the OS assign a free ephemeral port via
+  //   pickFreePort(). If the TOCTOU window loses, retry once with a
+  //   fresh pick before giving up.
+  const HAS_ENV_PORT = process.env.CHROME_WS_PORT !== undefined;
+  let proc = null;
+  let chosenPort;
+  if (port) {
+    chosenPort = port;
+    proc = await trySpawn(chosenPort);
+    if (!proc) {
+      throw new Error(`Chrome failed to start on port ${chosenPort} (port in use?)`);
+    }
+  } else if (HAS_ENV_PORT) {
+    chosenPort = hostOverride.getPort();
+    proc = await trySpawn(chosenPort);
+    if (!proc) {
+      throw new Error(`Chrome failed to start on CHROME_WS_PORT=${chosenPort} (port in use?)`);
+    }
+  } else {
+    chosenPort = await pickFreePort();
+    proc = await trySpawn(chosenPort);
+    if (!proc) {
+      // TOCTOU — another process grabbed the port between close() and
+      // spawn(). Pick a new one and retry once.
+      chosenPort = await pickFreePort();
+      proc = await trySpawn(chosenPort);
+      if (!proc) {
+        throw new Error(`Chrome failed to start on dynamically-picked port ${chosenPort} after retry`);
+      }
+    }
   }
 
-  const proc = spawn(chromePath, args, {
-    detached: true,
-    stdio: 'ignore'
-  });
-
-  proc.unref();
   chromeProcess = proc;
   activePort = chosenPort;
 
-  // Wait for Chrome to be ready
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // --- Step 5: Persist port assignment in meta.json ---
+  // --- Step 4: Persist port assignment in meta.json ---
   writeProfileMeta(chromeProfileName, {
     port: chosenPort,
     pid: proc.pid,
@@ -1721,25 +1768,6 @@ async function isPortAlive(host, port, expectedPid = null) {
   } catch {
     return false;
   }
-}
-
-// Probe whether a port is free (no listener) using a temporary TCP server
-function isPortFree(port) {
-  const net = require('net');
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => { server.close(() => resolve(true)); });
-    server.listen(port, '127.0.0.1');
-  });
-}
-
-// Find first available port in range. Starts at PORT_RANGE_START (9222) for backward compat.
-async function findAvailablePort(start = PORT_RANGE_START, end = PORT_RANGE_END) {
-  for (let port = start; port <= end; port++) {
-    if (await isPortFree(port)) return port;
-  }
-  throw new Error(`No available port in range ${start}-${end}`);
 }
 
 function getActivePort() {
@@ -2678,7 +2706,6 @@ module.exports = {
 
   // Dynamic port allocation and per-profile meta.json
   getActivePort,
-  findAvailablePort,
   getProfileMetaPath,
   readProfileMeta,
   writeProfileMeta,

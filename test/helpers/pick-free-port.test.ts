@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { pickFreePort } from "./pick-free-port";
+import { pickFreePort } from "../../src/util/pick-free-port";
 
 describe("pickFreePort", () => {
   test("returns a number in the valid TCP port range", async () => {

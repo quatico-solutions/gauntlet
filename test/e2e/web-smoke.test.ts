@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { withTimeout, isChromeUnavailable } from "./helpers";
-import { pickFreePort } from "../helpers/pick-free-port";
+import { pickFreePort } from "../../src/util/pick-free-port";
 
 const TEST_PAGE = join(import.meta.dir, "../fixtures/test-page.html");
 

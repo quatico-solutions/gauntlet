@@ -14,7 +14,7 @@ import {
   withTimeout,
   isChromeUnavailable,
 } from "./helpers";
-import { pickFreePort } from "../helpers/pick-free-port";
+import { pickFreePort } from "../../src/util/pick-free-port";
 
 const TODOMVC_HTML = join(import.meta.dir, "../fixtures/todomvc.html");
 
