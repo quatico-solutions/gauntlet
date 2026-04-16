@@ -1,12 +1,12 @@
 import { readdirSync, readFileSync, statSync } from "fs";
 import type { ToolDefinition, ToolResult } from "../models/provider";
-import { resolveInside } from "./path";
+import { resolveInside } from "../paths";
 
 // The `read` tool is the agent-facing primitive for pulling file contents
 // out of `.gauntlet/context/`. It is a pure filesystem primitive — the
 // runner never interprets filenames, never caches results, and never
 // writes into the context directory. Path resolution goes through
-// `resolveInside` from `./path.ts`, which matches Gauntlet v1.5 spec §3.1
+// `resolveInside` from `../paths.ts`, which matches Gauntlet v1.5 spec §3.1
 // verbatim.
 
 export interface ReadTool {

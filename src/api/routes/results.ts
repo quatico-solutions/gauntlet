@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { isSafePath } from "../safe-path";
+import { isSafePath } from "../../paths";
 import { getMimeType } from "../mime-types";
 
 export function resultRoutes(resultsDir: string) {

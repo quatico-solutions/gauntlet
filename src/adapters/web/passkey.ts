@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "fs";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
-import { resolveInside } from "../../context/path";
+import { resolveInside } from "../../paths";
 
 // A pinned CDP session with WebAuthn enabled. Bypasses the chrome-ws-lib
 // connection pool so that every WebAuthn operation rides the same
@@ -82,7 +82,7 @@ function toStandardBase64(input: string): string {
 
 // Reads and parses a passkey credential from an already-resolved absolute
 // path. Path resolution + the context-root guard are the caller's job —
-// use `resolveInside(contextRoot, relPath)` from src/context/path.ts.
+// use `resolveInside(contextRoot, relPath)` from src/paths.ts.
 export function readPasskeyFile(absolutePath: string): PasskeyCredential {
   const raw = readFileSync(absolutePath, "utf-8");
   let parsed: unknown;

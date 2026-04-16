@@ -4,8 +4,7 @@ import { join } from "path";
 import { serializeStoryCard } from "../../format/story-card";
 import type { StoryCard } from "../../format/story-card";
 import { loadAllCards, findCard } from "../../cards/store";
-import { isSafePath } from "../safe-path";
-import { gauntletPath } from "../../paths";
+import { isSafePath, gauntletPath } from "../../paths";
 import type { ErrorLog } from "./errors";
 
 export function scenarioRoutes(projectRoot: string, errorLog?: ErrorLog) {
