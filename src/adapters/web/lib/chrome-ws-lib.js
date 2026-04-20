@@ -1382,101 +1382,30 @@ async function fileUpload(tabIndexOrWsUrl, selector, filePaths) {
 // =============================================================================
 
 /**
- * Type text into current focus (or click selector first if provided)
+ * Type text into current focus (or focus selector first if provided).
+ * Routes through humanType() so text input gets realistic per-character
+ * keystroke timing by default (hand-ported from upstream's v1.12.0
+ * "merge human_type into type").
  *
  * Special characters:
  *   \t = Tab (moves to next field)
- *   \n = Enter (submits form, or newline in textarea)
+ *   \n = Enter (submits form; in a textarea, Enter inserts a newline)
  *
  * Examples:
- *   type(0, null, "hello")                    // type into current focus
- *   type(0, "#email", "user@example.com")     // click #email, then type
- *   type(0, "#email", "user@example.com\tpassword\n")  // type, tab, type, submit
+ *   fill(0, null, "hello")                    // type into current focus
+ *   fill(0, "#email", "user@example.com")     // focus #email, then type
+ *   fill(0, "#email", "user@example.com\tpassword\n")  // type, tab, type, submit
  */
 async function fill(tabIndexOrWsUrl, selector, value) {
-  const wsUrl = await resolveWsUrl(tabIndexOrWsUrl);
-
-  // If selector provided, focus it (using JS focus, not click, to avoid capture side effects)
-  if (selector) {
-    const focusJs = `
-      (() => {
-        const el = ${getElementSelector(selector)};
-        if (!el) return { success: false, error: 'Element not found' };
-        el.focus();
-        return { success: true, focused: document.activeElement === el };
-      })()
-    `;
-    const focusResult = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
-      expression: focusJs,
-      returnByValue: true
-    });
-    if (!focusResult.result?.value?.success) {
-      throw new Error(focusResult.result?.value?.error || 'Failed to focus element');
-    }
-  }
-
   // Convert literal escape sequences to actual characters
-  // (MCP payloads may contain literal \t and \n rather than actual tab/newline)
+  // (payloads from JSON/CLI may contain literal \t and \n rather than
+  // actual tab/newline). humanType treats '\t' and '\n' as Tab/Enter.
   const processedValue = value
     .replace(/\\t/g, '\t')
     .replace(/\\n/g, '\n');
 
-  // Check if current focus is a textarea (for \n handling)
-  const focusInfo = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
-    expression: `({ isTextarea: document.activeElement?.tagName === 'TEXTAREA' })`,
-    returnByValue: true
-  });
-  const isTextarea = focusInfo.result?.value?.isTextarea || false;
-
-  // Small delay helper to let browser process input
-  const settle = (ms = 50) => new Promise(r => setTimeout(r, ms));
-
-  // Parse and type the value, handling \t and \n specially
-  let buffer = '';
-
-  for (let i = 0; i < processedValue.length; i++) {
-    const char = processedValue[i];
-
-    if (char === '\t') {
-      // Flush buffer, then Tab
-      if (buffer) {
-        await sendCdpCommand(wsUrl, 'Input.insertText', { text: buffer });
-        await settle();  // Let browser process text before Tab
-        buffer = '';
-      }
-      await keyboardPress(tabIndexOrWsUrl, 'Tab');
-      await settle();  // Let browser process Tab and update focus
-    } else if (char === '\n') {
-      // Flush buffer, then Enter (or literal newline in textarea)
-      if (buffer) {
-        await sendCdpCommand(wsUrl, 'Input.insertText', { text: buffer });
-        await settle();  // Let browser process text before Enter
-        buffer = '';
-      }
-      // Re-check if current focus is a textarea (focus may have changed after Tab)
-      const currentFocus = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
-        expression: `({ isTextarea: document.activeElement?.tagName === 'TEXTAREA' })`,
-        returnByValue: true
-      });
-      const currentlyInTextarea = currentFocus.result?.value?.isTextarea || false;
-
-      if (currentlyInTextarea) {
-        await sendCdpCommand(wsUrl, 'Input.insertText', { text: '\n' });
-      } else {
-        await keyboardPress(tabIndexOrWsUrl, 'Enter');
-      }
-      await settle();
-    } else {
-      buffer += char;
-    }
-  }
-
-  // Flush remaining buffer
-  if (buffer) {
-    await sendCdpCommand(wsUrl, 'Input.insertText', { text: buffer });
-  }
-
-  return { typed: true, value };
+  const result = await humanType(tabIndexOrWsUrl, selector || null, processedValue);
+  return { typed: true, value, chars: result.chars };
 }
 
 // Legacy alias
