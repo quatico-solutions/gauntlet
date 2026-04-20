@@ -1,5 +1,10 @@
 // Forked from https://github.com/obra/superpowers-chrome
 // Original author: Jesse Vincent
+//
+// See docs/upstream-sync.md for the sync protocol, last-synced upstream
+// commit, and the full list of intentional Gauntlet divergences. Grep for
+// "GAUNTLET DIVERGENCE" in this file to locate the regions a sync must
+// preserve or hand-port rather than blindly copy from upstream.
 
 /**
  * Chrome WebSocket Library - Core CDP automation functions
@@ -23,23 +28,24 @@ const { rewriteWsUrl } = hostOverride;
 // Defaults to host-override's port (which itself defaults to env or 9222).
 let activePort = hostOverride.getPort();
 
-/**
- * Set the Chrome endpoint that this module talks to. Called by WebAdapter
- * during loadConfig wiring so the server can drive a remote Chrome without
- * mutating process.env.
- */
-function setEndpoint(host, port) {
-  hostOverride.setDefaults(host, port);
-  activePort = port;
-}
-
+// ===== GAUNTLET DIVERGENCE START: pickFreePort import =====
 // Free-port picker used in launch mode. When no endpoint is configured
 // via CHROME_WS_PORT or setEndpoint(), we let the OS assign an ephemeral
 // port for --remote-debugging-port so multiple Gauntlet instances (and
-// co-tenants on 9222) don't collide.
+// co-tenants on 9222) don't collide. Upstream uses findAvailablePort()
+// scanning 9222..12111 instead — see the same divergence marker inside
+// startChrome() for where this is consumed.
 const { pickFreePort } = require('../../../util/pick-free-port');
+// ===== GAUNTLET DIVERGENCE END =====
 
-// WebSocket client using the standard WebSocket API (works in both Node and Bun)
+// ===== GAUNTLET DIVERGENCE START: WebSocketClient (standard WebSocket API) =====
+// Upstream uses Node's http.request + 'upgrade' event with a hand-rolled
+// frame parser. We use the standard WebSocket API (works in both Node and
+// Bun). All upstream features above this class call high-level helpers
+// (sendCdpCommand et al.) that don't touch raw WS internals, so upstream
+// changes rarely need to reach into this class. When syncing, preserve this
+// class body verbatim — do not attempt to `git apply` upstream diffs onto
+// it.
 class WebSocketClient {
   constructor(url) {
     this.url = url;
@@ -101,6 +107,7 @@ class WebSocketClient {
     }
   }
 }
+// ===== GAUNTLET DIVERGENCE END =====
 
 // =============================================================================
 // CONNECTION POOL (JRV-130: Fix focus lost between eval calls)
@@ -269,18 +276,22 @@ async function resolveWsUrl(wsUrlOrIndex) {
 // Message ID counter for legacy single-use connections
 let messageIdCounter = 1;
 
+// ===== GAUNTLET DIVERGENCE START: parseContains + :contains() support =====
+// Upstream has no :contains() helper. We added one because LLM agents reach
+// for jQuery-style `button:contains('Log in')` anyway, and a silent CSS
+// syntax error wastes turns. getElementSelector / getElementSelectorAll
+// below consume this — both have matching Gauntlet-only branches.
 // Parse a :contains('text') / :contains("text") clause at the end of a
 // selector. Returns { base, text } or null if the selector doesn't use
 // :contains. The base may be empty (meaning "match any element"); we
-// turn that into "*". `:contains` is a jQuery extension and is invalid
-// CSS, but agents reach for it anyway — translating to a JS walk turns
-// a silent syntax error into a working match.
+// turn that into "*".
 function parseContains(selector) {
   const m = selector.match(/^(.*?):contains\(\s*(['"])(.*?)\2\s*\)\s*$/);
   if (!m) return null;
   const base = m[1].trim();
   return { base: base || '*', text: m[3] };
 }
+// ===== GAUNTLET DIVERGENCE END =====
 
 // Helper to generate element selection code (supports CSS, XPath, and
 // jQuery-style :contains('text')). For XPath with text()='...', also
@@ -1383,7 +1394,13 @@ async function startChrome(headless = null, profileName = null, port = null) {
     return null;
   };
 
-  // --- Step 3: Decide port strategy and launch ---
+  // ===== GAUNTLET DIVERGENCE START: port strategy via pickFreePort =====
+  // Upstream scans findAvailablePort(PORT_RANGE_START..END). We use
+  // pickFreePort() (OS-assigned ephemeral) because fixed-range scanning
+  // raced with co-tenants on 9222. When syncing upstream startChrome
+  // changes, port this decision block by hand — the Chrome args
+  // assembly and trySpawn callback above/below can usually be merged
+  // cleanly, but this block must not be overwritten.
   // - Explicit port arg (e.g. from showBrowser()/hideBrowser() which
   //   preserve the in-use port across restarts) → use it as-is.
   // - CHROME_WS_PORT env → attach/launch on that port as configured.
@@ -1418,6 +1435,7 @@ async function startChrome(headless = null, profileName = null, port = null) {
       }
     }
   }
+  // ===== GAUNTLET DIVERGENCE END =====
 
   chromeProcess = proc;
   activePort = chosenPort;
@@ -2370,6 +2388,36 @@ async function clearCookies(tabIndexOrWsUrl) {
   await sendCdpCommand(wsUrl, 'Network.clearBrowserCookies', {});
 }
 
+// ===== GAUNTLET DIVERGENCE START: Gauntlet-only additions =====
+// Everything below this line up to the matching DIVERGENCE END marker
+// is Gauntlet-specific and does not exist upstream. New upstream
+// functions must NOT land inside this block — put them above it, in
+// roughly the same position as their upstream counterpart, so the
+// top-to-bottom layout of this file stays comparable to upstream's
+// skills/browsing/chrome-ws-lib.js.
+//
+// Contents:
+//   - setEndpoint(host, port): runtime endpoint configuration (called
+//     by WebAdapter). Pairs with host-override.setDefaults().
+//   - clearBrowserData(tab): best-effort CDP-level state reset for the
+//     remote-Chrome case (spec §5.1).
+//   - webAuthnOpenSession(tab): pinned CDP session for the passkey tool
+//     (WebAuthn domain is per-socket — see comment on the function).
+//   - openObserverSession(tab, onEvent): streams console, exception,
+//     log, and network-ws events to EvidenceLogger.
+//   - onCdpEvent / offCdpEvent: raw CDP event subscription used by
+//     screencast streaming.
+
+/**
+ * Set the Chrome endpoint that this module talks to. Called by WebAdapter
+ * during loadConfig wiring so the server can drive a remote Chrome without
+ * mutating process.env.
+ */
+function setEndpoint(host, port) {
+  hostOverride.setDefaults(host, port);
+  activePort = port;
+}
+
 /**
  * Best-effort reset of the given tab's browser state for the
  * remote-Chrome case where we cannot delete the `--user-data-dir`
@@ -2645,6 +2693,7 @@ async function offCdpEvent(tabIndex) {
   const conn = connectionPool.get(wsUrl);
   if (conn) conn.eventHandler = null;
 }
+// ===== GAUNTLET DIVERGENCE END =====
 
 module.exports = {
   // Core browser actions (click/fill now use CDP events by default for React compatibility)

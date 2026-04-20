@@ -1,3 +1,14 @@
+// Forked from https://github.com/obra/superpowers-chrome
+// Original author: Jesse Vincent
+//
+// GAUNTLET DIVERGENCE: upstream exports module-load constants
+// (CHROME_DEBUG_HOST, CHROME_DEBUG_PORT, CHROME_DEBUG_BASE, WS_OVERRIDE_ENABLED).
+// We also export mutable getters + setDefaults() so WebAdapter can point the
+// library at a remote Chrome at runtime without mutating process.env.
+// The upstream constant names are re-exported below as snapshots taken at
+// module load — that keeps unmodified upstream code that destructures them
+// working, so future syncs don't have to rewrite every `require('./host-override')`.
+
 const DEFAULT_PORT = 9222;
 const DEFAULT_HOST = '127.0.0.1';
 
@@ -51,10 +62,21 @@ function rewriteWsUrl(originalUrl, host, port) {
 }
 
 module.exports = {
+  // Gauntlet API — runtime-mutable endpoint.
   setDefaults,
   getHost,
   getPort,
   getBase,
   isOverrideEnabled,
   rewriteWsUrl,
+
+  // Upstream-compat snapshots (taken at module load). Present so that
+  // unmodified upstream code like
+  //   const { CHROME_DEBUG_HOST, CHROME_DEBUG_PORT } = require('./host-override');
+  // keeps working during syncs. These do NOT track setDefaults() — callers
+  // that need runtime-mutable values must use getHost()/getPort().
+  CHROME_DEBUG_HOST: debugHost,
+  CHROME_DEBUG_PORT: debugPort,
+  CHROME_DEBUG_BASE: `http://${debugHost}:${debugPort}`,
+  WS_OVERRIDE_ENABLED: overrideEnabled,
 };
