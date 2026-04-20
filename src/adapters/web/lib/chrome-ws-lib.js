@@ -1467,6 +1467,11 @@ async function killChrome() {
   clearProfileMeta(chromeProfileName);
   chromeProcess = null;
   activePort = hostOverride.getPort();
+  // Reset so the next startChrome() with a fresh profile name recomputes
+  // the user-data-dir. Without this, a long-lived process (e.g. `gauntlet
+  // serve`) reuses the first run's profile dir forever and cookies leak
+  // across runs. PRI-1280.
+  chromeUserDataDir = null;
 }
 
 async function showBrowser() {
