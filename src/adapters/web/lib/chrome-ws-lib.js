@@ -1931,6 +1931,56 @@ async function downscaleImageIfNeeded(filepath, maxDimension = 1800) {
   }
 }
 
+/**
+ * Build the Chrome CLI args for a given port/profile/mode. Pure — no side
+ * effects, no reliance on module-level state beyond `process.env`.
+ *
+ * Reads CHROME_EXTRA_ARGS from the environment: whitespace-separated tokens
+ * appended to the base args, e.g. for software WebGL in headless containers:
+ *   CHROME_EXTRA_ARGS="--use-gl=angle --use-angle=swiftshader-webgl --enable-unsafe-swiftshader"
+ */
+function buildChromeArgs({ chosenPort, chromeUserDataDir, chromeHeadless }) {
+  const args = [
+    `--remote-debugging-port=${chosenPort}`,
+    `--user-data-dir=${chromeUserDataDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-networking',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-breakpad',
+    '--disable-client-side-phishing-detection',
+    '--disable-component-update',
+    '--disable-default-apps',
+    '--disable-dev-shm-usage',
+    '--disable-extensions',
+    '--disable-features=TranslateUI',
+    '--disable-hang-monitor',
+    '--disable-ipc-flooding-protection',
+    '--disable-popup-blocking',
+    '--disable-prompt-on-repost',
+    '--disable-sync',
+    '--force-color-profile=srgb',
+    '--metrics-recording-only',
+    '--no-sandbox',
+    '--safebrowsing-disable-auto-update',
+    '--disable-blink-features=AutomationControlled'
+  ];
+
+  if (chromeHeadless) {
+    args.push('--headless=new');
+  }
+
+  // CHROME_EXTRA_ARGS: whitespace-separated extra flags to append.
+  const extraArgs = process.env.CHROME_EXTRA_ARGS;
+  if (extraArgs) {
+    const tokens = extraArgs.split(/\s+/).filter(Boolean);
+    args.push(...tokens);
+  }
+
+  return args;
+}
+
 async function startChrome(headless = null, profileName = null, port = null) {
   const { spawn } = require('child_process');
   const { existsSync, mkdirSync } = require('fs');
@@ -1999,47 +2049,17 @@ async function startChrome(headless = null, profileName = null, port = null) {
     mkdirSync(chromeUserDataDir, { recursive: true });
   }
 
-  // Builds Chrome's CLI args for a given port. Extracted so we can retry
-  // spawning with a fresh port if the first pick loses a TOCTOU race.
-  const buildArgs = (listenPort) => {
-    const args = [
-      `--remote-debugging-port=${listenPort}`,
-      `--user-data-dir=${chromeUserDataDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-networking',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-breakpad',
-      '--disable-client-side-phishing-detection',
-      '--disable-component-update',
-      '--disable-default-apps',
-      '--disable-dev-shm-usage',
-      '--disable-extensions',
-      '--disable-features=TranslateUI',
-      '--disable-hang-monitor',
-      '--disable-ipc-flooding-protection',
-      '--disable-popup-blocking',
-      '--disable-prompt-on-repost',
-      '--disable-sync',
-      '--force-color-profile=srgb',
-      '--metrics-recording-only',
-      '--no-sandbox',
-      '--safebrowsing-disable-auto-update',
-      '--disable-blink-features=AutomationControlled'
-    ];
-    if (chromeHeadless) {
-      args.push('--headless=new');
-    }
-    return args;
-  };
-
   // Spawn Chrome on the given port, wait for it to come up, and verify
   // /json/version responds. Returns the proc on success, null if the
   // port was already in use (Chrome failed to bind — DevTools port is
   // taken). Throws on any other error.
   const trySpawn = async (listenPort) => {
-    const proc = spawn(chromePath, buildArgs(listenPort), {
+    const args = buildChromeArgs({
+      chosenPort: listenPort,
+      chromeUserDataDir,
+      chromeHeadless,
+    });
+    const proc = spawn(chromePath, args, {
       detached: true,
       stdio: 'ignore'
     });
@@ -3399,6 +3419,7 @@ module.exports = {
 
   // Chrome lifecycle
   startChrome,
+  buildChromeArgs,
   killChrome,
   showBrowser,
   hideBrowser,
