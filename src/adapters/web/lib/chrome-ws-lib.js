@@ -985,12 +985,15 @@ async function selectOption(tabIndexOrWsUrl, selector, value, index = 0) {
 // =============================================================================
 
 /**
- * Legacy evaluate - may return undefined for complex objects
+ * Legacy evaluate - may return undefined for complex objects.
+ * Awaits promises so async expressions (fetch, async IIFEs) resolve before
+ * returning — matches evaluateJson()'s behavior.
  */
 async function evaluate(tabIndexOrWsUrl, expression) {
   const wsUrl = await resolveWsUrl(tabIndexOrWsUrl);
   const result = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
     expression,
+    awaitPromise: true,
     returnByValue: true
   });
   return result.result.value;
