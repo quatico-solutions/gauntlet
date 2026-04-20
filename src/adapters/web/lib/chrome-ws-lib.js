@@ -294,36 +294,76 @@ function parseContains(selector) {
 // ===== GAUNTLET DIVERGENCE END =====
 
 // Helper to generate element selection code (supports CSS, XPath, and
-// jQuery-style :contains('text')). For XPath with text()='...', also
-// tries normalize-space() fallback for mixed content elements.
+// jQuery-style :contains('text')). Prefers visible elements (non-zero
+// bounding rect) over hidden ones; falls back to the first DOM match with
+// a console.warn if all candidates are zero-sized. For XPath with
+// text()='...', also tries normalize-space() fallback for mixed content
+// elements.
 function getElementSelector(selector) {
   if (selector.startsWith('/') || selector.startsWith('//')) {
-    // XPath selector - with fallback for text()='...' patterns on mixed content elements
-    // (e.g., <a><svg/>Settings</a> won't match text()='Settings' but will match normalize-space()='Settings')
+    // XPath selector - collect all matches, prefer visible. For text()='...'
+    // patterns, also tries normalize-space() fallback for mixed content
+    // elements (e.g., <a><svg/>Settings</a> won't match text()='Settings'
+    // but will match normalize-space()='Settings').
     const hasTextEquals = /text\(\)\s*=\s*['"]/.test(selector);
+    const xpaths = [JSON.stringify(selector)];
     if (hasTextEquals) {
-      // Create fallback XPath using normalize-space() instead of text()
       const fallbackSelector = selector.replace(/text\(\)\s*=\s*(['"])(.*?)\1/g, "normalize-space()=$1$2$1");
-      return `(document.evaluate(${JSON.stringify(selector)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue || document.evaluate(${JSON.stringify(fallbackSelector)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue)`;
+      xpaths.push(JSON.stringify(fallbackSelector));
     }
-    return `document.evaluate(${JSON.stringify(selector)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue`;
-  }
-
-  // jQuery-style :contains('text') — translate to a querySelectorAll walk.
-  const contains = parseContains(selector);
-  if (contains) {
     return `(() => {
-      const _els = document.querySelectorAll(${JSON.stringify(contains.base)});
-      for (const _el of _els) {
-        const _t = (_el.textContent || '').replace(/\\s+/g, ' ').trim();
-        if (_t.includes(${JSON.stringify(contains.text)})) return _el;
-      }
-      return null;
+      var all = [];
+      var seen = new Set();
+      [${xpaths.join(', ')}].forEach(function(xpath) {
+        var iter = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
+        var node;
+        while (node = iter.iterateNext()) {
+          if (!seen.has(node)) { seen.add(node); all.push(node); }
+        }
+      });
+      if (all.length === 0) return null;
+      var visible = all.find(function(el) {
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      if (visible) return visible;
+      console.warn('[superpowers-chrome] All ' + all.length + ' elements matching XPath have zero dimensions; using first match');
+      return all[0];
     })()`;
   }
 
-  // CSS selector
-  return `document.querySelector(${JSON.stringify(selector)})`;
+  // jQuery-style :contains('text') — translate to a querySelectorAll walk.
+  // Prefer visible matches, consistent with the CSS and XPath branches.
+  const contains = parseContains(selector);
+  if (contains) {
+    return `(() => {
+      var all = Array.from(document.querySelectorAll(${JSON.stringify(contains.base)})).filter(function(_el) {
+        var _t = (_el.textContent || '').replace(/\\s+/g, ' ').trim();
+        return _t.includes(${JSON.stringify(contains.text)});
+      });
+      if (all.length === 0) return null;
+      var visible = all.find(function(el) {
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      if (visible) return visible;
+      console.warn('[superpowers-chrome] All ' + all.length + ' elements matching :contains() have zero dimensions; using first match');
+      return all[0];
+    })()`;
+  }
+
+  // CSS selector - prefer visible elements
+  return `(() => {
+    var all = document.querySelectorAll(${JSON.stringify(selector)});
+    if (all.length === 0) return null;
+    var visible = Array.from(all).find(function(el) {
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+    if (visible) return visible;
+    console.warn('[superpowers-chrome] All ' + all.length + ' elements matching ' + ${JSON.stringify(JSON.stringify(selector))} + ' have zero dimensions; using first match');
+    return all[0];
+  })()`;
 }
 
 // Helper to get all matching elements (for JRV-129 warnings)
