@@ -9,7 +9,16 @@ describes what's in it and how to read it.
 <projectRoot>/.gauntlet/results/<runId>/
   result.json        The run's result, including a manifest of evidence files
   result.md          Human-readable rendering of result.json
-  run.jsonl          Append-only action log (one JSON object per tool call)
+  run.jsonl          Append-only event stream — one JSON object per event.
+                     Events: run_start, system_prompt, user_message,
+                     llm_request, llm_response (text, thinking blocks,
+                     tool calls, usage, raw assistant message), tool_call,
+                     tool_result (text inline or image/artifact relative
+                     paths), event (adapter/agent anomalies), run_end.
+                     Every event carries eventId + parentEventId,
+                     forming a linear chain.
+  artifacts/         Document-like tool outputs spilled from tool_result
+                     rows (DOM dumps, full-page extracts, large JSON, etc.)
   screenshots/       Agent-captured screenshots
   frames/            Passive screencast frames
   issues/            Per-observation markdown (derived from observations)
@@ -84,6 +93,8 @@ agent's reasoning, the observations, and pointers to the evidence files.
 - `evidence` — pointers to files for this run:
   - `screenshots`: relative paths to screenshots
   - `log`: relative path to `run.jsonl`
+  - `artifacts` (optional): relative paths to document-like tool outputs
+    spilled from tool_result rows (DOM dumps, full-page extracts, etc.)
   - `video` (optional): relative path to a video file, if the run produced one
 - `duration_ms` — wall-clock time of the run.
 - `usage` — token counts. `inputTokens` / `outputTokens` / `turns` are the

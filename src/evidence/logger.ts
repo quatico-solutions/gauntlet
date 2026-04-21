@@ -179,10 +179,6 @@ export class EvidenceLogger {
     this.writeEvent("run_end", { ...fields });
   }
 
-  logAction(action: string, params: Record<string, unknown>): void {
-    this.logEvent(action, params);
-  }
-
   logBrowserEvent(
     category: BrowserEventCategory,
     data: Record<string, unknown>,

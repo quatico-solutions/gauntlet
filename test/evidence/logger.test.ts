@@ -49,14 +49,14 @@ describe("EvidenceLogger", () => {
     expect(p2).toBe("screenshots/002.png");
   });
 
-  test("addObserver receives actions when logAction is called", () => {
+  test("addObserver receives events when logEvent is called", () => {
     const received: { action: string; params: Record<string, unknown> }[] = [];
     logger.addObserver((action, params) => {
       received.push({ action, params });
     });
 
-    logger.logAction("click", { selector: "#btn" });
-    logger.logAction("screenshot", {});
+    logger.logEvent("click", { selector: "#btn" });
+    logger.logEvent("screenshot", {});
 
     expect(received).toEqual([
       { action: "click", params: { selector: "#btn" } },
@@ -66,7 +66,7 @@ describe("EvidenceLogger", () => {
 
   test("works with no observers registered", () => {
     // Should not throw
-    logger.logAction("click", { selector: "#btn" });
+    logger.logEvent("click", { selector: "#btn" });
   });
 
   test("addObserver returns an unsubscribe function that removes the observer", () => {
@@ -75,9 +75,9 @@ describe("EvidenceLogger", () => {
       received.push(action);
     });
 
-    logger.logAction("first", {});
+    logger.logEvent("first", {});
     unsubscribe();
-    logger.logAction("second", {});
+    logger.logEvent("second", {});
 
     expect(received).toEqual(["first"]);
   });
@@ -88,7 +88,7 @@ describe("EvidenceLogger", () => {
     logger.addObserver((action) => a.push(action));
     logger.addObserver((action) => b.push(action));
 
-    logger.logAction("click", { selector: "#btn" });
+    logger.logEvent("click", { selector: "#btn" });
 
     expect(a).toEqual(["click"]);
     expect(b).toEqual(["click"]);
@@ -103,7 +103,7 @@ describe("EvidenceLogger", () => {
       received.push(action);
     });
 
-    logger.logAction("click", { selector: "#btn" });
+    logger.logEvent("click", { selector: "#btn" });
 
     expect(received).toEqual(["click"]);
   });
@@ -155,8 +155,8 @@ describe("EvidenceLogger", () => {
     ]);
   });
 
-  test("logAction emits an event row with the action as the name", () => {
-    logger.logAction("navigate", { url: "http://localhost:3000" });
+  test("logEvent emits an event row with the name and params inlined", () => {
+    logger.logEvent("navigate", { url: "http://localhost:3000" });
 
     const [row] = readFileSync(join(outDir, "run.jsonl"), "utf-8")
       .trim()
