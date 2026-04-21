@@ -29,6 +29,10 @@ function makeMockLogger(): EvidenceLogger {
     logUserMessage: () => {},
     logLlmRequest: () => {},
     logLlmResponse: () => {},
+    logToolCall: () => {},
+    logToolResult: () => {},
+    logEvent: () => {},
+    logRunEnd: () => {},
   } as unknown as EvidenceLogger;
 }
 
@@ -479,10 +483,10 @@ describe("runAgent", () => {
   });
 
   test("drops and logs other tool calls when report_result is in the same turn", async () => {
-    const actionLog: Array<{ action: string; params: Record<string, unknown> }> = [];
+    const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
     const logger = makeMockLogger();
-    (logger as any).logAction = (action: string, params: Record<string, unknown>) => {
-      actionLog.push({ action, params });
+    (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+      eventLog.push({ name, params });
     };
 
     const client = makeMockClient([
@@ -507,7 +511,7 @@ describe("runAgent", () => {
 
     expect(result.status).toBe("pass");
     // Exactly one logged dropped-tools event, and it names the two.
-    const dropped = actionLog.find((e) => e.action === "report_with_other_tools_dropped");
+    const dropped = eventLog.find((e) => e.name === "report_with_other_tools_dropped");
     expect(dropped).toBeDefined();
     expect(dropped?.params.dropped).toEqual(["click", "navigate"]);
   });

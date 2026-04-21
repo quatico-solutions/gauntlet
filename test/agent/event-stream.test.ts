@@ -109,4 +109,95 @@ describe("agent event stream", () => {
     expect(rows[2].turn).toBe(0);
     expect((rows[2].content as string)).toContain("http://x");
   });
+
+  test("emits tool_call + tool_result around each tool execution", async () => {
+    const client = makeClient([
+      {
+        text: "", toolCalls: [{ id: "t1", name: "noop", arguments: { a: 1 } }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: [] },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+      {
+        text: "", toolCalls: [{ id: "t2", name: "report_result", arguments: { status: "pass", summary: "s", reasoning: "r" } }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: [] },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    ]);
+
+    const adapter = {
+      name: "test",
+      toolDefinitions: () => [{ name: "noop", description: "", parameters: { type: "object", properties: {} } }],
+      async executeTool() { return { text: "done" }; },
+      async start() {}, async close() {},
+    } as unknown as Adapter;
+
+    await runAgent(makeCard(), adapter, client, logger, undefined, {
+      runId: "card-001_20260421T000000Z_aaaa",
+    });
+
+    const rows = readLog(outDir);
+    const call = rows.find((r) => r.type === "tool_call" && r.name === "noop");
+    const result = rows.find((r) => r.type === "tool_result" && r.name === "noop");
+    expect(call).toBeDefined();
+    expect(call!.toolUseId).toBe("t1");
+    expect(call!.turn).toBe(1);
+    expect((call!.arguments as any).a).toBe(1);
+    expect(result).toBeDefined();
+    expect(result!.toolUseId).toBe("t1");
+    expect(result!.text).toBe("done");
+    expect(result!.error).toBe(false);
+    expect(typeof result!.durationMs).toBe("number");
+  });
+
+  test("tool failure surfaces error:true and the message in text", async () => {
+    const client = makeClient([
+      {
+        text: "", toolCalls: [{ id: "t1", name: "noop", arguments: {} }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: [] },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+      {
+        text: "", toolCalls: [{ id: "t2", name: "report_result", arguments: { status: "investigate", summary: "s", reasoning: "r" } }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: [] },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    ]);
+    const adapter = {
+      name: "test",
+      toolDefinitions: () => [{ name: "noop", description: "", parameters: { type: "object", properties: {} } }],
+      async executeTool() { throw new Error("boom"); },
+      async start() {}, async close() {},
+    } as unknown as Adapter;
+
+    await runAgent(makeCard(), adapter, client, logger, undefined, {
+      runId: "card-001_20260421T000000Z_aaaa",
+    });
+
+    const result = readLog(outDir).find((r) => r.type === "tool_result");
+    expect(result!.error).toBe(true);
+    expect((result!.text as string)).toContain("boom");
+  });
+
+  test("emits run_end as the last event, with usage totals and status", async () => {
+    const client = makeClient([{
+      text: "", toolCalls: [{ id: "t1", name: "report_result", arguments: { status: "pass", summary: "ok", reasoning: "r" } }],
+      stopReason: "tool_use", rawAssistantMessage: { role: "assistant", content: [] },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    }]);
+    await runAgent(makeCard(), makeAdapter(), client, logger, undefined, {
+      runId: "card-001_20260421T000000Z_aaaa",
+    });
+
+    const rows = readLog(outDir);
+    const last = rows[rows.length - 1];
+    expect(last.type).toBe("run_end");
+    expect(last.status).toBe("pass");
+    expect(last.summary).toBe("ok");
+    expect((last.usage as any).inputTokens).toBe(10);
+    expect((last.usage as any).turns).toBe(1);
+  });
 });

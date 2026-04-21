@@ -138,28 +138,45 @@ export async function runAgent(
     summary: string;
     reasoning: string;
     observations?: VetResult["observations"];
-  }): VetResult => ({
-    schemaVersion: RESULT_SCHEMA_VERSION,
-    runId,
-    scenario: card.id,
-    status: partial.status,
-    summary: partial.summary,
-    reasoning: partial.reasoning,
-    observations: partial.observations ?? [],
-    evidence: {
-      screenshots: logger.screenshots,
-      log: logger.logPath,
-      artifacts: logger.artifacts.length > 0 ? logger.artifacts : undefined,
-    },
-    duration_ms: Date.now() - startTime,
-    usage: {
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      cacheCreationInputTokens: totalCacheCreation > 0 ? totalCacheCreation : undefined,
-      cacheReadInputTokens: totalCacheRead > 0 ? totalCacheRead : undefined,
-      turns,
-    },
-  });
+  }): VetResult => {
+    const result: VetResult = {
+      schemaVersion: RESULT_SCHEMA_VERSION,
+      runId,
+      scenario: card.id,
+      status: partial.status,
+      summary: partial.summary,
+      reasoning: partial.reasoning,
+      observations: partial.observations ?? [],
+      evidence: {
+        screenshots: logger.screenshots,
+        log: logger.logPath,
+        artifacts: logger.artifacts.length > 0 ? logger.artifacts : undefined,
+      },
+      duration_ms: Date.now() - startTime,
+      usage: {
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        cacheCreationInputTokens: totalCacheCreation > 0 ? totalCacheCreation : undefined,
+        cacheReadInputTokens: totalCacheRead > 0 ? totalCacheRead : undefined,
+        turns,
+      },
+    };
+    logger.logRunEnd({
+      status: result.status,
+      summary: result.summary,
+      reasoning: result.reasoning,
+      observationCount: result.observations.length,
+      durationMs: result.duration_ms,
+      usage: {
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        cacheCreationInputTokens: result.usage.cacheCreationInputTokens,
+        cacheReadInputTokens: result.usage.cacheReadInputTokens,
+        turns: result.usage.turns,
+      },
+    });
+    return result;
+  };
 
   for (let turn = 0; turn < maxTurns; turn++) {
     logger.logLlmRequest(turns + 1, messages.length);
@@ -215,7 +232,7 @@ export async function runAgent(
         (tc) => tc.name !== "report_result"
       );
       if (otherTools.length > 0) {
-        logger.logAction("report_with_other_tools_dropped", {
+        logger.logEvent("report_with_other_tools_dropped", {
           dropped: otherTools.map((tc) => tc.name),
         });
       }
@@ -244,7 +261,7 @@ export async function runAgent(
     // tokens — break immediately with an investigate verdict so the human
     // (or an escalating scheduler) sees the problem.
     if (response.stopReason === "max_tokens") {
-      logger.logAction("stopped_max_tokens", {
+      logger.logEvent("stopped_max_tokens", {
         turn: turns,
         hasText: Boolean(response.text),
         toolCallCount: response.toolCalls.length,
@@ -263,9 +280,13 @@ export async function runAgent(
       const toolTimeout = options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
       const results: ToolResult[] = [];
       for (const tc of response.toolCalls) {
+        logger.logToolCall({ turn: turns, toolUseId: tc.id, name: tc.name, arguments: tc.arguments });
+        const started = Date.now();
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        let result: ToolResult;
+        let errored = false;
         try {
-          const result = await Promise.race([
+          result = await Promise.race([
             adapter.executeTool(tc.name, tc.arguments, logger),
             new Promise<never>((_, reject) => {
               timeoutHandle = setTimeout(
@@ -274,17 +295,24 @@ export async function runAgent(
               );
             }),
           ]);
-          results.push(result);
         } catch (error) {
+          errored = true;
           const message = error instanceof Error ? error.message : String(error);
-          results.push({ text: `Error: ${message}` });
+          result = { text: `Error: ${message}` };
         } finally {
-          // Clear the timeout on the winning path so we don't leak a live
-          // timer for every tool call — at 30s each over a 50-turn run
-          // this adds up to dozens of pinned handles if the tool resolves
-          // first.
           if (timeoutHandle) clearTimeout(timeoutHandle);
         }
+        results.push(result);
+        logger.logToolResult({
+          turn: turns,
+          toolUseId: tc.id,
+          name: tc.name,
+          durationMs: Date.now() - started,
+          text: result.text ?? "",
+          image: (result as any).imagePath,       // populated by T6; undefined today
+          artifact: (result as any).artifactPath, // populated by T6/T7
+          error: errored,
+        });
       }
 
       messages.push(...client.toolResultMessages(response.toolCalls, results));
@@ -299,7 +327,7 @@ export async function runAgent(
       // Neither tool calls nor text. Re-sending the same prompt would
       // produce the same empty response — break instead of spinning for
       // the rest of MAX_TURNS.
-      logger.logAction("empty_response", {
+      logger.logEvent("empty_response", {
         turn: turns,
         stopReason: response.stopReason,
       });
