@@ -172,11 +172,11 @@ export async function runAgent(
       observationCount: result.observations.length,
       durationMs: result.duration_ms,
       usage: {
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-        cacheCreationInputTokens: result.usage.cacheCreationInputTokens,
-        cacheReadInputTokens: result.usage.cacheReadInputTokens,
-        turns: result.usage.turns,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        cacheCreationInputTokens: totalCacheCreation > 0 ? totalCacheCreation : undefined,
+        cacheReadInputTokens: totalCacheRead > 0 ? totalCacheRead : undefined,
+        turns,
       },
     });
     return result;
