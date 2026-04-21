@@ -16,6 +16,7 @@ import type { ScreencastStreamer as ScreencastStreamerType } from "../../streami
 import type { ErrorLog } from "./errors";
 import type { StoryCard } from "../../format/story-card";
 import type { LLMClient } from "../../models/provider";
+import type { RunConfigSnapshot } from "../../types";
 
 function createAdapter(
   type: string,
@@ -89,6 +90,13 @@ export function runRoutes(
     // suffix is needed.
     const chromeProfileName = `gauntlet-run-${runId}`;
     const adapter = createAdapter(effective.adapter, effective.chrome, contextRoot, logger, chromeProfileName);
+    const runConfig: RunConfigSnapshot = {
+      target: effective.target,
+      model: effective.model,
+      adapter: effective.adapter,
+      chrome: effective.chrome ? `${effective.chrome.host}:${effective.chrome.port}` : undefined,
+      turns: effective.turns,
+    };
     // Render the tree **once per run** — the immutability invariant
     // (spec §4.2) forbids re-rendering during the run.
     const contextTree = renderContextTree(contextRoot);
@@ -120,6 +128,8 @@ export function runRoutes(
       errorLog,
       startedAt,
       contextTree,
+      maxTurns: effective.turns,
+      runConfig,
     }).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       errorLog?.add("run", `${runId}: ${message}`);
@@ -161,10 +171,14 @@ export interface ExecuteRunOpts {
    * prompt's Context section can be assembled at turn 0. See spec §4.2.
    */
   contextTree?: string;
+  /** Per-run cap on agent turns. Omit for the agent default (50). */
+  maxTurns?: number;
+  /** Config snapshot stamped into result.json. */
+  runConfig?: RunConfigSnapshot;
 }
 
 export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
-  const { runId: optsRunId, card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt, contextTree } = opts;
+  const { runId: optsRunId, card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt, contextTree, maxTurns, runConfig } = opts;
   // Routing key for the broadcaster and registry. Defaults to cardId so
   // ad-hoc test fixtures continue to work without supplying a runId.
   const runId = optsRunId ?? card.id;
@@ -211,7 +225,9 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
     const result = await runAgent(card, adapter, client, logger, target, {
       contextTree,
       runId,
+      maxTurns,
     });
+    if (runConfig) result.config = runConfig;
     writeResultFiles(outDir, result);
 
     terminal = { type: "complete", result };

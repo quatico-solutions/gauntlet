@@ -16,11 +16,11 @@ function parseIntFlag(raw: string | undefined, label: string): number | undefine
   return parsed;
 }
 
-const RUN_ALLOWED = new Set(["target", "out", "adapter", "model", "chrome", "project-dir"]);
+const RUN_ALLOWED = new Set(["target", "out", "adapter", "model", "chrome", "project-dir", "turns"]);
 const VALIDATE_ALLOWED = new Set<string>([]);
 const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
-const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model"]);
-const CONFIG_ALLOWED = new Set(["json", "project-dir", "port", "chrome", "target", "model"]);
+const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "turns"]);
+const CONFIG_ALLOWED = new Set(["json", "project-dir", "port", "chrome", "target", "model", "turns"]);
 
 function rejectUnknownFlags(
   flags: Record<string, unknown>,
@@ -109,6 +109,7 @@ function parseConfigArgs(args: string[]): ConfigArgs {
       port: parseIntFlag(flags.port, "--port"),
       chrome: flags.chrome,
       target: flags.target,
+      turns: parseIntFlag(flags.turns, "--turns"),
       models: parseModelFlagArray(flags.model),
     },
   };
@@ -145,6 +146,7 @@ function parseRunArgs(args: string[]): RunArgs {
       projectRoot: flags["project-dir"],
       chrome: flags.chrome,
       target: flags.target,
+      turns: parseIntFlag(flags.turns, "--turns"),
       models: parseModelFlagArray(flags.model),
     },
   };
@@ -197,6 +199,7 @@ function parseServeArgs(args: string[]): ServeArgs {
       port: parseIntFlag(flags.port, "--port"),
       chrome: flags.chrome,
       target: flags.target,
+      turns: parseIntFlag(flags.turns, "--turns"),
       models: parseModelFlagArray(flags.model),
     },
   };
@@ -275,6 +278,7 @@ Commands:
     --model agent=<name> Model for the agent (default: claude-sonnet-4-6)
     --chrome host:port   Chrome debugging endpoint (default: 127.0.0.1:9222)
     --adapter <type>     web | cli | tui (default: web)
+    --turns <n>          Max agent turns for this run (default: 50)
     --out <dir>          Evidence output directory (default: <project>/.gauntlet/results/<runId>)
     --project-dir <dir>  Project root (contains .gauntlet/ state dir)
 
@@ -289,7 +293,8 @@ Commands:
     --port <n>               Server port (default: 4400)
     --project-dir <dir>      Project root (contains .gauntlet/ state dir)
     --chrome host:port       Default Chrome endpoint for runs
-    --target <url>           Default target (hint only; UI still overrides)
+    --target <url>           Default target (prefilled in the UI; request body still overrides)
+    --turns <n>              Default max turns per run (default: 50)
     --model agent=<name>     Default agent model
 
   config                   Print effective configuration
@@ -300,6 +305,8 @@ Environment:
   GAUNTLET_PORT            Server port
   GAUNTLET_PROJECT_ROOT    Project root (contains .gauntlet/ state dir)
   GAUNTLET_CHROME          Default Chrome endpoint (host:port)
+  GAUNTLET_TARGET          Default target URL (UI prefill)
+  GAUNTLET_TURNS           Default max turns per run
   GAUNTLET_AGENT_MODEL     Default agent model
   GAUNTLET_FANOUT_MODEL    Default fanout model
   GAUNTLET_MODELS          Comma-separated model allow-list

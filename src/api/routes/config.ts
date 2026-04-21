@@ -14,6 +14,8 @@ export function configRoutes(config: AppConfig) {
     return c.json({
       models: config.models.available,
       defaultModel: config.models.agent,
+      defaultTarget: config.defaultTarget ?? null,
+      defaultTurns: config.defaultTurns,
     });
   });
 

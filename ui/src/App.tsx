@@ -7,7 +7,7 @@ import { CardEditor } from "./components/CardEditor";
 import { NewCardForm } from "./components/NewCardForm";
 import { RunsList } from "./components/RunsList";
 import { RunDetail } from "./components/RunDetail";
-import { NewRunModal } from "./components/NewRunModal";
+import { NewRunModal, type NewRunPrefill } from "./components/NewRunModal";
 import { LiveRun } from "./components/LiveRun";
 import { Spinner } from "./components/shared";
 import { api, type VetResult, type ActiveRun } from "./lib/api";
@@ -73,7 +73,7 @@ function RunsPage() {
   );
 }
 
-function RunDetailPage({ onFanout }: { onFanout: () => void }) {
+function RunDetailPage({ onFanout, onRunAgain }: { onFanout: () => void; onRunAgain: (prefill: NewRunPrefill) => void }) {
   // Route path uses :id for historical reasons; the value is a runId
   // (`<cardId>_<YYYYMMDDTHHMMSSZ>_<nonce>`), which is the directory name
   // under .gauntlet/results/ and the primary key backend-side.
@@ -104,7 +104,7 @@ function RunDetailPage({ onFanout }: { onFanout: () => void }) {
     return <div className="p-6 text-slate">Run not found</div>;
   }
 
-  return <RunDetail result={result} onFanout={onFanout} />;
+  return <RunDetail result={result} onFanout={onFanout} onRunAgain={onRunAgain} />;
 }
 
 function CardsSidebar({
@@ -211,7 +211,7 @@ export default function App() {
     hasMore: hasMoreResults,
   } = useResults();
   const { runs: activeRuns, loaded: activeRunsLoaded, refresh: refreshActive } = useActiveRuns();
-  const [showRunModal, setShowRunModal] = useState(false);
+  const [runModal, setRunModal] = useState<{ prefill?: NewRunPrefill } | null>(null);
 
   const cardIdMatch = location.pathname.match(/^\/cards\/(?!new$)(.+)/);
   const selectedCardId = cardIdMatch?.[1];
@@ -255,7 +255,7 @@ export default function App() {
                 New Card
               </button>
             ) : (
-              <button className="btn-primary w-full" onClick={() => setShowRunModal(true)}>
+              <button className="btn-primary w-full" onClick={() => setRunModal({})}>
                 New Run
               </button>
             )}
@@ -307,15 +307,21 @@ export default function App() {
               onComplete={handleRunComplete}
             />
           } />
-          <Route path="/runs/:id" element={<RunDetailPage onFanout={handleFanout} />} />
+          <Route path="/runs/:id" element={
+            <RunDetailPage
+              onFanout={handleFanout}
+              onRunAgain={(prefill) => setRunModal({ prefill })}
+            />
+          } />
         </Routes>
       </AppShell>
 
-      {showRunModal && (
+      {runModal && (
         <NewRunModal
-          onClose={() => setShowRunModal(false)}
+          prefill={runModal.prefill}
+          onClose={() => setRunModal(null)}
           onStarted={async (cardId, config) => {
-            setShowRunModal(false);
+            setRunModal(null);
             try {
               const { runId } = await api.run.start(cardId, config);
               await refreshActive();

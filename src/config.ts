@@ -9,6 +9,18 @@ export interface AppConfig {
   projectRoot: string;
   port: number;
   defaultChrome: ChromeEndpoint;
+  /**
+   * Default target URL, surfaced to the UI as a prefill for the New Run
+   * form. Sourced from --target or GAUNTLET_TARGET. Undefined when the
+   * operator did not supply one; in that case the UI leaves the field
+   * blank.
+   */
+  defaultTarget?: string;
+  /**
+   * Hard cap on agent turns per run. Applies to every adapter. Per-run
+   * overrides (request body `turns` or CLI `--turns`) take precedence.
+   */
+  defaultTurns: number;
   models: {
     agent: string;
     fanout?: string;
@@ -22,6 +34,8 @@ export interface AppConfig {
     projectRoot: "default" | "env" | "flag";
     port: "default" | "env" | "flag";
     defaultChrome: "default" | "env" | "flag";
+    defaultTarget: "default" | "env" | "flag" | "unset";
+    defaultTurns: "default" | "env" | "flag";
     "models.agent": "default" | "env" | "flag";
     "models.fanout": "default" | "env" | "flag" | "unset";
     "models.available": "default" | "env" | "flag";
@@ -33,6 +47,7 @@ export interface CliArgsInput {
   port?: number;
   chrome?: string;
   target?: string;
+  turns?: number;
   models?: { agent?: string; fanout?: string };
 }
 
@@ -41,6 +56,7 @@ export interface RunRequestBody {
   model?: string;
   chrome?: string;
   adapter?: AdapterType;
+  turns?: number;
 }
 
 export interface EffectiveRunConfig {
@@ -53,10 +69,12 @@ export interface EffectiveRunConfig {
    */
   chrome: ChromeEndpoint | undefined;
   adapter: AdapterType;
+  turns: number;
   projectRoot: string;
 }
 
-const RUN_BODY_ALLOWED = new Set(["target", "model", "chrome", "adapter"]);
+const RUN_BODY_ALLOWED = new Set(["target", "model", "chrome", "adapter", "turns"]);
+export const DEFAULT_MAX_TURNS = 50;
 
 export function validateRunBody(body: unknown): RunRequestBody {
   if (!body || typeof body !== "object") {
@@ -77,11 +95,19 @@ export function validateRunBody(body: unknown): RunRequestBody {
       `run request body: adapter must be one of: ${ADAPTER_TYPES.join(", ")}`,
     );
   }
+  let turns: number | undefined;
+  if (bodyObj.turns !== undefined) {
+    if (typeof bodyObj.turns !== "number" || !Number.isFinite(bodyObj.turns) || !Number.isInteger(bodyObj.turns) || bodyObj.turns < 1) {
+      throw new Error("run request body: turns must be a positive integer");
+    }
+    turns = bodyObj.turns;
+  }
   return {
     target: bodyObj.target,
     model: typeof bodyObj.model === "string" ? bodyObj.model : undefined,
     chrome: typeof bodyObj.chrome === "string" ? bodyObj.chrome : undefined,
     adapter: bodyObj.adapter,
+    turns,
   };
 }
 
@@ -101,6 +127,7 @@ export function mergeRunConfig(app: AppConfig, body: RunRequestBody): EffectiveR
     model: body.model ?? app.models.agent,
     chrome,
     adapter: body.adapter ?? "web",
+    turns: body.turns ?? app.defaultTurns,
     projectRoot: app.projectRoot,
   };
 }
@@ -191,6 +218,37 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     chromeSource = "flag";
   }
 
+  // defaultTarget
+  let defaultTarget: string | undefined;
+  let targetSource: "default" | "env" | "flag" | "unset" = "unset";
+  if (env.GAUNTLET_TARGET) {
+    defaultTarget = env.GAUNTLET_TARGET;
+    targetSource = "env";
+  }
+  if (args.target !== undefined) {
+    defaultTarget = args.target;
+    targetSource = "flag";
+  }
+
+  // defaultTurns — hard cap on agent turns per run.
+  let defaultTurns = DEFAULT_MAX_TURNS;
+  let turnsSource: "default" | "env" | "flag" = "default";
+  if (env.GAUNTLET_TURNS) {
+    const parsed = parseInt(env.GAUNTLET_TURNS, 10);
+    if (Number.isNaN(parsed) || parsed < 1) {
+      throw new Error(`Invalid GAUNTLET_TURNS "${env.GAUNTLET_TURNS}": expected a positive integer`);
+    }
+    defaultTurns = parsed;
+    turnsSource = "env";
+  }
+  if (args.turns !== undefined) {
+    if (!Number.isInteger(args.turns) || args.turns < 1) {
+      throw new Error(`Invalid --turns ${args.turns}: expected a positive integer`);
+    }
+    defaultTurns = args.turns;
+    turnsSource = "flag";
+  }
+
   // models.agent
   let agentModel = DEFAULT_AGENT_MODEL;
   let agentSource: "default" | "env" | "flag" = "default";
@@ -235,6 +293,8 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     projectRoot,
     port,
     defaultChrome,
+    defaultTarget,
+    defaultTurns,
     models: {
       agent: agentModel,
       fanout: fanoutModel,
@@ -245,6 +305,8 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
       projectRoot: projectRootSource,
       port: portSource,
       defaultChrome: chromeSource,
+      defaultTarget: targetSource,
+      defaultTurns: turnsSource,
       "models.agent": agentSource,
       "models.fanout": fanoutSource,
       "models.available": availableSource,

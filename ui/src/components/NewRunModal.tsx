@@ -2,28 +2,45 @@ import { useState, useEffect } from "react";
 import { api, type CardSummary } from "../lib/api";
 import { Spinner } from "./shared";
 
-interface NewRunModalProps {
-  onClose: () => void;
-  onStarted: (cardId: string, config: { target: string; model?: string; chrome?: string }) => void;
+export interface NewRunPrefill {
+  cardId?: string;
+  target?: string;
+  model?: string;
+  chrome?: string;
+  turns?: number;
+  adapter?: "web" | "cli" | "tui";
 }
 
-export function NewRunModal({ onClose, onStarted }: NewRunModalProps) {
+interface NewRunModalProps {
+  onClose: () => void;
+  onStarted: (
+    cardId: string,
+    config: { target: string; model?: string; chrome?: string; turns?: number; adapter?: string },
+  ) => void;
+  prefill?: NewRunPrefill;
+}
+
+export function NewRunModal({ onClose, onStarted, prefill }: NewRunModalProps) {
   const [cards, setCards] = useState<CardSummary[]>([]);
   const [loadingCards, setLoadingCards] = useState(true);
   const [cardError, setCardError] = useState<string | null>(null);
 
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [selectedCard, setSelectedCard] = useState("");
-  const [target, setTarget] = useState("");
-  const [model, setModel] = useState("");
-  const [chrome, setChrome] = useState("");
+  const [selectedCard, setSelectedCard] = useState(prefill?.cardId ?? "");
+  const [target, setTarget] = useState(prefill?.target ?? "");
+  const [model, setModel] = useState(prefill?.model ?? "");
+  const [chrome, setChrome] = useState(prefill?.chrome ?? "");
+  // Blank string === "use server default"; see handleStart.
+  const [turns, setTurns] = useState<string>(
+    prefill?.turns !== undefined ? String(prefill.turns) : "",
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.cards.list()
       .then((list) => {
         setCards(list);
-        if (list.length > 0) setSelectedCard(list[0].id);
+        if (list.length > 0 && !selectedCard) setSelectedCard(list[0].id);
       })
       .catch((e) => setCardError(e instanceof Error ? e.message : "Failed to load cards"))
       .finally(() => setLoadingCards(false));
@@ -31,9 +48,14 @@ export function NewRunModal({ onClose, onStarted }: NewRunModalProps) {
     api.config.get()
       .then((config) => {
         setAvailableModels(config.models);
-        if (config.defaultModel) setModel(config.defaultModel);
+        // Prefill from user intent > server defaults. Never clobber a
+        // value the user (or a "Run again" caller) explicitly supplied.
+        if (!prefill?.model && config.defaultModel) setModel(config.defaultModel);
+        if (!prefill?.target && config.defaultTarget) setTarget(config.defaultTarget);
+        if (!prefill?.turns && config.defaultTurns) setTurns(String(config.defaultTurns));
       })
       .catch(() => { /* config fetch is best-effort */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleStart() {
@@ -46,10 +68,21 @@ export function NewRunModal({ onClose, onStarted }: NewRunModalProps) {
       setError("Target URL is required");
       return;
     }
+    let turnsNum: number | undefined;
+    if (turns.trim() !== "") {
+      const parsed = Number.parseInt(turns, 10);
+      if (Number.isNaN(parsed) || parsed < 1) {
+        setError("Turns must be a positive integer");
+        return;
+      }
+      turnsNum = parsed;
+    }
     onStarted(selectedCard, {
       target: target.trim(),
       model: model.trim() || undefined,
       chrome: chrome.trim() || undefined,
+      turns: turnsNum,
+      adapter: prefill?.adapter,
     });
   }
 
@@ -137,6 +170,21 @@ export function NewRunModal({ onClose, onStarted }: NewRunModalProps) {
                 No model configured. Set GAUNTLET_MODELS or GAUNTLET_AGENT_MODEL on the server.
               </p>
             )}
+          </div>
+
+          <div>
+            <label className="section-label block mb-1">Max Turns</label>
+            <input
+              className="input-field"
+              type="number"
+              min={1}
+              value={turns}
+              onChange={(e) => setTurns(e.target.value)}
+              placeholder="50"
+            />
+            <p className="text-xs text-slate mt-1">
+              Hard cap on agent turns. Leave blank to use the server default.
+            </p>
           </div>
 
           <div>

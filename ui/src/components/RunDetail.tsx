@@ -1,14 +1,16 @@
 import { useState } from "react";
 import { api, type VetResult, type FanoutResult } from "../lib/api";
+import type { NewRunPrefill } from "./NewRunModal";
 import { StatusBadge, formatDuration } from "./shared";
 import { formatRunTimestamp } from "../lib/runId";
 
 interface RunDetailProps {
   result: VetResult;
   onFanout: () => void;
+  onRunAgain?: (prefill: NewRunPrefill) => void;
 }
 
-export function RunDetail({ result, onFanout }: RunDetailProps) {
+export function RunDetail({ result, onFanout, onRunAgain }: RunDetailProps) {
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generated, setGenerated] = useState<FanoutResult["generated"] | null>(null);
@@ -153,6 +155,21 @@ export function RunDetail({ result, onFanout }: RunDetailProps) {
         </div>
 
         <div className="flex items-center gap-3 pt-2">
+          {onRunAgain && result.config && (
+            <button
+              className="btn-secondary"
+              onClick={() => onRunAgain({
+                cardId: result.scenario,
+                target: result.config!.target,
+                model: result.config!.model,
+                chrome: result.config!.chrome,
+                turns: result.config!.turns,
+                adapter: result.config!.adapter,
+              })}
+            >
+              Run Again
+            </button>
+          )}
           {result.observations.length > 0 && (
             <button
               className="btn-primary"

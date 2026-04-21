@@ -1,6 +1,19 @@
 // Bump when result.json format changes in a way downstream consumers must notice.
 // Documented in docs/format.md.
-export const RESULT_SCHEMA_VERSION = 1;
+//
+// v2: added optional `config` block capturing the per-run knobs (target,
+//     model, adapter, chrome, turns) so the UI can offer a "Run again"
+//     action without re-eliciting the parameters.
+export const RESULT_SCHEMA_VERSION = 2;
+
+export interface RunConfigSnapshot {
+  target: string;
+  model: string;
+  adapter: "web" | "cli" | "tui";
+  /** `host:port`, omitted when the adapter auto-launched Chrome. */
+  chrome?: string;
+  turns: number;
+}
 
 export type VetStatus = "pass" | "fail" | "investigate";
 
@@ -54,6 +67,12 @@ export interface VetResult {
     cacheReadInputTokens?: number;
     turns: number;
   };
+  /**
+   * Knobs the run was launched with. Optional for back-compat with v1
+   * results on disk. Used by the UI to offer "Run again" without
+   * re-asking the user for params.
+   */
+  config?: RunConfigSnapshot;
 }
 
 export interface ModelConfig {

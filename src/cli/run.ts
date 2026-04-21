@@ -9,6 +9,7 @@ import { renderContextTree } from "../context/tree";
 import { makeRunId } from "../util/id";
 import { gauntletPath } from "../paths";
 import type { AppConfig } from "../config";
+import type { RunConfigSnapshot } from "../types";
 
 export interface RunCommandOptions {
   scenarioPath: string;
@@ -74,11 +75,24 @@ export async function run(opts: RunCommandOptions): Promise<void> {
     }
   }
 
+  const chromeOptForSnapshot = config.sources.defaultChrome === "default"
+    ? undefined
+    : config.defaultChrome;
+  const runConfig: RunConfigSnapshot = {
+    target,
+    model: config.models.agent,
+    adapter: adapterType,
+    chrome: chromeOptForSnapshot ? `${chromeOptForSnapshot.host}:${chromeOptForSnapshot.port}` : undefined,
+    turns: config.defaultTurns,
+  };
+
   try {
     const result = await runAgent(card, adapter, client, logger, target, {
       contextTree,
       runId,
+      maxTurns: config.defaultTurns,
     });
+    result.config = runConfig;
     writeResultFiles(outDir, result);
     console.log(JSON.stringify(result, null, 2));
     console.error(`runId: ${runId}`);

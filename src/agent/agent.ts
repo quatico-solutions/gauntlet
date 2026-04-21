@@ -7,11 +7,16 @@ import { RESULT_SCHEMA_VERSION } from "../types";
 import { buildSystemPrompt } from "./prompts";
 import { parseReportResult } from "./validators";
 
-const MAX_TURNS = 50;
+const DEFAULT_MAX_TURNS = 50;
 const DEFAULT_TOOL_TIMEOUT_MS = 30000;
 
 export interface AgentOptions {
   toolTimeoutMs?: number;
+  /**
+   * Max agent turns. Defaults to 50. Surfaces as `--turns` on the CLI
+   * and `turns` on the run request body.
+   */
+  maxTurns?: number;
   /**
    * Rendered tree listing for the system prompt's Context section,
    * produced by `renderContextTree` in `src/context/tree.ts`. May be
@@ -106,6 +111,7 @@ export async function runAgent(
   let totalCacheCreation = 0;
   let totalCacheRead = 0;
   let turns = 0;
+  const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
 
   /**
    * Build a terminal VetResult with shared scaffolding (schema, evidence,
@@ -139,7 +145,7 @@ export async function runAgent(
     },
   });
 
-  for (let turn = 0; turn < MAX_TURNS; turn++) {
+  for (let turn = 0; turn < maxTurns; turn++) {
     const response = await client.chat(messages, tools, systemPrompt);
 
     totalInputTokens += response.usage.inputTokens;
@@ -264,6 +270,6 @@ export async function runAgent(
   return buildResult({
     status: "investigate",
     summary: "Agent reached maximum turn limit without reporting a result",
-    reasoning: `Exhausted ${MAX_TURNS} turns`,
+    reasoning: `Exhausted ${maxTurns} turns`,
   });
 }

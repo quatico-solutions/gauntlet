@@ -17,6 +17,14 @@ export interface CardDetail {
   acceptanceCriteria: string[];
 }
 
+export interface RunConfigSnapshot {
+  target: string;
+  model: string;
+  adapter: "web" | "cli" | "tui";
+  chrome?: string;
+  turns: number;
+}
+
 export interface VetResult {
   schemaVersion: number;
   /**
@@ -33,6 +41,8 @@ export interface VetResult {
   evidence: { screenshots: string[]; log: string; video?: string };
   duration_ms: number;
   usage?: { inputTokens: number; outputTokens: number; turns: number };
+  /** Present on v2+ results. Undefined on older results on disk. */
+  config?: RunConfigSnapshot;
 }
 
 /** Paginated `GET /api/results` response. */
@@ -86,6 +96,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export interface ServerConfig {
   models: string[];
   defaultModel: string | null;
+  defaultTarget: string | null;
+  defaultTurns: number;
 }
 
 export interface ErrorEntry {
@@ -157,7 +169,7 @@ export const api = {
       request<FanoutResult>(`/fanout/${runId}/failure`, { method: "POST" }),
   },
   run: {
-    start: (cardId: string, body: { target: string; model?: string; adapter?: string; chrome?: string }) =>
+    start: (cardId: string, body: { target: string; model?: string; adapter?: string; chrome?: string; turns?: number }) =>
       request<{ runId: string; cardId: string }>(`/run/${cardId}`, {
         method: "POST",
         body: JSON.stringify(body),
