@@ -765,7 +765,12 @@ export class WebAdapter implements Adapter {
           return { text };
         }
         const markdown = await chrome.generateMarkdown(0);
-        return { text: markdown };
+        const path = logger.saveArtifact(markdown, "md");
+        const bytes = Buffer.byteLength(markdown, "utf8");
+        return {
+          text: `Full-page extract spilled to ${path} (${bytes} bytes).`,
+          artifactPath: path,
+        };
       }
       case "eval": {
         const result = await chrome.evaluate(0, args.expression as string);

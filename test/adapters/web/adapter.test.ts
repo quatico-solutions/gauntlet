@@ -1,8 +1,9 @@
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { WebAdapter } from "../../../src/adapters/web/adapter";
+import { EvidenceLogger } from "../../../src/evidence/logger";
 
 describe("WebAdapter", () => {
   test("exposes tool definitions for the agent", () => {
@@ -309,6 +310,33 @@ describe("WebAdapter", () => {
         expect(stub.calls.find((c) => c[0] === "getChromeProfileDir")).toBeUndefined();
       } finally {
         stub.restore();
+      }
+    });
+  });
+
+  // Task 7 — extract (no selector) spills to artifacts/
+  describe("extract (no selector) → saveArtifact", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const chromeLib = require("../../../src/adapters/web/lib/chrome-ws-lib");
+
+    test("full-page markdown is written to artifacts/ and result carries path + byte count", async () => {
+      const big = "x".repeat(50_000);
+      const origGenerateMarkdown = chromeLib.generateMarkdown;
+      chromeLib.generateMarkdown = async () => big;
+      const outDir = mkdtempSync(join(tmpdir(), "gauntlet-extract-"));
+      try {
+        const logger = new EvidenceLogger(outDir);
+        const adapter = new WebAdapter();
+        const result = await adapter.executeTool("extract", {}, logger);
+        expect(result.artifactPath).toMatch(/^artifacts\/\d+\.md$/);
+        expect(result.text).toContain("Full-page extract spilled to");
+        expect(result.text).toContain(String(Buffer.byteLength(big, "utf8")));
+        const onDisk = readFileSync(join(outDir, result.artifactPath!), "utf-8");
+        expect(onDisk).toBe(big);
+        expect(logger.artifacts).toContain(result.artifactPath);
+      } finally {
+        chromeLib.generateMarkdown = origGenerateMarkdown;
+        rmSync(outDir, { recursive: true, force: true });
       }
     });
   });
