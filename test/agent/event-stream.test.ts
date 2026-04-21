@@ -58,6 +58,37 @@ describe("agent event stream", () => {
   });
   afterEach(() => rmSync(outDir, { recursive: true, force: true }));
 
+  test("emits llm_request + llm_response per turn with usage and rawAssistantMessage", async () => {
+    const rawAssistant = { role: "assistant", content: [{ type: "text", text: "hi" }] };
+    const client = makeClient([{
+      text: "hi",
+      toolCalls: [{ id: "t1", name: "report_result", arguments: { status: "pass", summary: "s", reasoning: "r" } }],
+      stopReason: "tool_use",
+      rawAssistantMessage: rawAssistant,
+      usage: { inputTokens: 100, outputTokens: 20, cacheCreationInputTokens: 50, cacheReadInputTokens: 30 },
+    }]);
+
+    await runAgent(makeCard(), makeAdapter(), client, logger, undefined, {
+      runId: "card-001_20260421T000000Z_aaaa",
+    });
+
+    const rows = readLog(outDir);
+    const req = rows.find((r) => r.type === "llm_request");
+    const res = rows.find((r) => r.type === "llm_response");
+    expect(req).toBeDefined();
+    expect(req!.turn).toBe(1);
+    expect(req!.messageCount).toBe(1);
+    expect(res).toBeDefined();
+    expect(res!.turn).toBe(1);
+    expect(res!.stopReason).toBe("tool_use");
+    expect(res!.text).toBe("hi");
+    expect((res!.usage as any).inputTokens).toBe(100);
+    expect((res!.usage as any).cacheReadInputTokens).toBe(30);
+    expect(res!.rawAssistantMessage).toEqual(rawAssistant);
+    expect(Array.isArray(res!.toolCalls)).toBe(true);
+    expect((res!.toolCalls as any[])[0].name).toBe("report_result");
+  });
+
   test("emits run_start, system_prompt, user_message as first three rows", async () => {
     const client = makeClient([{
       text: "", toolCalls: [{ id: "t1", name: "report_result", arguments: { status: "pass", summary: "s", reasoning: "r" } }],

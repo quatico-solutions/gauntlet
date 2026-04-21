@@ -27,6 +27,8 @@ function makeMockLogger(): EvidenceLogger {
     logRunStart: () => {},
     logSystemPrompt: () => {},
     logUserMessage: () => {},
+    logLlmRequest: () => {},
+    logLlmResponse: () => {},
   } as unknown as EvidenceLogger;
 }
 

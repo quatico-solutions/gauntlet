@@ -162,6 +162,7 @@ export async function runAgent(
   });
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    logger.logLlmRequest(turns + 1, messages.length);
     const response = await client.chat(messages, tools, systemPrompt);
 
     totalInputTokens += response.usage.inputTokens;
@@ -169,6 +170,34 @@ export async function runAgent(
     totalCacheCreation += response.usage.cacheCreationInputTokens ?? 0;
     totalCacheRead += response.usage.cacheReadInputTokens ?? 0;
     turns++;
+
+    const thinkingBlocks: Array<{ text: string; signature?: string }> = [];
+    const raw = response.rawAssistantMessage as { content?: Array<Record<string, unknown>> } | undefined;
+    if (raw && Array.isArray(raw.content)) {
+      for (const block of raw.content) {
+        if (block && block.type === "thinking" && typeof block.thinking === "string") {
+          thinkingBlocks.push({
+            text: block.thinking as string,
+            signature: typeof block.signature === "string" ? block.signature : undefined,
+          });
+        }
+      }
+    }
+
+    logger.logLlmResponse({
+      turn: turns,
+      stopReason: response.stopReason,
+      text: response.text,
+      thinking: thinkingBlocks,
+      toolCalls: response.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
+      usage: {
+        inputTokens: response.usage.inputTokens,
+        outputTokens: response.usage.outputTokens,
+        cacheCreationInputTokens: response.usage.cacheCreationInputTokens,
+        cacheReadInputTokens: response.usage.cacheReadInputTokens,
+      },
+      rawAssistantMessage: response.rawAssistantMessage,
+    });
 
     // Check for report_result.
     //
