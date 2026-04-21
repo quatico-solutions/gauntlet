@@ -144,6 +144,10 @@ export class EvidenceLogger {
     arguments: Record<string, unknown>;
   }): void {
     this.writeEvent("tool_call", { ...fields });
+    // Fire observers so live consumers (WS broadcaster, registry) still see
+    // per-tool progress. Shape matches the old adapter-side logAction call
+    // that this emitter replaced, so the feed looks unchanged to readers.
+    this.notifyObservers(fields.name, fields.arguments);
   }
 
   logToolResult(fields: ToolResultFields): void {

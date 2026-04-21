@@ -108,6 +108,24 @@ describe("EvidenceLogger", () => {
     expect(received).toEqual(["click"]);
   });
 
+  test("logToolCall notifies observers with (name, arguments) for live feeds", () => {
+    const received: { name: string; args: Record<string, unknown> }[] = [];
+    logger.addObserver((name, args) => {
+      received.push({ name, args });
+    });
+
+    logger.logToolCall({
+      turn: 1,
+      toolUseId: "t1",
+      name: "navigate",
+      arguments: { url: "http://localhost:3000" },
+    });
+
+    expect(received).toEqual([
+      { name: "navigate", args: { url: "http://localhost:3000" } },
+    ]);
+  });
+
   test("logRunStart writes the first event with eventId 1 and parentEventId 0", () => {
     logger.logRunStart({
       runId: "card-001_20260421T000000Z_aaaa",
