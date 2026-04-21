@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { join } from "path";
 import { findCard } from "../../cards/store";
-import { createClient } from "../../models/resolve";
+import { createClient, resolveProvider } from "../../models/resolve";
 import { EvidenceLogger } from "../../evidence/logger";
 import { writeResultFiles } from "../../evidence/writer";
 import { runAgent } from "../../agent/agent";
@@ -132,6 +132,8 @@ export function runRoutes(
       contextTree,
       maxTurns: effective.turns,
       runConfig,
+      provider: resolveProvider(effective.model),
+      model: effective.model,
     }).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       errorLog?.add("run", `${runId}: ${message}`);
@@ -177,10 +179,14 @@ export interface ExecuteRunOpts {
   maxTurns?: number;
   /** Config snapshot stamped into result.json. */
   runConfig?: RunConfigSnapshot;
+  /** LLM provider name (e.g. "anthropic", "openai"). Threaded to run_start. */
+  provider?: string;
+  /** LLM model name. Threaded to run_start. */
+  model?: string;
 }
 
 export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
-  const { runId: optsRunId, card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt, contextTree, maxTurns, runConfig } = opts;
+  const { runId: optsRunId, card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt, contextTree, maxTurns, runConfig, provider, model } = opts;
   // Routing key for the broadcaster and registry. Defaults to cardId so
   // ad-hoc test fixtures continue to work without supplying a runId.
   const runId = optsRunId ?? card.id;
@@ -228,6 +234,8 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
       contextTree,
       runId,
       maxTurns,
+      provider,
+      model,
     });
     if (runConfig) result.config = runConfig;
     writeResultFiles(outDir, result);

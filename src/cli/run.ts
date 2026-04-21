@@ -3,7 +3,7 @@ import { parseStoryCard } from "../format/story-card";
 import { EvidenceLogger } from "../evidence/logger";
 import { writeResultFiles } from "../evidence/writer";
 import { runAgent } from "../agent/agent";
-import { createClient } from "../models/resolve";
+import { createClient, resolveProvider } from "../models/resolve";
 import { CLIAdapter } from "../adapters/cli/adapter";
 import { renderContextTree } from "../context/tree";
 import { makeRunId } from "../util/id";
@@ -93,6 +93,8 @@ export async function run(opts: RunCommandOptions): Promise<void> {
       contextTree,
       runId,
       maxTurns: config.defaultTurns,
+      provider: resolveProvider(config.models.agent),
+      model: config.models.agent,
     });
     result.config = runConfig;
     writeResultFiles(outDir, result);

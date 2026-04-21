@@ -35,6 +35,10 @@ export interface AgentOptions {
    * in `result.json`.
    */
   runId: string;
+  /** LLM provider name (e.g. "anthropic", "openai"). Surfaced on the run_start log row. */
+  provider?: string;
+  /** LLM model name (e.g. "claude-opus-4-7"). Surfaced on the run_start log row. */
+  model?: string;
 }
 
 const REPORT_TOOL: ToolDefinition = {
@@ -101,8 +105,8 @@ export async function runAgent(
     runId,
     cardId: card.id,
     target,
-    provider: "unknown",
-    model: "unknown",
+    provider: options.provider ?? "unknown",
+    model: options.model ?? "unknown",
     adapter: adapter.name ?? "unknown",
     maxTurns: options.maxTurns ?? DEFAULT_MAX_TURNS,
     toolTimeoutMs: options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS,

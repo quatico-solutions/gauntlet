@@ -182,6 +182,22 @@ describe("agent event stream", () => {
     expect((result!.text as string)).toContain("boom");
   });
 
+  test("run_start carries provider + model when supplied", async () => {
+    const client = makeClient([{
+      text: "", toolCalls: [{ id: "t1", name: "report_result", arguments: { status: "pass", summary: "s", reasoning: "r" } }],
+      stopReason: "tool_use", rawAssistantMessage: { role: "assistant", content: [] },
+      usage: { inputTokens: 1, outputTokens: 1 },
+    }]);
+    await runAgent(makeCard(), makeAdapter(), client, logger, undefined, {
+      runId: "card-001_20260421T000000Z_aaaa",
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+    });
+    const start = readLog(outDir).find((r) => r.type === "run_start")!;
+    expect(start.provider).toBe("anthropic");
+    expect(start.model).toBe("claude-opus-4-7");
+  });
+
   test("emits run_end as the last event, with usage totals and status", async () => {
     const client = makeClient([{
       text: "", toolCalls: [{ id: "t1", name: "report_result", arguments: { status: "pass", summary: "ok", reasoning: "r" } }],
