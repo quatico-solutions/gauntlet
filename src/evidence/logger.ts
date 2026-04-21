@@ -12,57 +12,171 @@ export type ActionObserver = (
   params: Record<string, unknown>,
 ) => void;
 
+export interface RunStartFields {
+  runId: string;
+  cardId: string;
+  target: string | undefined;
+  provider: string;
+  model: string;
+  adapter: string;
+  maxTurns: number;
+  toolTimeoutMs: number;
+  contextTreeBytes: number;
+}
+
+export interface LlmResponseFields {
+  turn: number;
+  stopReason: string;
+  text: string;
+  thinking: Array<{ text: string; signature?: string }>;
+  toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+  };
+  rawAssistantMessage: unknown;
+}
+
+export interface ToolResultFields {
+  turn: number;
+  toolUseId: string;
+  name: string;
+  durationMs: number;
+  text: string;
+  image?: string;            // relative path
+  artifact?: string;         // relative path
+  textTruncated?: true;
+  textBytes?: number;
+  error: boolean;
+}
+
+export interface RunEndFields {
+  status: string;
+  summary: string;
+  reasoning: string;
+  observationCount: number;
+  durationMs: number;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    turns: number;
+  };
+}
+
+const INLINE_TEXT_LIMIT = 32 * 1024;
+
 export class EvidenceLogger {
   private outDir: string;
   private screenshotCount = 0;
+  private artifactCount = 0;
   private _screenshots: string[] = [];
+  private _artifacts: string[] = [];
   private observers: Set<ActionObserver> = new Set();
+  private eventCounter = 0;
+  private lastEventId = 0;
 
   constructor(outDir: string) {
     this.outDir = outDir;
     mkdirSync(join(outDir, "screenshots"), { recursive: true });
+    mkdirSync(join(outDir, "artifacts"), { recursive: true });
   }
 
-  get screenshots(): string[] {
-    return [...this._screenshots];
-  }
+  get screenshots(): string[] { return [...this._screenshots]; }
+  get artifacts(): string[] { return [...this._artifacts]; }
+  get logPath(): string { return "run.jsonl"; }
 
-  /**
-   * Register an observer for action events. Returns an unsubscribe function
-   * that removes the observer when called. A misbehaving observer (one that
-   * throws) will not prevent other observers from receiving the action.
-   */
   addObserver(fn: ActionObserver): () => void {
     this.observers.add(fn);
-    return () => {
-      this.observers.delete(fn);
-    };
+    return () => { this.observers.delete(fn); };
   }
 
-  private notifyObservers(
-    action: string,
-    params: Record<string, unknown>,
-  ): void {
+  private notifyObservers(action: string, params: Record<string, unknown>): void {
     for (const fn of this.observers) {
-      try {
-        fn(action, params);
-      } catch {
-        /* one observer shouldn't break another */
-      }
+      try { fn(action, params); } catch { /* isolated */ }
     }
   }
 
-  logAction(action: string, params: Record<string, unknown>): void {
+  private writeEvent(type: string, body: Record<string, unknown>): number {
+    this.eventCounter += 1;
+    const eventId = this.eventCounter;
     const entry = {
-      timestamp: new Date().toISOString(),
-      action,
-      params,
+      eventId,
+      parentEventId: this.lastEventId,
+      ts: new Date().toISOString(),
+      type,
+      ...body,
     };
-    appendFileSync(
-      join(this.outDir, "run.jsonl"),
-      JSON.stringify(entry) + "\n"
-    );
-    this.notifyObservers(action, params);
+    appendFileSync(join(this.outDir, "run.jsonl"), JSON.stringify(entry) + "\n");
+    this.lastEventId = eventId;
+    return eventId;
+  }
+
+  logRunStart(fields: RunStartFields): void {
+    this.writeEvent("run_start", { ...fields });
+  }
+
+  logSystemPrompt(content: string): void {
+    this.writeEvent("system_prompt", { content });
+  }
+
+  logUserMessage(turn: number, content: string): void {
+    this.writeEvent("user_message", { turn, content });
+  }
+
+  logLlmRequest(turn: number, messageCount: number): void {
+    this.writeEvent("llm_request", { turn, messageCount });
+  }
+
+  logLlmResponse(fields: LlmResponseFields): void {
+    this.writeEvent("llm_response", { ...fields });
+  }
+
+  logToolCall(fields: {
+    turn: number;
+    toolUseId: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  }): void {
+    this.writeEvent("tool_call", { ...fields });
+  }
+
+  logToolResult(fields: ToolResultFields): void {
+    let body: Record<string, unknown> = { ...fields };
+    if (typeof fields.text === "string" && Buffer.byteLength(fields.text, "utf8") > INLINE_TEXT_LIMIT) {
+      const bytes = Buffer.byteLength(fields.text, "utf8");
+      const spilled = this.saveArtifact(fields.text, "txt");
+      body = {
+        ...body,
+        text: `<spilled — see ${spilled}>`,
+        textTruncated: true,
+        textBytes: bytes,
+        artifact: fields.artifact ?? spilled,
+      };
+      this.logEvent("tool_result_text_oversize", {
+        turn: fields.turn,
+        name: fields.name,
+        bytes,
+        artifact: spilled,
+      });
+    }
+    this.writeEvent("tool_result", body);
+  }
+
+  logEvent(name: string, data: Record<string, unknown>): void {
+    this.writeEvent("event", { name, ...data });
+    this.notifyObservers(name, data);
+  }
+
+  logRunEnd(fields: RunEndFields): void {
+    this.writeEvent("run_end", { ...fields });
+  }
+
+  logAction(action: string, params: Record<string, unknown>): void {
+    this.logEvent(action, params);
   }
 
   logBrowserEvent(
@@ -91,7 +205,12 @@ export class EvidenceLogger {
     return relativePath;
   }
 
-  get logPath(): string {
-    return "run.jsonl";
+  saveArtifact(data: Buffer | string, ext: string): string {
+    this.artifactCount++;
+    const name = String(this.artifactCount).padStart(3, "0");
+    const relativePath = `artifacts/${name}.${ext}`;
+    writeFileSync(join(this.outDir, relativePath), data);
+    this._artifacts.push(relativePath);
+    return relativePath;
   }
 }

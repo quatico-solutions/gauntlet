@@ -21,22 +21,6 @@ describe("EvidenceLogger", () => {
     expect(existsSync(join(outDir, "screenshots"))).toBe(true);
   });
 
-  test("logs actions to run.jsonl", () => {
-    logger.logAction("navigate", { url: "http://localhost:3000" });
-    logger.logAction("click", { selector: "#add-btn" });
-
-    const lines = readFileSync(join(outDir, "run.jsonl"), "utf-8")
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
-
-    expect(lines).toHaveLength(2);
-    expect(lines[0].action).toBe("navigate");
-    expect(lines[0].params.url).toBe("http://localhost:3000");
-    expect(lines[0].timestamp).toBeDefined();
-    expect(lines[1].action).toBe("click");
-  });
-
   test("saves screenshot and returns path", () => {
     const fakePng = Buffer.from("fake-png-data");
     const path = logger.saveScreenshot(fakePng, "step-001");
@@ -122,6 +106,66 @@ describe("EvidenceLogger", () => {
     logger.logAction("click", { selector: "#btn" });
 
     expect(received).toEqual(["click"]);
+  });
+
+  test("logRunStart writes the first event with eventId 1 and parentEventId 0", () => {
+    logger.logRunStart({
+      runId: "card-001_20260421T000000Z_aaaa",
+      cardId: "card-001",
+      target: "http://localhost:3000",
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      adapter: "web",
+      maxTurns: 50,
+      toolTimeoutMs: 30000,
+      contextTreeBytes: 0,
+    });
+
+    const [row] = readFileSync(join(outDir, "run.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+
+    expect(row.type).toBe("run_start");
+    expect(row.eventId).toBe(1);
+    expect(row.parentEventId).toBe(0);
+    expect(row.ts).toBeDefined();
+    expect(row.runId).toBe("card-001_20260421T000000Z_aaaa");
+    expect(row.cardId).toBe("card-001");
+    expect(row.provider).toBe("anthropic");
+    expect(row.maxTurns).toBe(50);
+  });
+
+  test("each subsequent event chains parentEventId to the previous eventId", () => {
+    logger.logSystemPrompt("be helpful");
+    logger.logUserMessage(0, "go");
+    logger.logEvent("custom", { foo: 1 });
+
+    const rows = readFileSync(join(outDir, "run.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+
+    expect(rows.map((r) => r.eventId)).toEqual([1, 2, 3]);
+    expect(rows.map((r) => r.parentEventId)).toEqual([0, 1, 2]);
+    expect(rows.map((r) => r.type)).toEqual([
+      "system_prompt",
+      "user_message",
+      "event",
+    ]);
+  });
+
+  test("logAction emits an event row with the action as the name", () => {
+    logger.logAction("navigate", { url: "http://localhost:3000" });
+
+    const [row] = readFileSync(join(outDir, "run.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+
+    expect(row.type).toBe("event");
+    expect(row.name).toBe("navigate");
+    expect(row.url).toBe("http://localhost:3000");
   });
 
   test("logBrowserEvent writes to a per-category jsonl file", () => {
