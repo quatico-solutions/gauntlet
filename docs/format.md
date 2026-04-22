@@ -125,6 +125,32 @@ The server exposes each run through endpoints under `/api/results`:
 A screenshot listed as `"screenshots/001.png"` in a run's manifest is served
 by `GET /api/results/<runId>/file/screenshots/001.png`.
 
+## WebSocket stream
+
+Clients open a WebSocket at `/api/ws?run=<runId>`. The server emits several
+message types; consumers may dispatch on `type` and ignore the rest.
+
+- `transcriptSnapshot` — sent once on connect if `run.jsonl` exists on disk
+  for the run. Shape: `{ type: "transcriptSnapshot", events: TranscriptEvent[] }`.
+  Includes every event written so far. Consumed by the transcript view.
+- `event` — broadcast for every new event written to `run.jsonl` during a
+  live run. Shape: `{ type: "event", event: TranscriptEvent }`. Verbatim
+  mirror of the jsonl line. Consumed by the transcript view.
+- `snapshot` — legacy. Sent on connect for runs that are currently active.
+  Shape: `{ type, lastFrame, progressLog }`. Consumed by the LiveRun view.
+- `frame` — base64 JPEG screencast frame from the web adapter. Consumed by
+  LiveRun.
+- `progress` — stringified `[action] {...params}` lines (legacy observer
+  channel, different from `event`). Consumed by LiveRun.
+- `complete` — run finished; carries the full `VetResult` object.
+- `error` — fatal run error; carries a message string.
+- `gone` — the server has no active run for this id. Clients should fall
+  back to the on-disk `result.json` + `run.jsonl` via the HTTP endpoints.
+
+Events in `transcriptSnapshot` and subsequent `event` messages can overlap
+in a narrow startup window. Clients dedupe by `eventId` (the reducer
+treats any event with `eventId <= model.maxEventId` as a no-op).
+
 ## Schema versioning
 
 Bump `schemaVersion` only for incompatible changes to `result.json` or the
