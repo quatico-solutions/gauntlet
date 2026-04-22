@@ -174,9 +174,15 @@ export class EvidenceLogger {
     if (typeof fields.text === "string" && Buffer.byteLength(fields.text, "utf8") > INLINE_TEXT_LIMIT) {
       const bytes = Buffer.byteLength(fields.text, "utf8");
       const spilled = this.saveArtifact(fields.text, "txt");
+      // Keep run.jsonl readable by dropping the full text, but don't leave
+      // a breadcrumb in the `text` field — a string like "<spilled — see
+      // artifacts/N.txt>" is redundant with the `artifact` field and reads
+      // like a path the model could open. The structured fields
+      // (textTruncated, textBytes, artifact) tell the full story;
+      // consumers render "spilled to artifact (NkB)" from those.
       body = {
         ...body,
-        text: `<spilled — see ${spilled}>`,
+        text: "",
         textTruncated: true,
         textBytes: bytes,
         artifact: fields.artifact ?? spilled,

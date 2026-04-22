@@ -237,6 +237,10 @@ describe("EvidenceLogger", () => {
     expect(resultRow.textTruncated).toBe(true);
     expect(resultRow.textBytes).toBe(Buffer.byteLength(bigText, "utf8"));
     expect(resultRow.artifact).toMatch(/^artifacts\/\d+\.txt$/);
+    // `text` is dropped (empty) on spill — the structured fields
+    // carry everything consumers need. No dangling artifact path
+    // left in the text field that could confuse any reader.
+    expect(resultRow.text).toBe("");
 
     // Artifact file should exist and contain the full original text
     expect(existsSync(join(outDir, resultRow.artifact))).toBe(true);

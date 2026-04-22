@@ -314,12 +314,15 @@ describe("WebAdapter", () => {
     });
   });
 
-  // Task 7 — extract (no selector) spills to artifacts/
-  describe("extract (no selector) → saveArtifact", () => {
+  // extract (no selector) returns the full markdown inline so the model
+  // can actually read it. Run.jsonl readability is handled downstream by
+  // the logger's oversize-text spill — not by the adapter — so the model
+  // never ends up with a dangling artifact path it can't resolve.
+  describe("extract (no selector)", () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const chromeLib = require("../../../src/adapters/web/lib/chrome-ws-lib");
 
-    test("full-page markdown is written to artifacts/ and result carries path + byte count", async () => {
+    test("full-page markdown is returned inline as tool_result text", async () => {
       const big = "x".repeat(50_000);
       const origGenerateMarkdown = chromeLib.generateMarkdown;
       chromeLib.generateMarkdown = async () => big;
@@ -328,12 +331,12 @@ describe("WebAdapter", () => {
         const logger = new EvidenceLogger(outDir);
         const adapter = new WebAdapter();
         const result = await adapter.executeTool("extract", {}, logger);
-        expect(result.artifactPath).toMatch(/^artifacts\/\d+\.md$/);
-        expect(result.text).toContain("Full-page extract spilled to");
-        expect(result.text).toContain(String(Buffer.byteLength(big, "utf8")));
-        const onDisk = readFileSync(join(outDir, result.artifactPath!), "utf-8");
-        expect(onDisk).toBe(big);
-        expect(logger.artifacts).toContain(result.artifactPath);
+        expect(result.text).toBe(big);
+        expect(result.artifactPath).toBeUndefined();
+        // The adapter does not touch artifacts/ directly — that's the
+        // logger's job when it records tool_result (and only when the
+        // text exceeds its inline limit, covered in logger tests).
+        expect(logger.artifacts).toEqual([]);
       } finally {
         chromeLib.generateMarkdown = origGenerateMarkdown;
         rmSync(outDir, { recursive: true, force: true });

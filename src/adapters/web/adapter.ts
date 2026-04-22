@@ -764,13 +764,13 @@ export class WebAdapter implements Adapter {
           const text = await chrome.extractText(0, selector);
           return { text };
         }
+        // Return the full markdown inline so the model can read it. The
+        // logger will spill to artifacts/N.txt for run.jsonl readability
+        // when the text exceeds its inline limit, but that's a
+        // reviewer-facing concern — the model has already consumed the
+        // content by the time logging happens.
         const markdown = await chrome.generateMarkdown(0);
-        const path = logger.saveArtifact(markdown, "md");
-        const bytes = Buffer.byteLength(markdown, "utf8");
-        return {
-          text: `Full-page extract spilled to ${path} (${bytes} bytes).`,
-          artifactPath: path,
-        };
+        return { text: markdown };
       }
       case "eval": {
         const result = await chrome.evaluate(0, args.expression as string);
