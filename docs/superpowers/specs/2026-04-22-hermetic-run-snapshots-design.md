@@ -10,9 +10,12 @@ A Gauntlet run's output directory (`.gauntlet/results/<runId>/`) captures what
 the agent *produced* — screenshots, `run.jsonl`, `result.json`, etc. — but
 the two inputs that shape the run are referenced by path:
 
-- **Story** (`.gauntlet/stories/<name>.md`) — the prompt text.
-- **Context profile** (`.gauntlet/context/<profile>/`) — a directory tree
-  the agent reads via `read_tool` (identity, credentials, etc.).
+- **Story** (`.gauntlet/stories/<story-id>.md`) — the prompt text. Story id
+  is the frontmatter `id`; the file on disk is `<id>.md`.
+- **Context tree** (`.gauntlet/context/`) — the full tree of all profiles.
+  The agent is shown a rendered listing and pulls files on demand via
+  `read_tool` (identity, credentials, etc.); it decides which profile to
+  use based on the story.
 
 Both get edited over time. If a story is refined or a context file changes
 between runs, historical results silently lose fidelity: the `result.json`
@@ -30,7 +33,7 @@ Two concrete failure modes:
 ## Goals
 
 1. **Each run is hermetic w.r.t. its inputs.** The story text and the full
-   context profile as-of run start live inside the run directory.
+   context tree as-of run start live inside the run directory.
 2. **Agent behavior unchanged during live runs.** No changes to tool
    semantics, prompt structure, or agent-visible paths. Only the *root* of
    the read-tool / passkey tool moves.
@@ -42,7 +45,7 @@ Two concrete failure modes:
 - **Re-running a past run from scratch.** We don't need the snapshot to be
   executable end-to-end; config/model/target are already captured in
   `result.json`.
-- **Secret scrubbing.** Context profiles contain credentials (passkey
+- **Secret scrubbing.** The context tree contains credentials (passkey
   material). `.gauntlet/results/` is already local and treated as
   authoritative artifact; verbatim copies are acceptable at this stage.
 - **Drift detection.** A follow-up can diff `run/inputs/*` against live
@@ -59,9 +62,8 @@ Two concrete failure modes:
 ```
 .gauntlet/results/<runId>/
 ├── inputs/
-│   ├── story.md                   ← snapshot of .gauntlet/stories/<name>.md
-│   └── context/
-│       └── <profile>/...          ← snapshot of .gauntlet/context/<profile>/
+│   ├── story.md                   ← snapshot of .gauntlet/stories/<story-id>.md
+│   └── context/...                ← snapshot of .gauntlet/context/ (all profiles)
 ├── screenshots/
 ├── frames/
 ├── run.jsonl
@@ -90,10 +92,10 @@ do not affect the running agent.
 ### What
 
 - `story.md`: byte-for-byte copy of the resolved story file. Path resolution
-  matches current behavior (`storiesDir/<scenario>.md`).
-- `context/<profile>/...`: recursive copy of the context profile directory.
-  Preserves file contents and directory structure. No filtering, no
-  redaction.
+  matches current behavior (`storiesDir/<story-id>.md`).
+- `context/...`: recursive copy of the entire `.gauntlet/context/` tree.
+  Preserves file contents and directory structure across all profiles. No
+  filtering, no redaction, no per-run profile selection.
 
 ### Failure handling
 
@@ -102,12 +104,13 @@ A snapshot failure fails the run loudly before the agent starts:
 - **Missing story** — the story file doesn't exist on disk. Same failure
   mode as today when the CLI/API tries to load a non-existent scenario;
   surfaced at the same point.
-- **Context profile not found or empty** — already handled by
+- **Context tree not found or empty** — already handled by
   `contextRootIsPopulated` (`src/adapters/web/passkey.ts:142`). Today a
-  missing/empty profile degrades gracefully (no passkey tool registered).
-  The snapshot must preserve that semantics: if the live profile is missing
-  or empty, snapshot nothing and carry on — don't synthesize a false
-  snapshot.
+  missing/empty context root degrades gracefully (no passkey tool
+  registered). The snapshot preserves that semantics: if the live
+  `.gauntlet/context/` is missing or empty, create an empty
+  `<runDir>/inputs/context/` (or omit it) and carry on — don't synthesize
+  content that wasn't there.
 - **Copy error (permissions, I/O)** — bubble up; the run fails with a clear
   error before the agent starts.
 
@@ -169,10 +172,10 @@ This spec deliberately doesn't commit to that.
 ## Testing
 
 - **Unit**: snapshot helper produces the expected tree for a fixture story
-  + context profile; handles missing-profile and missing-story cases.
+  + context tree; handles missing-context and missing-story cases.
 - **Integration (existing run flow)**: after a run completes, assert
   `<runDir>/inputs/story.md` byte-matches the source story at run-start
-  time, and that `<runDir>/inputs/context/` mirrors the source profile.
+  time, and that `<runDir>/inputs/context/` mirrors the full source tree.
 - **Agent behavior**: existing adapter/agent tests continue to pass
   unchanged — the root-swap is transparent.
 - **Edit-during-run**: mutate the source story mid-run; assert the
@@ -180,7 +183,7 @@ This spec deliberately doesn't commit to that.
 
 ## Implementation notes
 
-- A single helper — `snapshotRunInputs(runDir, storyPath, contextProfileDir)`
+- A single helper — `snapshotRunInputs(runDir, storyPath, contextRoot)`
   — handles the copy. Lives alongside the other run-infra code (likely
   `src/paths.ts` or a new `src/runs/snapshot.ts`).
 - Call sites invoke this once, during run setup, between `runId` assignment
