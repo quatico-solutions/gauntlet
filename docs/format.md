@@ -7,6 +7,12 @@ describes what's in it and how to read it.
 
 ```
 <projectRoot>/.gauntlet/results/<runId>/
+  inputs/            Hermetic snapshot of what the agent was given:
+                       story.md — copy of .gauntlet/stories/<id>.md at run start
+                       context/ — copy of .gauntlet/context/ at run start
+                     Captured once, synchronously, before the agent starts.
+                     Edits to the source files after that point do not
+                     affect the run's view.
   result.json        The run's result, including a manifest of evidence files
   result.md          Human-readable rendering of result.json
   run.jsonl          Append-only event stream — one JSON object per event.
