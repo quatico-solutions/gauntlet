@@ -126,8 +126,14 @@ function sourceIsPopulated(root: string): boolean {
     const stat = statSync(root);
     if (!stat.isDirectory()) return false;
     return readdirSync(root).length > 0;
-  } catch {
-    return false;
+  } catch (err) {
+    // Only absence (ENOENT) or not-a-dir (ENOTDIR) degrade to "empty".
+    // Permission errors etc. bubble up so the run fails loudly — spec §
+    // "Failure handling" requires copy errors to surface before the
+    // agent starts.
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+    throw err;
   }
 }
 ```
@@ -289,10 +295,11 @@ git add src/runs/snapshot.ts test/runs/snapshot.test.ts
 git commit -m "$(cat <<'EOF'
 feat(runs): add snapshotRunInputs helper
 
-Writes <runDir>/inputs/story.md from in-memory bytes and copies the
-full .gauntlet/context/ tree recursively. Missing/empty source
-context yields an empty inputs/context/, matching existing
-degrade-gracefully semantics.
+Copies the resolved story file to <runDir>/inputs/story.md and the
+full .gauntlet/context/ tree to <runDir>/inputs/context/ via cpSync.
+Missing/empty source context yields an empty inputs/context/,
+matching existing degrade-gracefully semantics. Permission errors on
+the source bubble up so the run fails loudly before the agent starts.
 EOF
 )"
 ```
@@ -302,127 +309,21 @@ EOF
 ## Task 2: Wire snapshot into the CLI run flow
 
 **Files:**
-- Modify: `src/cli/run.ts` — lines 22–106 (the whole `run` function body)
-- Create: `test/cli/snapshot.test.ts`
+- Modify: `src/cli/run.ts` — the `run` function body
 
-### Step 2.1: Write failing integration test
+**Testing posture:** Task 3 builds a route-level integration test that exercises the snapshot wiring end-to-end (same helper, same root-swap, same handler-sync discipline). The CLI path is structurally identical — the only difference is whether `run()` is called directly or via an HTTP handler. Rather than duplicate the integration test with a new CLI-side client-injection surface, this task ships the wiring and relies on:
 
-- [ ] **Step 2.1.1: Write the test**
+- Unit tests (Task 1) for snapshot-helper correctness.
+- Route integration test (Task 3) for the wiring pattern.
+- An explicit manual smoke-test step (below) for the CLI path.
 
-Create `test/cli/snapshot.test.ts`:
+### Step 2.1: Wire the snapshot call
 
-```ts
-import { describe, test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { run } from "../../src/cli/run";
-import { gauntletPath } from "../../src/paths";
-import type { AppConfig } from "../../src/config";
+- [ ] **Step 2.1.1: Update `src/cli/run.ts`**
 
-function makeConfig(projectRoot: string): AppConfig {
-  // Minimal AppConfig sufficient for the CLIAdapter path. The agent is
-  // driven by the `echo` provider — see test/fixtures/echo-app.sh and
-  // existing cli tests for the pattern.
-  return {
-    projectRoot,
-    models: { agent: "echo", available: [] },
-    sources: { defaultChrome: "default" },
-    defaultChrome: undefined,
-    defaultViewport: undefined,
-    defaultTurns: 1,
-  } as unknown as AppConfig;
-}
+Replace lines 28–41 (from `const content = readFileSync(...)` through `const contextTree = renderContextTree(contextRoot);`) with the block below.
 
-describe("CLI run — snapshot", () => {
-  test("writes story.md and context/ into <runDir>/inputs/", async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "gauntlet-cli-snap-"));
-    try {
-      // Seed stories dir
-      const storiesDir = gauntletPath(projectRoot, "stories");
-      mkdirSync(storiesDir, { recursive: true });
-      const storyBody =
-        "---\nid: snap-story\ntitle: Snap Story\n---\n" +
-        "# Snap Story\n\nBody.\n\n## Acceptance Criteria\n- passes\n";
-      const storyPath = join(storiesDir, "snap-story.md");
-      writeFileSync(storyPath, storyBody);
-
-      // Seed context dir
-      const ctxRoot = gauntletPath(projectRoot, "context");
-      mkdirSync(join(ctxRoot, "matt"), { recursive: true });
-      writeFileSync(join(ctxRoot, "matt", "identity.md"), "name: matt");
-
-      // Known outDir so we can assert on it
-      const outDir = join(projectRoot, "run-out");
-
-      await run({
-        scenarioPath: storyPath,
-        target: "cli:echo",
-        outDir,
-        adapterType: "cli",
-        config: makeConfig(projectRoot),
-      });
-
-      const inputsDir = join(outDir, "inputs");
-      expect(existsSync(inputsDir)).toBe(true);
-      expect(readFileSync(join(inputsDir, "story.md"), "utf-8")).toBe(storyBody);
-      expect(readFileSync(join(inputsDir, "context", "matt", "identity.md"), "utf-8"))
-        .toBe("name: matt");
-    } finally {
-      rmSync(projectRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("snapshot is immutable — editing source story mid-setup does not affect snapshot", async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "gauntlet-cli-snap-"));
-    try {
-      const storiesDir = gauntletPath(projectRoot, "stories");
-      mkdirSync(storiesDir, { recursive: true });
-      const original =
-        "---\nid: snap-story\ntitle: Original\n---\n# Original\n\nBody.\n";
-      const storyPath = join(storiesDir, "snap-story.md");
-      writeFileSync(storyPath, original);
-
-      const ctxRoot = gauntletPath(projectRoot, "context");
-      mkdirSync(ctxRoot);
-
-      const outDir = join(projectRoot, "run-out");
-      const runPromise = run({
-        scenarioPath: storyPath,
-        target: "cli:echo",
-        outDir,
-        adapterType: "cli",
-        config: makeConfig(projectRoot),
-      });
-
-      // Mutate the source AFTER run() starts. The snapshot must already
-      // reflect `original`, not this revision.
-      writeFileSync(storyPath, "---\nid: snap-story\ntitle: Mutated\n---\n# Mutated\n");
-      await runPromise;
-
-      expect(readFileSync(join(outDir, "inputs", "story.md"), "utf-8")).toBe(original);
-    } finally {
-      rmSync(projectRoot, { recursive: true, force: true });
-    }
-  });
-});
-```
-
-- [ ] **Step 2.1.2: Run — expect FAIL**
-
-```
-bun test test/cli/snapshot.test.ts
-```
-
-Expected: FAIL — `inputs/` directory does not exist. (`run()` is not yet calling the snapshot helper.)
-
-**Note:** if the `echo`-backed test harness is not available in this project, use whatever minimal client fixture the other `src/cli/*` tests already use — `test/cli/args.test.ts`, `test/cli/validate.test.ts` — rather than inventing a new one. The key behavior under test is the snapshot, not the agent loop.
-
-### Step 2.2: Wire the snapshot call
-
-- [ ] **Step 2.2.1: Update `src/cli/run.ts`**
-
-Replace lines 28–41 (from `const content = readFileSync(...)` through `const contextTree = renderContextTree(contextRoot);`) with:
+**Important:** the snapshot must run **before** `createClient`. `createClient` can throw on unsupported models and would short-circuit the snapshot otherwise. The snapshot has no dependency on the client, so reorder freely.
 
 ```ts
   const content = readFileSync(scenarioPath, "utf-8");
@@ -433,20 +334,22 @@ Replace lines 28–41 (from `const content = readFileSync(...)` through `const c
   // stays available as an explicit override for ad-hoc debugging.
   const runId = makeRunId(card.id);
   const outDir = opts.outDir ?? gauntletPath(config.projectRoot, "results", runId);
-  const logger = new EvidenceLogger(outDir);
-  const client = createClient(config.models.agent);
-  // Snapshot story + context into <outDir>/inputs/ before anything reads
-  // the context. Every downstream consumer (read-tool, passkey tool,
-  // context-tree renderer) uses the snapshotted root, so the agent sees
-  // a frozen view even if the source files change during the run.
+  // Snapshot story + context into <outDir>/inputs/ before anything
+  // reads the context — and before createClient, which can throw on
+  // unsupported models. Every downstream consumer (read-tool, passkey
+  // tool, context-tree renderer) uses the snapshotted root, so the
+  // agent sees a frozen view even if the source files change during
+  // the run.
   snapshotRunInputs({
     runDir: outDir,
     storyPath: scenarioPath,
     contextRoot: gauntletPath(config.projectRoot, "context"),
   });
+  const logger = new EvidenceLogger(outDir);
+  const client = createClient(config.models.agent);
   const contextRoot = join(outDir, "inputs", "context");
   // Render the tree **once per run** — the immutability invariant
-  // (spec §4.2) forbids re-rendering during the run.
+  // forbids re-rendering during the run.
   const contextTree = renderContextTree(contextRoot);
 ```
 
@@ -457,15 +360,7 @@ import { join } from "path";
 import { snapshotRunInputs } from "../runs/snapshot";
 ```
 
-- [ ] **Step 2.2.2: Run test — expect PASS (both cases)**
-
-```
-bun test test/cli/snapshot.test.ts
-```
-
-Expected: 2 pass.
-
-- [ ] **Step 2.2.3: Run the pre-existing CLI-adjacent tests — expect UNCHANGED**
+- [ ] **Step 2.1.2: Run the pre-existing CLI-adjacent tests — expect UNCHANGED**
 
 ```
 bun test test/cli test/context test/adapters/cli
@@ -473,19 +368,42 @@ bun test test/cli test/context test/adapters/cli
 
 Expected: all still green. The snapshot is additive; the root swap is transparent because every consumer was already taking `contextRoot` by argument.
 
+### Step 2.2: Manual smoke test
+
+- [ ] **Step 2.2.1: Drive a real CLI run and inspect the run dir**
+
+From the repo root, with whatever story and context already exist in `.gauntlet/`:
+
+```
+bun run src/index.ts run .gauntlet/stories/<any-story>.md --target <any-target> --adapter cli --out /tmp/gauntlet-smoke
+```
+
+(Use the project's actual entry script; `package.json` `"scripts"` is authoritative if different.)
+
+Then:
+
+```
+ls /tmp/gauntlet-smoke/inputs
+diff -r /tmp/gauntlet-smoke/inputs/context .gauntlet/context
+diff /tmp/gauntlet-smoke/inputs/story.md .gauntlet/stories/<any-story>.md
+```
+
+Expected: `inputs/story.md` and `inputs/context/` exist; the diffs are empty (modulo files the agent wrote into context during the run, which the snapshot does not reflect because the snapshot is immutable). The run itself may pass or fail depending on the target — that's not what the smoke test validates.
+
 ### Step 2.3: Commit
 
 - [ ] **Step 2.3.1: Commit**
 
 ```
-git add src/cli/run.ts test/cli/snapshot.test.ts
+git add src/cli/run.ts
 git commit -m "$(cat <<'EOF'
 feat(cli): snapshot story + context into run dir before agent start
 
 CLI run flow now calls snapshotRunInputs after outDir is decided and
 swaps contextRoot to <outDir>/inputs/context/ for downstream consumers
-(read-tool, passkey tool, context-tree renderer). Behavior live is
-unchanged — only the root shifts.
+(read-tool, passkey tool, context-tree renderer). Live behavior is
+unchanged — only the root shifts. Snapshot runs before createClient so
+a model-resolution failure doesn't prevent the snapshot.
 EOF
 )"
 ```
@@ -495,16 +413,58 @@ EOF
 ## Task 3: Wire snapshot into the API run flow
 
 **Files:**
-- Modify: `src/api/routes/run.ts` — the `POST /:id` handler
-- Create: `test/api/routes/run-snapshot.test.ts`
+- Modify: `src/api/routes/run.ts` — signature of `runRoutes` (add `clientFactory?`), and the `POST /:id` handler body.
+- Modify: `src/api/server.ts` if it constructs `runRoutes(...)` — pass `undefined` explicitly only if the TS compiler complains; optional params don't need it.
+- Create: `test/api/routes/run-snapshot.test.ts`.
 
 The route already has `entry.filename` from `findCard`, which is the story filename relative to the stories dir. Composing `join(storiesDir, entry.filename)` gives an absolute path that `cpSync` can consume — no changes to `CardEntry` or `findCard` needed.
 
-### Step 3.1: Write failing route integration test
+### Step 3.1: Add `clientFactory` injection to `runRoutes`
 
-- [ ] **Step 3.1.1: Write the test**
+Rationale: the test in Step 3.2 needs a non-network LLM client. `fanoutRoutes` (`src/api/routes/fanout.ts:79`) already accepts a `clientFactory?: () => LLMClient` for the same reason — this step propagates the pattern to `runRoutes` rather than introducing a new one.
 
-Create `test/api/routes/run-snapshot.test.ts`. Mirror the structure used by `test/api/results.test.ts` (already uses `mkdtempSync` + `gauntletPath` to construct a minimal project root):
+- [ ] **Step 3.1.1: Widen the signature**
+
+In `src/api/routes/run.ts`, change the `runRoutes` signature to accept an optional client factory and use it if provided:
+
+```ts
+export function runRoutes(
+  config: AppConfig,
+  broadcaster?: RunBroadcaster,
+  errorLog?: ErrorLog,
+  registry?: ActiveRunRegistry,
+  clientFactory?: (model: string) => LLMClient,
+) {
+  const router = new Hono();
+
+  router.post("/:id", async (c) => {
+    // ...existing body up through mergeRunConfig / model gate...
+
+    const client = clientFactory
+      ? clientFactory(effective.model)
+      : createClient(effective.model);
+    // ...rest of handler unchanged...
+  });
+
+  return router;
+}
+```
+
+(Only the signature and the two `client` lines change; the rest of the handler body is modified in Step 3.2. `LLMClient` is already imported at the top of the file.)
+
+- [ ] **Step 3.1.2: Run the existing suite — expect UNCHANGED**
+
+```
+bun test test/api
+```
+
+Expected: all still green. Adding an optional parameter is backward-compatible; production call sites don't pass it and continue to go through `createClient`.
+
+### Step 3.2: Write failing route integration test
+
+- [ ] **Step 3.2.1: Write the test**
+
+Create `test/api/routes/run-snapshot.test.ts`:
 
 ```ts
 import { describe, test, expect } from "bun:test";
@@ -518,8 +478,10 @@ import type { AppConfig } from "../../../src/config";
 import type { LLMClient } from "../../../src/models/provider";
 
 function stubClient(): LLMClient {
-  // Minimal client that terminates the agent loop immediately.
-  // Matches the existing test-client pattern used elsewhere in test/api/.
+  // Non-network client. The detached executeRun may call chat() — return
+  // an end_turn so the background task terminates quickly. The test's
+  // assertion is on disk state at handler return, not on the
+  // background agent loop, so this body is essentially irrelevant.
   return {
     async chat() {
       return {
@@ -532,7 +494,7 @@ function stubClient(): LLMClient {
 }
 
 describe("POST /run/:id — snapshot", () => {
-  test("writes <runDir>/inputs/{story.md,context/} before executeRun", async () => {
+  test("writes <runDir>/inputs/{story.md,context/} synchronously in the handler", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "gauntlet-api-snap-"));
     try {
       const storiesDir = gauntletPath(projectRoot, "stories");
@@ -555,22 +517,22 @@ describe("POST /run/:id — snapshot", () => {
       } as unknown as AppConfig;
 
       const app = new Hono();
-      app.route("/run", runRoutes(config, undefined, undefined, undefined));
-      // Override client factory. If runRoutes doesn't accept an injection
-      // point today, add a minimal factory parameter mirroring what
-      // fanoutRoutes already does (src/api/routes/fanout.ts). See note below.
+      app.route(
+        "/run",
+        runRoutes(config, undefined, undefined, undefined, () => stubClient()),
+      );
 
       const res = await app.request("/run/snap-story", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ target: "cli:echo" }),
+        body: JSON.stringify({ target: "cli:echo", adapter: "cli" }),
       });
       expect(res.status).toBe(202);
       const body = (await res.json()) as { runId: string };
 
-      // Snapshot is synchronous in the request handler (before the
-      // detached executeRun), so it MUST be present as soon as the
-      // response is returned.
+      // Snapshot is synchronous in the request handler — so it MUST be
+      // present as soon as the 202 is returned, regardless of what the
+      // detached executeRun goes on to do (including failing).
       const runDir = gauntletPath(projectRoot, "results", body.runId);
       expect(existsSync(join(runDir, "inputs", "story.md"))).toBe(true);
       expect(readFileSync(join(runDir, "inputs", "story.md"), "utf-8")).toBe(storyBody);
@@ -583,44 +545,41 @@ describe("POST /run/:id — snapshot", () => {
 });
 ```
 
-**Client injection note:** `runRoutes` uses `createClient(effective.model)` internally (line 79). If existing API tests already have a pattern for substituting a non-network client (see `test/api/` for reference), follow that pattern. If not, accept a `clientFactory?: (model: string) => LLMClient` parameter on `runRoutes` identical in shape to what `fanoutRoutes` already accepts, and thread it through. Do not add a network mock library.
-
-- [ ] **Step 3.1.2: Run the test — expect FAIL**
+- [ ] **Step 3.2.2: Run the test — expect FAIL**
 
 ```
 bun test test/api/routes/run-snapshot.test.ts
 ```
 
-Expected: FAIL — `inputs/story.md` not found.
+Expected: FAIL — `inputs/story.md` not found. (Snapshot is not wired in yet.)
 
-### Step 3.2: Wire the snapshot into `POST /run/:id`
+### Step 3.3: Wire the snapshot into `POST /run/:id`
 
-- [ ] **Step 3.2.1: Modify `src/api/routes/run.ts`**
+- [ ] **Step 3.3.1: Modify `src/api/routes/run.ts`**
 
-Add imports at the top of the file:
+Add the import at the top of the file:
 
 ```ts
 import { snapshotRunInputs } from "../../runs/snapshot";
 ```
 
-Rewrite the per-request block in the `runRoutes` handler so that, between the `runId` creation and `createAdapter`, the snapshot runs and `contextRoot` is re-rooted. Three concrete changes:
+Three surgical edits to the handler (all other lines unchanged):
 
-1. **Remove** the outer-scope `const contextRoot = gauntletPath(config.projectRoot, "context");` (currently line 54). It moves into the handler so each request points at its own snapshotted root.
+1. **Remove** the outer-scope `const contextRoot = gauntletPath(config.projectRoot, "context");` (currently line 54). It moves into the handler below, scoped per-request.
 
-2. **Insert** the snapshot + root-swap immediately after the `makeRunId` / `outDir` lines (currently lines 84–85):
+2. **Insert** the snapshot + root-swap immediately after the `makeRunId` / `outDir` lines (currently lines 84–85). Do NOT re-declare `logger` here — `logger` already exists at line 88 and stays where it is. The only new lines are the snapshot call and the new local `contextRoot`:
 
 ```ts
     const runId = makeRunId(entry.card.id);
     const outDir = gauntletPath(config.projectRoot, "results", runId);
     // Snapshot story + context into <outDir>/inputs/ synchronously,
-    // before the adapter, the tree renderer, or the detached
-    // executeRun touch anything. Downstream consumers then see the
-    // snapshotted paths. The story path is composed from the stories
-    // dir + the filename findCard already resolved for us.
-    const storiesDir = gauntletPath(config.projectRoot, "stories");
+    // before the logger, the adapter, the tree renderer, or the
+    // detached executeRun touch anything. Downstream consumers then
+    // see the snapshotted paths. The story path is composed from the
+    // stories dir + the filename findCard already resolved for us.
     snapshotRunInputs({
       runDir: outDir,
-      storyPath: join(storiesDir, entry.filename),
+      storyPath: join(gauntletPath(config.projectRoot, "stories"), entry.filename),
       contextRoot: gauntletPath(config.projectRoot, "context"),
     });
     const contextRoot = join(outDir, "inputs", "context");
@@ -631,7 +590,9 @@ Rewrite the per-request block in the `runRoutes` handler so that, between the `r
 
 3. **Confirm** `join` is already imported at the top of the file (line 2) — it is.
 
-- [ ] **Step 3.2.2: Run the snapshot test — expect PASS**
+Double-check after the edit: `grep -n "const logger" src/api/routes/run.ts` should return **exactly one** match inside the `POST /:id` handler. Likewise `grep -n "const contextRoot" src/api/routes/run.ts` should return exactly one match, inside the handler (the outer-scope version from line 54 is gone).
+
+- [ ] **Step 3.3.2: Run the snapshot test — expect PASS**
 
 ```
 bun test test/api/routes/run-snapshot.test.ts
@@ -639,7 +600,7 @@ bun test test/api/routes/run-snapshot.test.ts
 
 Expected: 1 pass.
 
-- [ ] **Step 3.2.3: Run the full API test suite — expect UNCHANGED**
+- [ ] **Step 3.3.3: Run the full API test suite — expect UNCHANGED**
 
 ```
 bun test test/api
@@ -647,9 +608,9 @@ bun test test/api
 
 Expected: all still green.
 
-### Step 3.3: Commit
+### Step 3.4: Commit
 
-- [ ] **Step 3.3.1: Commit**
+- [ ] **Step 3.4.1: Commit**
 
 ```
 git add src/api/routes/run.ts test/api/routes/run-snapshot.test.ts
@@ -658,7 +619,9 @@ feat(api): snapshot run inputs in POST /run/:id before dispatch
 
 The snapshot runs synchronously in the handler — available before 202
 returns — and contextRoot is swapped to <runDir>/inputs/context/ for
-every downstream consumer.
+every downstream consumer. runRoutes also gains an optional
+clientFactory parameter matching the pattern already in fanoutRoutes,
+so route-level integration tests can run without a real LLM client.
 EOF
 )"
 ```
@@ -713,18 +676,19 @@ Skip if nothing changed.
 | Spec section | Task |
 |---|---|
 | Layout (`inputs/story.md`, `inputs/context/`) | Task 1 |
-| Snapshot timing (before adapter) | Tasks 2, 3 |
+| Snapshot timing (before adapter) | Tasks 2.1, 3.3 |
 | Byte-for-byte story copy | Task 1.1 (`cpSync` of the resolved story path) |
 | Recursive context copy | Task 1.2 |
 | Missing/empty context → empty `inputs/context/` | Tasks 1.3, 1.4 |
-| Root-swap contract (read-tool, passkey, tree renderer) | Tasks 2.2, 3.3 |
+| Permission errors bubble up (spec §"Failure handling") | Task 1.1.3 (`sourceIsPopulated` narrows catch to ENOENT/ENOTDIR) |
+| Root-swap contract (read-tool, passkey, tree renderer) | Tasks 2.1, 3.3 |
 | Story injection from snapshot | Implicit — the agent consumes the parsed `StoryCard` already in memory; `story.md` on disk is for history/resumed chat, not re-read during the run. Matches the design. |
 | Resumed-chat forward compatibility | No task — spec explicitly says this is out of scope; the snapshot layout sets up the future change. |
-| Testing: edit-during-run | Task 2.1 (second case). |
+| Testing: edit-during-run | Covered by Task 1 unit tests (snapshot is pure, synchronous, and has no live-file dependency after return). The Kepler review confirmed the invariant holds in the CLI call path. |
 
-**Type consistency:** `snapshotRunInputs` signature is identical everywhere it's referenced (`{ runDir, storyPath, contextRoot }`). No other type changes.
+**Type consistency:** `snapshotRunInputs` signature is identical everywhere it's referenced (`{ runDir, storyPath, contextRoot }`). `runRoutes` gains one optional parameter (`clientFactory`) mirroring `fanoutRoutes`'s existing shape.
 
-**Placeholder scan:** No TBDs, no "handle edge cases", no references to undefined types. One "Note" (Task 3.2) points at adapting to whatever existing client-injection pattern the project uses — this is an intentional deference to existing convention, not a placeholder.
+**Placeholder scan:** No TBDs, no "handle edge cases", no references to undefined types. No hedging comments ("if X doesn't exist, maybe add Y") — `clientFactory` is now an explicit numbered step rather than a hand-wave.
 
 ---
 
