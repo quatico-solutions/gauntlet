@@ -157,6 +157,14 @@ export const api = {
         .split("/")
         .map(encodeURIComponent)
         .join("/")}`,
+    // Fetch the text contents of a file listed in a run's manifest.
+    // Used by the transcript view (run.jsonl) and the artifact drawer.
+    fileText: async (runId: string, relPath: string): Promise<string> => {
+      const res = await fetch(api.results.fileUrl(runId, relPath));
+      if (res.status === 404) throw new Error("not-found");
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return res.text();
+    },
   },
   fanout: {
     // `generate` takes a cardId — it fans out a card into related variations
