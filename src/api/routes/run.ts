@@ -205,6 +205,16 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
     });
   }
 
+  // Independent observer channel carrying the full structured jsonl
+  // entry for the transcript WS consumers (spec §6.3). Legacy progress
+  // path above is unchanged; these fire side-by-side.
+  let unsubscribeEventObserver: (() => void) | undefined;
+  if (broadcaster) {
+    unsubscribeEventObserver = logger.addEventObserver((event) => {
+      broadcaster.send(runId, { type: "event", event });
+    });
+  }
+
   let streamer: ScreencastStreamerType | undefined;
   let terminal: Record<string, unknown> | null = null;
 
@@ -247,6 +257,7 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
     terminal = { type: "error", message };
   } finally {
     unsubscribeObserver?.();
+    unsubscribeEventObserver?.();
     if (streamer) {
       try {
         await streamer.stop();

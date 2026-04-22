@@ -98,11 +98,13 @@ async function main() {
       const { ActiveRunRegistry } = await import("./api/active-runs");
       const { handleWsOpen } = await import("./api/ws-handlers");
       const { join } = await import("path");
+      const { gauntletPath } = await import("./paths");
 
       const config = await loadConfigOrExit(args.cli);
       await requireLlmCapableOrExit(config);
 
       const uiDir = join(import.meta.dir, "..", "ui", "dist");
+      const resultsRoot = gauntletPath(config.projectRoot, "results");
       const broadcaster = new RunBroadcaster();
       const registry = new ActiveRunRegistry();
       const app = createApp(config, uiDir, broadcaster, registry);
@@ -124,7 +126,7 @@ async function main() {
         websocket: {
           open(ws) {
             const runId = (ws.data as any).runId;
-            if (runId) handleWsOpen(registry, broadcaster, runId, ws as any);
+            if (runId) handleWsOpen(registry, broadcaster, runId, ws as any, resultsRoot);
           },
           close(ws) {
             const runId = (ws.data as any).runId;
