@@ -59,11 +59,19 @@ export class ScreencastStreamer {
       });
     });
 
+    // Defaults tuned for local dev: Gauntlet runs on the developer's
+    // machine, not over a network, so CPU-to-encode is the only cost of
+    // higher quality. JPEG quality 70 at 1280×720 (CDP's stock "streaming"
+    // setting) produced visible compression artifacts and downscaling
+    // blur in the LiveRun pane; 92 at 1920×1200 is effectively lossless
+    // and accommodates the 1440×900 default viewport without scaling.
+    // Revisit if Gauntlet ever runs against a remote Chrome where
+    // bandwidth matters.
     await chrome.sendCdpCommand(wsUrl, "Page.startScreencast", {
       format: "jpeg",
-      quality: options?.quality ?? 70,
-      maxWidth: options?.maxWidth ?? 1280,
-      maxHeight: options?.maxHeight ?? 720,
+      quality: options?.quality ?? 92,
+      maxWidth: options?.maxWidth ?? 1920,
+      maxHeight: options?.maxHeight ?? 1200,
       everyNthFrame: 2,
     });
   }
