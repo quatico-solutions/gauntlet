@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isSafePath } from "../../paths";
 import { getMimeType } from "../mime-types";
+import type { ActiveRunRegistry } from "../active-runs";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -19,7 +20,7 @@ function parseIntParam(raw: string | undefined, fallback: number, min: number, m
   return Math.max(min, Math.min(max, n));
 }
 
-export function resultRoutes(resultsDir: string) {
+export function resultRoutes(resultsDir: string, registry?: ActiveRunRegistry) {
   const router = new Hono();
 
   // Paginated list. Response shape:
@@ -103,37 +104,46 @@ export function resultRoutes(resultsDir: string) {
     }
   });
 
-  // Manifest-gated file route: serves a file from a run directory only if
-  // the run's result.json lists it. The manifest is authoritative; arbitrary
-  // files on disk are not accessible through the API. See docs/format.md.
+  // File route: serves a file from a run directory. Path traversal outside
+  // the run dir is always blocked.
+  //
+  // Gating rules:
+  //   - If the run is currently active (ActiveRunRegistry), we skip the
+  //     manifest check and serve any file that exists under the run dir.
+  //     result.json hasn't been written yet, but screenshots + artifacts +
+  //     run.jsonl are being produced live — the transcript view (and
+  //     anything else watching a run) needs them.
+  //   - If the run is complete, the manifest is authoritative: the file
+  //     must be listed in result.json. See docs/format.md.
   router.get("/:runId/file/:path{.+}", (c) => {
     const runId = c.req.param("runId");
     const relPath = c.req.param("path");
     const runDir = join(resultsDir, runId);
-    const manifestPath = join(runDir, "result.json");
 
     if (!isSafePath(resultsDir, runDir)) {
       return c.json({ error: "invalid path" }, 400);
     }
 
-    if (!existsSync(manifestPath)) {
-      return c.json({ error: "run not found" }, 404);
-    }
-
-    let manifest: unknown;
-    try {
-      manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-    } catch {
-      return c.json({ error: "malformed result" }, 500);
-    }
-
-    if (!collectManifestPaths(manifest).has(relPath)) {
-      return c.json({ error: "not in manifest" }, 404);
-    }
-
     const filePath = join(runDir, relPath);
     if (!isSafePath(runDir, filePath)) {
       return c.json({ error: "invalid path" }, 400);
+    }
+
+    const live = registry?.has(runId) ?? false;
+    if (!live) {
+      const manifestPath = join(runDir, "result.json");
+      if (!existsSync(manifestPath)) {
+        return c.json({ error: "run not found" }, 404);
+      }
+      let manifest: unknown;
+      try {
+        manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+      } catch {
+        return c.json({ error: "malformed result" }, 500);
+      }
+      if (!collectManifestPaths(manifest).has(relPath)) {
+        return c.json({ error: "not in manifest" }, 404);
+      }
     }
 
     if (!existsSync(filePath)) {

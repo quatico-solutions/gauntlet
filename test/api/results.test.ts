@@ -2,12 +2,16 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { createApp } from "../../src/api/server";
 import { loadConfig } from "../../src/config";
 import { gauntletPath } from "../../src/paths";
+import { ActiveRunRegistry } from "../../src/api/active-runs";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
 const makeApp = (projectRoot: string, uiDir?: string) =>
   createApp(loadConfig({ projectRoot }, {} as NodeJS.ProcessEnv), uiDir);
+
+const makeAppWithRegistry = (projectRoot: string, registry: ActiveRunRegistry) =>
+  createApp(loadConfig({ projectRoot }, {} as NodeJS.ProcessEnv), undefined, undefined, registry);
 
 describe("Results API", () => {
   let projectRoot: string;
@@ -207,6 +211,63 @@ describe("Results API", () => {
     const res = await app.request("/api/results/..%2F..%2Fetc");
     // Should either 400 (path rejected) or 404 (not found), never serve outside resultsDir
     expect([400, 404]).toContain(res.status);
+  });
+
+  test("GET /api/results/:runId/file/:path serves files from a live run without a manifest", async () => {
+    // A run that's in flight: no result.json yet, but screenshots and
+    // run.jsonl are being written. The file route should skip the
+    // manifest check when the run is in the active registry.
+    const liveDir = mkdtempSync(join(tmpdir(), "gauntlet-live-"));
+    mkdirSync(gauntletPath(liveDir, "stories"), { recursive: true });
+    const resultsDir = gauntletPath(liveDir, "results");
+    const runId = "live-001_20260422T000000Z_aaaa";
+    const runDir = join(resultsDir, runId);
+    mkdirSync(join(runDir, "screenshots"), { recursive: true });
+    writeFileSync(join(runDir, "screenshots", "001.png"), Buffer.from("fake-png"));
+    writeFileSync(join(runDir, "run.jsonl"), '{"type":"run_start"}\n');
+    // No result.json yet — run is still going.
+
+    const registry = new ActiveRunRegistry();
+    registry.register({
+      id: runId,
+      cardId: "live-001",
+      title: "live",
+      target: "http://localhost:3000",
+      model: "claude-sonnet-4-6",
+      startedAt: Date.now(),
+    });
+
+    const liveApp = makeAppWithRegistry(liveDir, registry);
+
+    const shot = await liveApp.request(`/api/results/${runId}/file/screenshots/001.png`);
+    expect(shot.status).toBe(200);
+    expect(shot.headers.get("content-type")).toContain("image/png");
+
+    const log = await liveApp.request(`/api/results/${runId}/file/run.jsonl`);
+    expect(log.status).toBe(200);
+
+    // Path traversal is still blocked even during a live run.
+    const traversal = await liveApp.request(`/api/results/${runId}/file/..%2F..%2Fetc`);
+    expect([400, 404]).toContain(traversal.status);
+
+    rmSync(liveDir, { recursive: true, force: true });
+  });
+
+  test("GET /api/results/:runId/file/:path still enforces manifest on completed runs", async () => {
+    // Existing test-001 has result.json with evidence.screenshots=[] — no
+    // screenshot files are listed. A request for a screenshot file should
+    // 404 even if it exists on disk (manifest is authoritative post-run).
+    const resultsDir = gauntletPath(projectRoot, "results");
+    mkdirSync(join(resultsDir, "test-001_20260401T100000Z_aaaa", "screenshots"), { recursive: true });
+    writeFileSync(
+      join(resultsDir, "test-001_20260401T100000Z_aaaa", "screenshots", "stray.png"),
+      Buffer.from("stray"),
+    );
+
+    const res = await app.request(
+      "/api/results/test-001_20260401T100000Z_aaaa/file/screenshots/stray.png",
+    );
+    expect(res.status).toBe(404);
   });
 
   test("GET /api/results returns empty page when no results dir", async () => {
