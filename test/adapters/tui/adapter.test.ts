@@ -87,6 +87,23 @@ describe.skipIf(!tmuxAvailable)("TUIAdapter", () => {
     }
   });
 
+  test("readScreen preserves ANSI escape sequences", async () => {
+    adapter = new TUIAdapter();
+    // Print a red "X" and a green "Y", then sleep so the session stays alive.
+    // \x1b[31m = red fg, \x1b[32m = green fg, \x1b[0m = reset.
+    await adapter.start(
+      "sh -c \"printf '\\033[31mX\\033[0m\\033[32mY\\033[0m\\n'; sleep 10\""
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    const screen = await adapter.readScreen();
+    // The characters come through.
+    expect(screen).toContain("X");
+    expect(screen).toContain("Y");
+    // The color escapes survive (-e flag on capture-pane).
+    expect(screen).toMatch(/\x1b\[[0-9;]*31/); // red fg somewhere
+    expect(screen).toMatch(/\x1b\[[0-9;]*32/); // green fg somewhere
+  });
+
   test("exposes tool definitions for the agent", () => {
     adapter = new TUIAdapter();
     const tools = adapter.toolDefinitions();

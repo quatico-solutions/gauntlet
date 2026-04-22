@@ -83,6 +83,7 @@ export class TUIAdapter implements Adapter {
       "-t",
       this.sessionName,
       "-p",
+      "-e",
     ]);
 
     if (result.exitCode !== 0) {
@@ -164,7 +165,7 @@ export class TUIAdapter implements Adapter {
       },
       {
         name: "read_screen",
-        description: "Read the current terminal screen contents. Returns the fully rendered screen (TUI escape codes are interpreted).",
+        description: "Read the current terminal screen. Returns the rendered text with ANSI escape sequences preserved so you can see colors and styles — e.g. `\\x1b[31mX\\x1b[0m` means character X is red. Parse these to verify color-dependent behavior. Cursor-movement and clear sequences are already resolved by the terminal.",
         parameters: {
           type: "object",
           properties: {},
