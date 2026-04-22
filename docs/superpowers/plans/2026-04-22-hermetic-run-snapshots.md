@@ -4,9 +4,9 @@
 
 **Goal:** Snapshot each run's story and context tree into `<runDir>/inputs/` at run start so history views and future post-hoc chat see the world as the agent saw it.
 
-**Architecture:** A new helper `snapshotRunInputs` writes `story.md` from the in-memory story bytes and recursively copies `.gauntlet/context/` into `<runDir>/inputs/context/`. The CLI and API run flows call it once, synchronously, before the adapter is constructed, then pass `<runDir>/inputs/context/` as the `contextRoot` to every downstream consumer (read-tool, passkey tool, context-tree renderer).
+**Architecture:** A new helper `snapshotRunInputs` copies the resolved story file to `<runDir>/inputs/story.md` and recursively copies `.gauntlet/context/` into `<runDir>/inputs/context/`. The CLI and API run flows call it once, synchronously, before the adapter is constructed, then pass `<runDir>/inputs/context/` as the `contextRoot` to every downstream consumer (read-tool, passkey tool, context-tree renderer).
 
-**Tech Stack:** TypeScript, Bun runtime, `bun:test`. Node `fs` sync APIs (`cpSync`, `mkdirSync`, `writeFileSync`).
+**Tech Stack:** TypeScript, Bun runtime, `bun:test`. Node `fs` sync APIs (`cpSync`, `mkdirSync`).
 
 **Spec reference:** `docs/superpowers/specs/2026-04-22-hermetic-run-snapshots-design.md`
 
@@ -15,12 +15,12 @@
 ## File Structure
 
 **New files:**
-- `src/runs/snapshot.ts` — exports `snapshotRunInputs({ runDir, storyContent, contextRoot })`. Pure I/O; no knowledge of story-card parsing, adapters, or agent internals.
+- `src/runs/snapshot.ts` — exports `snapshotRunInputs({ runDir, storyPath, contextRoot })`. Pure I/O; no knowledge of story-card parsing, adapters, or agent internals.
 - `test/runs/snapshot.test.ts` — unit tests for the helper (populated context, empty/missing context, byte-identity, directory structure).
 
 **Modified files:**
 - `src/cli/run.ts` — call `snapshotRunInputs` after `runId`/`outDir` are decided; swap `contextRoot` from `.gauntlet/context/` to `<outDir>/inputs/context/`.
-- `src/api/routes/run.ts` — same wiring in the `POST /run/:id` handler, with the story content re-read once through `findCard`'s returned path so the snapshot matches what the card was parsed from.
+- `src/api/routes/run.ts` — same wiring in the `POST /run/:id` handler; compose the absolute story path from `gauntletPath(projectRoot, "stories")` + `entry.filename`.
 - `test/cli/snapshot.test.ts` — new integration test invoking `run()` end-to-end and asserting the snapshot tree.
 - `test/api/routes/run-snapshot.test.ts` — new integration test POSTing to the route and asserting the snapshot tree.
 
@@ -35,7 +35,7 @@
 - Create: `src/runs/snapshot.ts`
 - Create: `test/runs/snapshot.test.ts`
 
-### Step 1.1: Write failing test — writes story.md with exact bytes
+### Step 1.1: Write failing test — copies the story file byte-for-byte
 
 - [ ] **Step 1.1.1: Write the test**
 
@@ -43,26 +43,28 @@ Create `test/runs/snapshot.test.ts`:
 
 ```ts
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { snapshotRunInputs } from "../../src/runs/snapshot";
 
 describe("snapshotRunInputs", () => {
-  test("writes story.md with exact bytes", () => {
+  test("copies the story file byte-for-byte", () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-snap-"));
     try {
       const runDir = join(tmp, "run");
       mkdirSync(runDir);
       const contextRoot = join(tmp, "ctx");
       mkdirSync(contextRoot);
+      const storyPath = join(tmp, "story.md");
       const storyContent = "---\nid: story-1\n---\n# Title\n\nBody with emoji 🧪.\n";
+      writeFileSync(storyPath, storyContent);
 
-      snapshotRunInputs({ runDir, storyContent, contextRoot });
+      snapshotRunInputs({ runDir, storyPath, contextRoot });
 
-      const storyPath = join(runDir, "inputs", "story.md");
-      expect(existsSync(storyPath)).toBe(true);
-      expect(readFileSync(storyPath, "utf-8")).toBe(storyContent);
+      const snap = join(runDir, "inputs", "story.md");
+      expect(existsSync(snap)).toBe(true);
+      expect(readFileSync(snap, "utf-8")).toBe(storyContent);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -83,14 +85,14 @@ Expected: error — `Cannot find module '../../src/runs/snapshot'`.
 Create `src/runs/snapshot.ts`:
 
 ```ts
-import { mkdirSync, writeFileSync, cpSync, readdirSync, statSync } from "fs";
+import { mkdirSync, cpSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 
 export interface SnapshotInputs {
   /** Absolute path to the run output directory (`.gauntlet/results/<runId>`). */
   runDir: string;
-  /** Exact bytes of the resolved story file, as the caller already read them. */
-  storyContent: string;
+  /** Absolute path to the resolved story file. Copied to `<runDir>/inputs/story.md`. */
+  storyPath: string;
   /**
    * Absolute path to the *source* context root (`.gauntlet/context/`). Copied
    * recursively to `<runDir>/inputs/context/`. If the source is missing or
@@ -104,14 +106,13 @@ export interface SnapshotInputs {
  * Snapshot a run's inputs into `<runDir>/inputs/` so history views and future
  * resumed-chat sessions see the world as the agent saw it at run start.
  *
- * Synchronous and idempotent within a fresh run directory. Callers run this
- * exactly once, before adapter construction.
+ * Synchronous. Callers run this exactly once, before adapter construction.
  */
 export function snapshotRunInputs(opts: SnapshotInputs): void {
   const inputsDir = join(opts.runDir, "inputs");
   mkdirSync(inputsDir, { recursive: true });
 
-  writeFileSync(join(inputsDir, "story.md"), opts.storyContent, "utf-8");
+  cpSync(opts.storyPath, join(inputsDir, "story.md"));
 
   const destContext = join(inputsDir, "context");
   mkdirSync(destContext, { recursive: true });
@@ -151,6 +152,8 @@ Append inside the same `describe` block in `test/runs/snapshot.test.ts`:
     try {
       const runDir = join(tmp, "run");
       mkdirSync(runDir);
+      const storyPath = join(tmp, "story.md");
+      writeFileSync(storyPath, "story");
       const contextRoot = join(tmp, "ctx");
       mkdirSync(join(contextRoot, "matt"), { recursive: true });
       writeFileSync(join(contextRoot, "matt", "identity.md"), "name: matt");
@@ -161,7 +164,7 @@ Append inside the same `describe` block in `test/runs/snapshot.test.ts`:
       mkdirSync(join(contextRoot, "alice"), { recursive: true });
       writeFileSync(join(contextRoot, "alice", "identity.md"), "name: alice");
 
-      snapshotRunInputs({ runDir, storyContent: "story", contextRoot });
+      snapshotRunInputs({ runDir, storyPath, contextRoot });
 
       const snapCtx = join(runDir, "inputs", "context");
       expect(readFileSync(join(snapCtx, "matt", "identity.md"), "utf-8")).toBe("name: matt");
@@ -194,10 +197,12 @@ Append inside the same `describe` block:
     try {
       const runDir = join(tmp, "run");
       mkdirSync(runDir);
+      const storyPath = join(tmp, "story.md");
+      writeFileSync(storyPath, "story");
       const contextRoot = join(tmp, "ctx");
       mkdirSync(contextRoot);
 
-      snapshotRunInputs({ runDir, storyContent: "story", contextRoot });
+      snapshotRunInputs({ runDir, storyPath, contextRoot });
 
       const snapCtx = join(runDir, "inputs", "context");
       expect(existsSync(snapCtx)).toBe(true);
@@ -208,7 +213,7 @@ Append inside the same `describe` block:
   });
 ```
 
-(Add `readdirSync` to the top-of-file `fs` import.)
+(`readdirSync` is already in the top-of-file `fs` import from Step 1.1.)
 
 - [ ] **Step 1.3.2: Run — expect PASS**
 
@@ -228,9 +233,11 @@ Expected: 3 pass.
     try {
       const runDir = join(tmp, "run");
       mkdirSync(runDir);
+      const storyPath = join(tmp, "story.md");
+      writeFileSync(storyPath, "story");
       const contextRoot = join(tmp, "does-not-exist");
 
-      snapshotRunInputs({ runDir, storyContent: "story", contextRoot });
+      snapshotRunInputs({ runDir, storyPath, contextRoot });
 
       const snapCtx = join(runDir, "inputs", "context");
       expect(existsSync(snapCtx)).toBe(true);
@@ -254,10 +261,12 @@ Expected: 4 pass.
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-snap-"));
     try {
       const runDir = join(tmp, "not-yet", "run-xyz");
+      const storyPath = join(tmp, "story.md");
+      writeFileSync(storyPath, "story");
       const contextRoot = join(tmp, "ctx");
       mkdirSync(contextRoot);
 
-      snapshotRunInputs({ runDir, storyContent: "story", contextRoot });
+      snapshotRunInputs({ runDir, storyPath, contextRoot });
 
       expect(existsSync(join(runDir, "inputs", "story.md"))).toBe(true);
       expect(existsSync(join(runDir, "inputs", "context"))).toBe(true);
@@ -432,7 +441,7 @@ Replace lines 28–41 (from `const content = readFileSync(...)` through `const c
   // a frozen view even if the source files change during the run.
   snapshotRunInputs({
     runDir: outDir,
-    storyContent: content,
+    storyPath: scenarioPath,
     contextRoot: gauntletPath(config.projectRoot, "context"),
   });
   const contextRoot = join(outDir, "inputs", "context");
@@ -486,59 +495,14 @@ EOF
 ## Task 3: Wire snapshot into the API run flow
 
 **Files:**
-- Modify: `src/api/routes/run.ts` — the `POST /:id` handler and its direct helpers
-- Modify: `src/cards/store.ts` — `findCard` currently returns `{ card, filename }`; the route needs the absolute path (or the raw bytes) to snapshot faithfully.
+- Modify: `src/api/routes/run.ts` — the `POST /:id` handler
 - Create: `test/api/routes/run-snapshot.test.ts`
 
-### Step 3.1: Expose the raw story content through findCard
+The route already has `entry.filename` from `findCard`, which is the story filename relative to the stories dir. Composing `join(storiesDir, entry.filename)` gives an absolute path that `cpSync` can consume — no changes to `CardEntry` or `findCard` needed.
 
-The spec requires the snapshot to be byte-identical to what the card was parsed from. `findCard` already reads the bytes but throws them away. The minimal change is to also return them.
+### Step 3.1: Write failing route integration test
 
-- [ ] **Step 3.1.1: Update `CardEntry` and both return sites**
-
-In `src/cards/store.ts`, replace the `CardEntry` interface and the two return sites:
-
-```ts
-export interface CardEntry {
-  card: StoryCard;
-  filename: string;
-  /** Raw file bytes, as `parseStoryCard` was given them. */
-  raw: string;
-}
-```
-
-In the direct-hit branch (around line 32–41):
-
-```ts
-  if (existsSync(directPath)) {
-    const content = readFileSync(directPath, "utf-8");
-    const card = parseStoryCard(content);
-    if (card.id === id) {
-      return { card, filename: `${id}.md`, raw: content };
-    }
-  }
-```
-
-In the scan branch (`loadAllCards`, around line 64–70):
-
-```ts
-    try {
-      const content = readFileSync(join(storiesDir, filename), "utf-8");
-      entries.push({ card: parseStoryCard(content), filename, raw: content });
-    } catch (err) {
-```
-
-- [ ] **Step 3.1.2: Run the cards tests — expect PASS**
-
-```
-bun test test/cards
-```
-
-Expected: green. (Existing tests key off `card.*` and `filename`; adding a field is additive.)
-
-### Step 3.2: Write failing route integration test
-
-- [ ] **Step 3.2.1: Write the test**
+- [ ] **Step 3.1.1: Write the test**
 
 Create `test/api/routes/run-snapshot.test.ts`. Mirror the structure used by `test/api/results.test.ts` (already uses `mkdtempSync` + `gauntletPath` to construct a minimal project root):
 
@@ -621,7 +585,7 @@ describe("POST /run/:id — snapshot", () => {
 
 **Client injection note:** `runRoutes` uses `createClient(effective.model)` internally (line 79). If existing API tests already have a pattern for substituting a non-network client (see `test/api/` for reference), follow that pattern. If not, accept a `clientFactory?: (model: string) => LLMClient` parameter on `runRoutes` identical in shape to what `fanoutRoutes` already accepts, and thread it through. Do not add a network mock library.
 
-- [ ] **Step 3.2.2: Run the test — expect FAIL**
+- [ ] **Step 3.1.2: Run the test — expect FAIL**
 
 ```
 bun test test/api/routes/run-snapshot.test.ts
@@ -629,9 +593,9 @@ bun test test/api/routes/run-snapshot.test.ts
 
 Expected: FAIL — `inputs/story.md` not found.
 
-### Step 3.3: Wire the snapshot into `POST /run/:id`
+### Step 3.2: Wire the snapshot into `POST /run/:id`
 
-- [ ] **Step 3.3.1: Modify `src/api/routes/run.ts`**
+- [ ] **Step 3.2.1: Modify `src/api/routes/run.ts`**
 
 Add imports at the top of the file:
 
@@ -639,7 +603,11 @@ Add imports at the top of the file:
 import { snapshotRunInputs } from "../../runs/snapshot";
 ```
 
-Replace the `runRoutes` handler body (lines 56–146) so that, between the `runId` creation and `createAdapter`, the snapshot runs and `contextRoot` is swapped:
+Rewrite the per-request block in the `runRoutes` handler so that, between the `runId` creation and `createAdapter`, the snapshot runs and `contextRoot` is re-rooted. Three concrete changes:
+
+1. **Remove** the outer-scope `const contextRoot = gauntletPath(config.projectRoot, "context");` (currently line 54). It moves into the handler so each request points at its own snapshotted root.
+
+2. **Insert** the snapshot + root-swap immediately after the `makeRunId` / `outDir` lines (currently lines 84–85):
 
 ```ts
     const runId = makeRunId(entry.card.id);
@@ -647,10 +615,12 @@ Replace the `runRoutes` handler body (lines 56–146) so that, between the `runI
     // Snapshot story + context into <outDir>/inputs/ synchronously,
     // before the adapter, the tree renderer, or the detached
     // executeRun touch anything. Downstream consumers then see the
-    // snapshotted paths.
+    // snapshotted paths. The story path is composed from the stories
+    // dir + the filename findCard already resolved for us.
+    const storiesDir = gauntletPath(config.projectRoot, "stories");
     snapshotRunInputs({
       runDir: outDir,
-      storyContent: entry.raw,
+      storyPath: join(storiesDir, entry.filename),
       contextRoot: gauntletPath(config.projectRoot, "context"),
     });
     const contextRoot = join(outDir, "inputs", "context");
@@ -659,11 +629,9 @@ Replace the `runRoutes` handler body (lines 56–146) so that, between the `runI
     const logger = new EvidenceLogger(outDir);
 ```
 
-Remove the existing `const contextRoot = gauntletPath(config.projectRoot, "context");` on line 54 (lifted out of the outer scope into the per-request handler above).
+3. **Confirm** `join` is already imported at the top of the file (line 2) — it is.
 
-Verify `join` is already imported at the top of the file (line 2).
-
-- [ ] **Step 3.3.2: Run the snapshot test — expect PASS**
+- [ ] **Step 3.2.2: Run the snapshot test — expect PASS**
 
 ```
 bun test test/api/routes/run-snapshot.test.ts
@@ -671,7 +639,7 @@ bun test test/api/routes/run-snapshot.test.ts
 
 Expected: 1 pass.
 
-- [ ] **Step 3.3.3: Run the full API test suite — expect UNCHANGED**
+- [ ] **Step 3.2.3: Run the full API test suite — expect UNCHANGED**
 
 ```
 bun test test/api
@@ -679,18 +647,16 @@ bun test test/api
 
 Expected: all still green.
 
-### Step 3.4: Commit
+### Step 3.3: Commit
 
-- [ ] **Step 3.4.1: Commit**
+- [ ] **Step 3.3.1: Commit**
 
 ```
-git add src/cards/store.ts src/api/routes/run.ts test/api/routes/run-snapshot.test.ts
+git add src/api/routes/run.ts test/api/routes/run-snapshot.test.ts
 git commit -m "$(cat <<'EOF'
 feat(api): snapshot run inputs in POST /run/:id before dispatch
 
-findCard now returns the raw story bytes alongside the parsed card, so
-the snapshot is byte-identical to what parseStoryCard was given. The
-snapshot runs synchronously in the handler — available before 202
+The snapshot runs synchronously in the handler — available before 202
 returns — and contextRoot is swapped to <runDir>/inputs/context/ for
 every downstream consumer.
 EOF
@@ -748,7 +714,7 @@ Skip if nothing changed.
 |---|---|
 | Layout (`inputs/story.md`, `inputs/context/`) | Task 1 |
 | Snapshot timing (before adapter) | Tasks 2, 3 |
-| Byte-for-byte story copy | Task 1.1, Task 3.1 (raw bytes through findCard) |
+| Byte-for-byte story copy | Task 1.1 (`cpSync` of the resolved story path) |
 | Recursive context copy | Task 1.2 |
 | Missing/empty context → empty `inputs/context/` | Tasks 1.3, 1.4 |
 | Root-swap contract (read-tool, passkey, tree renderer) | Tasks 2.2, 3.3 |
@@ -756,7 +722,7 @@ Skip if nothing changed.
 | Resumed-chat forward compatibility | No task — spec explicitly says this is out of scope; the snapshot layout sets up the future change. |
 | Testing: edit-during-run | Task 2.1 (second case). |
 
-**Type consistency:** `snapshotRunInputs` signature is identical everywhere it's referenced. `CardEntry.raw` is the only new field; both `findCard` return sites and the new API test reference it with the same name.
+**Type consistency:** `snapshotRunInputs` signature is identical everywhere it's referenced (`{ runDir, storyPath, contextRoot }`). No other type changes.
 
 **Placeholder scan:** No TBDs, no "handle edge cases", no references to undefined types. One "Note" (Task 3.2) points at adapting to whatever existing client-injection pattern the project uses — this is an intentional deference to existing convention, not a placeholder.
 
