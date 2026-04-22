@@ -6,6 +6,7 @@ import { writeResultFiles } from "../evidence/writer";
 import { runAgent } from "../agent/agent";
 import { createClient, resolveProvider } from "../models/resolve";
 import { CLIAdapter } from "../adapters/cli/adapter";
+import { snapshotViewport } from "../adapters/adapter";
 import { renderContextTree } from "../context/tree";
 import { makeRunId } from "../util/id";
 import { gauntletPath } from "../paths";
@@ -98,7 +99,7 @@ export async function run(opts: RunCommandOptions): Promise<void> {
     adapter: adapterType,
     chrome: chromeOptForSnapshot ? `${chromeOptForSnapshot.host}:${chromeOptForSnapshot.port}` : undefined,
     turns: config.defaultTurns,
-    viewport: config.defaultViewport,
+    viewport: snapshotViewport(adapter),
   };
 
   try {

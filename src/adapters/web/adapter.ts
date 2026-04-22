@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger, BrowserEventCategory } from "../../evidence/logger";
-import type { ChromeEndpoint, Viewport } from "../../config";
+import { DEFAULT_VIEWPORT, type ChromeEndpoint, type Viewport } from "../../config";
 import { buildReadTool, type ReadTool } from "../../context/read-tool";
 import {
   buildInstallPasskeyTool,
@@ -167,6 +167,13 @@ export class WebAdapter implements Adapter {
 
   describeTarget(target: string): string {
     return `The application is available at: ${target}`;
+  }
+
+  defaultViewport(): Viewport {
+    // Reflect the viewport this instance is actually using: whatever
+    // the constructor was handed, or the documented fallback when none
+    // was supplied.
+    return this.viewport ?? DEFAULT_VIEWPORT;
   }
 
   async close(): Promise<void> {

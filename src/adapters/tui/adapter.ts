@@ -3,6 +3,14 @@ import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
 import { buildReadTool, type ReadTool } from "../../context/read-tool";
 import { validateToolArgs } from "../../agent/validators";
+import type { Viewport } from "../../config";
+
+/**
+ * tmux pane dimensions in character cells. Hardcoded for now — resize
+ * support lands when we have a reason to need it. `defaultViewport()`
+ * reports these in the run snapshot.
+ */
+const TUI_GRID: Viewport = { width: 120, height: 40 };
 
 const KEY_MAP: Record<string, string> = {
   Enter: "Enter",
@@ -64,9 +72,9 @@ export class TUIAdapter implements Adapter {
       "-s",
       id,
       "-x",
-      "120",
+      String(TUI_GRID.width),
       "-y",
-      "40",
+      String(TUI_GRID.height),
       command,
     ]);
 
@@ -134,6 +142,10 @@ export class TUIAdapter implements Adapter {
       `line was: ${target}. Keystrokes you send go to the running program — ` +
       `do not retype the command.`
     );
+  }
+
+  defaultViewport(): Viewport {
+    return TUI_GRID;
   }
 
   async close(): Promise<void> {

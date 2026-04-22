@@ -13,7 +13,11 @@ export interface RunConfigSnapshot {
   /** `host:port`, omitted when the adapter auto-launched Chrome. */
   chrome?: string;
   turns: number;
-  /** CSS-pixel viewport the browsing tab was pinned to. */
+  /**
+   * Viewport this run actually used, reported by the adapter. Units are
+   * adapter-dependent: CSS pixels for web, character cells for tui.
+   * Omitted when the adapter has no rendering surface (cli).
+   */
   viewport?: { width: number; height: number };
 }
 

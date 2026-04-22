@@ -10,7 +10,7 @@ import { makeRunId } from "../../util/id";
 import { gauntletPath } from "../../paths";
 import { snapshotRunInputs } from "../../runs/snapshot";
 import { mergeRunConfig, validateRunBody, type AppConfig, type ChromeEndpoint, type Viewport } from "../../config";
-import type { Adapter } from "../../adapters/adapter";
+import { snapshotViewport, type Adapter } from "../../adapters/adapter";
 import type { RunBroadcaster } from "../ws";
 import type { ActiveRunRegistry } from "../active-runs";
 import type { ScreencastStreamer as ScreencastStreamerType } from "../../streaming/screencast";
@@ -111,7 +111,7 @@ export function runRoutes(
       adapter: effective.adapter,
       chrome: effective.chrome ? `${effective.chrome.host}:${effective.chrome.port}` : undefined,
       turns: effective.turns,
-      viewport: effective.viewport,
+      viewport: snapshotViewport(adapter),
     };
     // Render the tree **once per run** — the immutability invariant
     // (spec §4.2) forbids re-rendering during the run.

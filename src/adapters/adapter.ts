@@ -1,5 +1,6 @@
 import type { ToolDefinition, ToolResult } from "../models/provider";
 import type { EvidenceLogger } from "../evidence/logger";
+import type { Viewport } from "../config";
 
 export const ADAPTER_TYPES = ["web", "cli", "tui"] as const;
 export type AdapterType = typeof ADAPTER_TYPES[number];
@@ -27,4 +28,26 @@ export interface Adapter {
    * handle the empty-target case.
    */
   describeTarget(target: string): string;
+  /**
+   * The adapter's native rendering surface. Web returns CSS pixels
+   * (e.g. 1440×900); TUI returns character cells (e.g. 120×40). CLI has
+   * no rendering surface and returns null. The snapshot recorded in
+   * result.json uses this when the user did not explicitly request a
+   * viewport — keeping the config honest per-adapter instead of the
+   * old implicit assumption that viewport always means web pixels.
+   * Units are adapter-dependent; read alongside `adapter` to interpret.
+   */
+  defaultViewport(): Viewport | null;
+}
+
+/**
+ * Compute the viewport that should land in the run snapshot. We ask the
+ * adapter what it is actually using: web returns its constructed pixel
+ * viewport (user-supplied or documented default), tui returns its tmux
+ * grid, cli returns null. A null adapter viewport yields `undefined`,
+ * matching the optional field shape in RunConfigSnapshot — the field is
+ * simply omitted rather than recorded as a meaningless value.
+ */
+export function snapshotViewport(adapter: Adapter): Viewport | undefined {
+  return adapter.defaultViewport() ?? undefined;
 }

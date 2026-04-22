@@ -121,6 +121,7 @@ describe("Run API", () => {
       press: async () => {},
       readOutput: () => "",
       describeTarget: (t: string) => `running: ${t}`,
+      defaultViewport: () => null,
     } as unknown as Adapter;
 
     const stubClient: LLMClient = {} as unknown as LLMClient;

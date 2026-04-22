@@ -6,6 +6,16 @@ import { WebAdapter } from "../../../src/adapters/web/adapter";
 import { EvidenceLogger } from "../../../src/evidence/logger";
 
 describe("WebAdapter", () => {
+  test("defaultViewport reflects the constructed viewport, falling back to DEFAULT_VIEWPORT", () => {
+    // Explicit constructor viewport wins.
+    const custom = new WebAdapter({ viewport: { width: 1920, height: 1080 } });
+    expect(custom.defaultViewport()).toEqual({ width: 1920, height: 1080 });
+
+    // No viewport → documented fallback.
+    const fallback = new WebAdapter();
+    expect(fallback.defaultViewport()).toEqual({ width: 1440, height: 900 });
+  });
+
   test("describeTarget frames the target as a URL to visit", () => {
     const adapter = new WebAdapter();
     const msg = adapter.describeTarget("https://example.com");

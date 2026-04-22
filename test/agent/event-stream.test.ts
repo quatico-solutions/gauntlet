@@ -35,6 +35,7 @@ function makeAdapter(): Adapter {
     async executeTool(_n, _a, _l): Promise<ToolResult> { return { text: "ok" }; },
     async start() {}, async close() {},
     describeTarget: (target: string) => `The application is available at: ${target}`,
+    defaultViewport: () => null,
   } as unknown as Adapter;
 }
 
@@ -133,6 +134,7 @@ describe("agent event stream", () => {
       async executeTool() { return { text: "done" }; },
       async start() {}, async close() {},
       describeTarget: (target: string) => `The application is available at: ${target}`,
+      defaultViewport: () => null,
     } as unknown as Adapter;
 
     await runAgent(makeCard(), adapter, client, logger, undefined, {
@@ -174,6 +176,7 @@ describe("agent event stream", () => {
       async executeTool() { throw new Error("boom"); },
       async start() {}, async close() {},
       describeTarget: (target: string) => `The application is available at: ${target}`,
+      defaultViewport: () => null,
     } as unknown as Adapter;
 
     await runAgent(makeCard(), adapter, client, logger, undefined, {

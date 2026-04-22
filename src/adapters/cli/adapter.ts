@@ -74,6 +74,15 @@ export class CLIAdapter implements Adapter {
     );
   }
 
+  /**
+   * A CLI program has no rendering surface — there is no grid of cells
+   * or pixels it draws into. Return null so the snapshot omits viewport
+   * entirely rather than claiming a dimension.
+   */
+  defaultViewport(): null {
+    return null;
+  }
+
   async type(text: string): Promise<void> {
     if (!this.proc) throw new Error("Process not started");
     this.proc.stdin.write(text);

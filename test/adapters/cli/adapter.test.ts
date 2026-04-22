@@ -80,6 +80,11 @@ describe("CLIAdapter", () => {
     }
   });
 
+  test("defaultViewport returns null — CLI has no rendering surface", () => {
+    const adapter = new CLIAdapter();
+    expect(adapter.defaultViewport()).toBeNull();
+  });
+
   test("describeTarget frames the program as already running", () => {
     const adapter = new CLIAdapter();
     const msg = adapter.describeTarget("bc -q");

@@ -55,6 +55,7 @@ function makeMockAdapter(
     start: async () => {},
     close: async () => {},
     describeTarget: (target: string) => `The application is available at: ${target}`,
+    defaultViewport: () => null,
   };
 }
 
@@ -334,6 +335,7 @@ describe("runAgent", () => {
         return { text: "done" };
       },
       describeTarget: (target: string) => `The application is available at: ${target}`,
+      defaultViewport: () => null,
     };
 
     const client: LLMClient = {

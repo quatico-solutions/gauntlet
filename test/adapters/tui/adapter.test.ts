@@ -124,6 +124,13 @@ describe("TUIAdapter describeTarget", () => {
   });
 });
 
+describe("TUIAdapter defaultViewport", () => {
+  test("reports the tmux grid in character cells", () => {
+    const adapter = new TUIAdapter();
+    expect(adapter.defaultViewport()).toEqual({ width: 120, height: 40 });
+  });
+});
+
 describe("TUIAdapter context tool wiring", () => {
   test("includes `read` tool when context root is non-empty", () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-tui-read-"));
