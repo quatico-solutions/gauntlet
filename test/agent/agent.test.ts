@@ -54,6 +54,7 @@ function makeMockAdapter(
     },
     start: async () => {},
     close: async () => {},
+    describeTarget: (target: string) => `The application is available at: ${target}`,
   };
 }
 
@@ -318,6 +319,7 @@ describe("runAgent", () => {
     let callCount = 0;
 
     const slowAdapter = {
+      name: "test",
       async start() {},
       async close() {},
       toolDefinitions() {
@@ -331,6 +333,7 @@ describe("runAgent", () => {
         await new Promise((resolve) => setTimeout(resolve, 60000));
         return { text: "done" };
       },
+      describeTarget: (target: string) => `The application is available at: ${target}`,
     };
 
     const client: LLMClient = {

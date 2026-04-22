@@ -116,7 +116,7 @@ export async function runAgent(
 
   let initialMessage = "Begin testing. Use the available tools to interact with the application.";
   if (target) {
-    initialMessage += `\n\nThe application is available at: ${target}`;
+    initialMessage += `\n\n${adapter.describeTarget(target)}`;
   }
 
   logger.logUserMessage(0, initialMessage);

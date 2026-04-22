@@ -18,4 +18,13 @@ export interface Adapter {
     args: Record<string, unknown>,
     logger: EvidenceLogger
   ): Promise<ToolResult>;
+  /**
+   * One-line framing for the initial user message telling the agent what
+   * `target` means in this adapter's world — e.g. web returns a URL to
+   * visit, tui returns the already-running command. Tool descriptions
+   * already cover *what the tools do*; this covers what the target IS.
+   * Only called when a target is present; the adapter does not need to
+   * handle the empty-target case.
+   */
+  describeTarget(target: string): string;
 }

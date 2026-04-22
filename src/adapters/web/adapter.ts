@@ -165,6 +165,10 @@ export class WebAdapter implements Adapter {
     }
   }
 
+  describeTarget(target: string): string {
+    return `The application is available at: ${target}`;
+  }
+
   async close(): Promise<void> {
     // Close the observer first so it stops trying to drain events from
     // a dying target.

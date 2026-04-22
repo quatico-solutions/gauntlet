@@ -113,12 +113,14 @@ describe("Run API", () => {
     // Stub adapter that throws on start — exercises the catch + finally
     // path without needing a real LLM or Chrome.
     const stubAdapter: Adapter = {
+      name: "cli",
       start: async () => { throw new Error("stub start failure"); },
       close: async () => {},
       // Unused by the error path, but required by the interface.
       type: async () => {},
       press: async () => {},
       readOutput: () => "",
+      describeTarget: (t: string) => `running: ${t}`,
     } as unknown as Adapter;
 
     const stubClient: LLMClient = {} as unknown as LLMClient;

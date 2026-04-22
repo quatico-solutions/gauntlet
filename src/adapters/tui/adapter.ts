@@ -128,6 +128,14 @@ export class TUIAdapter implements Adapter {
     }
   }
 
+  describeTarget(target: string): string {
+    return (
+      `A terminal application is already running in a tmux session. Its command ` +
+      `line was: ${target}. Keystrokes you send go to the running program — ` +
+      `do not retype the command.`
+    );
+  }
+
   async close(): Promise<void> {
     if (!this._sessionName) return;
 

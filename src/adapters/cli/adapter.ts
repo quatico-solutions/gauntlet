@@ -66,6 +66,14 @@ export class CLIAdapter implements Adapter {
     return output;
   }
 
+  describeTarget(target: string): string {
+    return (
+      `A CLI program is already running. Its command line was: ${target}. ` +
+      `Keystrokes you send with \`type\` and \`press\` go to the program's stdin — ` +
+      `do not retype the command.`
+    );
+  }
+
   async type(text: string): Promise<void> {
     if (!this.proc) throw new Error("Process not started");
     this.proc.stdin.write(text);

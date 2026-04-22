@@ -114,6 +114,16 @@ describe.skipIf(!tmuxAvailable)("TUIAdapter", () => {
   });
 });
 
+describe("TUIAdapter describeTarget", () => {
+  test("frames the target as an already-running program and warns against retyping", () => {
+    const adapter = new TUIAdapter();
+    const msg = adapter.describeTarget("nano /tmp/foo.txt");
+    expect(msg).toContain("nano /tmp/foo.txt");
+    expect(msg.toLowerCase()).toContain("already running");
+    expect(msg.toLowerCase()).toContain("do not retype");
+  });
+});
+
 describe("TUIAdapter context tool wiring", () => {
   test("includes `read` tool when context root is non-empty", () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-tui-read-"));

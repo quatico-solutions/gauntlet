@@ -80,4 +80,11 @@ describe("CLIAdapter", () => {
     }
   });
 
+  test("describeTarget frames the program as already running", () => {
+    const adapter = new CLIAdapter();
+    const msg = adapter.describeTarget("bc -q");
+    expect(msg).toContain("bc -q");
+    expect(msg.toLowerCase()).toContain("already running");
+    expect(msg.toLowerCase()).toContain("do not retype");
+  });
 });

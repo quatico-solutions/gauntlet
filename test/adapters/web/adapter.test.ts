@@ -6,6 +6,13 @@ import { WebAdapter } from "../../../src/adapters/web/adapter";
 import { EvidenceLogger } from "../../../src/evidence/logger";
 
 describe("WebAdapter", () => {
+  test("describeTarget frames the target as a URL to visit", () => {
+    const adapter = new WebAdapter();
+    const msg = adapter.describeTarget("https://example.com");
+    expect(msg).toContain("https://example.com");
+    expect(msg.toLowerCase()).toContain("available at");
+  });
+
   test("exposes tool definitions for the agent", () => {
     const adapter = new WebAdapter();
     const tools = adapter.toolDefinitions();
