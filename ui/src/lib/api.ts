@@ -100,6 +100,13 @@ export interface ServerConfig {
   defaultTarget: string | null;
   defaultTurns: number;
   defaultViewport: { width: number; height: number };
+  /**
+   * Server's default for "persist screencast frames to disk". The UI
+   * prefills the NewRunModal checkbox from this, so a server run with
+   * `--save-screencast` ticks the box by default. The live WS stream is
+   * unaffected — this flag only gates the disk writer.
+   */
+  defaultSaveScreencast: boolean;
 }
 
 export interface ErrorEntry {
@@ -179,7 +186,7 @@ export const api = {
       request<FanoutResult>(`/fanout/${runId}/failure`, { method: "POST" }),
   },
   run: {
-    start: (cardId: string, body: { target: string; model?: string; adapter?: string; chrome?: string; turns?: number; viewport?: { width: number; height: number } }) =>
+    start: (cardId: string, body: { target: string; model?: string; adapter?: string; chrome?: string; turns?: number; viewport?: { width: number; height: number }; saveScreencast?: boolean }) =>
       request<{ runId: string; cardId: string }>(`/run/${cardId}`, {
         method: "POST",
         body: JSON.stringify(body),

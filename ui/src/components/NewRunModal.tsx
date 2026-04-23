@@ -10,6 +10,7 @@ export interface NewRunPrefill {
   turns?: number;
   adapter?: "web" | "cli" | "tui";
   viewport?: { width: number; height: number };
+  saveScreencast?: boolean;
 }
 
 interface NewRunModalProps {
@@ -23,6 +24,7 @@ interface NewRunModalProps {
       turns?: number;
       adapter?: string;
       viewport?: { width: number; height: number };
+      saveScreencast?: boolean;
     },
   ) => void;
   prefill?: NewRunPrefill;
@@ -41,6 +43,12 @@ export function NewRunModal({ onClose, onStarted, prefill }: NewRunModalProps) {
   // Blank string === "use server default"; see handleStart.
   const [turns, setTurns] = useState<string>(
     prefill?.turns !== undefined ? String(prefill.turns) : "",
+  );
+  // Screencast disk persistence. Prefill from caller ("Run again") > server
+  // default (hydrated from /api/config below). Passed through to the body
+  // as-is so POST /api/run/:id overrides the server default per-run.
+  const [saveScreencast, setSaveScreencast] = useState<boolean>(
+    prefill?.saveScreencast ?? false,
   );
   const [error, setError] = useState<string | null>(null);
 
@@ -61,6 +69,7 @@ export function NewRunModal({ onClose, onStarted, prefill }: NewRunModalProps) {
         if (!prefill?.model && config.defaultModel) setModel(config.defaultModel);
         if (!prefill?.target && config.defaultTarget) setTarget(config.defaultTarget);
         if (!prefill?.turns && config.defaultTurns) setTurns(String(config.defaultTurns));
+        if (prefill?.saveScreencast === undefined) setSaveScreencast(config.defaultSaveScreencast);
       })
       .catch(() => { /* config fetch is best-effort */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -96,6 +105,7 @@ export function NewRunModal({ onClose, onStarted, prefill }: NewRunModalProps) {
       // dimensions as the original. New runs from the button get the
       // server default via AppConfig.
       viewport: prefill?.viewport,
+      saveScreencast,
     });
   }
 
@@ -208,6 +218,22 @@ export function NewRunModal({ onClose, onStarted, prefill }: NewRunModalProps) {
               onChange={(e) => setChrome(e.target.value)}
               placeholder="Optional — ws://localhost:9222"
             />
+          </div>
+
+          <div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={saveScreencast}
+                onChange={(e) => setSaveScreencast(e.target.checked)}
+              />
+              <span>Save screencast to disk</span>
+            </label>
+            <p className="text-xs text-slate mt-1 ml-6">
+              Off by default. Live view keeps working either way; this only
+              controls whether frames are written to the run directory
+              (100MB–1GB per run).
+            </p>
           </div>
 
           <div className="flex items-center gap-3 pt-2">
