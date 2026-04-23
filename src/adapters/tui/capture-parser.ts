@@ -67,14 +67,32 @@ const PALETTE_16: readonly string[] = [
   "#ffffff", // 15 bright white
 ];
 
+// Standard xterm-256 step table for the 6×6×6 RGB cube. Not linear 0/51/…
+// — xterm uses 0/95/135/175/215/255, and terminal emulators normalize to
+// these values regardless of the app's choice.
+const CUBE_STEPS = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
+
+function byteHex(n: number): string {
+  return n.toString(16).padStart(2, "0");
+}
+
 function paletteColor(n: number): string | undefined {
   if (n < 0) return undefined;
   if (n < 16) return PALETTE_16[n];
-  // 256-color: leave as hex string; xterm-256 palette mapping is well-known
-  // but carrying the raw index keeps the JSON compact and lets the UI do
-  // its own palette lookup if we ever want to. For now, render as "p<NNN>"
-  // so the UI can treat it as "not styled" fallback.
-  if (n < 256) return `p${n}`;
+  if (n < 232) {
+    // 16..231: 6×6×6 RGB cube. idx=(n-16), r=idx/36, g=(idx/6)%6, b=idx%6.
+    const idx = n - 16;
+    const r = CUBE_STEPS[Math.floor(idx / 36)];
+    const g = CUBE_STEPS[Math.floor(idx / 6) % 6];
+    const b = CUBE_STEPS[idx % 6];
+    return `#${byteHex(r)}${byteHex(g)}${byteHex(b)}`;
+  }
+  if (n < 256) {
+    // 232..255: grayscale ramp, gray = 8 + (n-232)*10.
+    const gray = 8 + (n - 232) * 10;
+    const h = byteHex(gray);
+    return `#${h}${h}${h}`;
+  }
   return undefined;
 }
 

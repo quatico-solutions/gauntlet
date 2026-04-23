@@ -127,12 +127,13 @@ function CaptureGrid({ capture }: { capture: Capture }) {
 }
 
 /**
- * Parser emits hex ("#rrggbb") for RGB, palette names via the 16-entry
- * table (already hex), or a `p<NNN>` sentinel for 256-color indices we
- * don't map in the UI yet. The sentinel falls through to currentColor.
+ * Parser emits a full hex string ("#rrggbb") for every color path —
+ * truecolor, the 16-color base, the 6×6×6 RGB cube, and the 24-step
+ * grayscale ramp are all resolved server-side. Anything that isn't a
+ * hex falls through to default, which is dead code in practice but
+ * defends against unknown formats from older captures on disk.
  */
 function cssColor(c: string): string | undefined {
   if (c.startsWith("#")) return c;
-  if (c.startsWith("p")) return undefined;
-  return c;
+  return undefined;
 }

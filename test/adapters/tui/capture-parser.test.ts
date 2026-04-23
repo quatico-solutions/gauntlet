@@ -62,4 +62,30 @@ describe("XtermCaptureParser", () => {
     expect(row[1].ch).toBe("");
     expect(row[1].width).toBe(1);
   });
+
+  test("maps 256-color palette indices to hex — cube and grayscale", async () => {
+    const parser = new XtermCaptureParser();
+    // \x1b[38;5;<n>m selects palette index n as foreground.
+    //   n=202 → RGB cube: idx=186, r=5 g=1 b=0 → (255, 95, 0) = #ff5f00
+    //   n=240 → grayscale: gray = 8 + (240-232)*10 = 88 → #585858
+    //   n=15  → base palette bright white → #ffffff
+    //   n=1   → base palette red → #cd3131
+    const ansi =
+      "\x1b[38;5;202mA" +
+      "\x1b[38;5;240mB" +
+      "\x1b[38;5;15mC" +
+      "\x1b[38;5;1mD" +
+      "\x1b[0m";
+    const capture = await parser.parse(ansi, 8, 1);
+    const row = capture.cells[0];
+    expect(row[0].fg).toBe("#ff5f00");
+    expect(row[1].fg).toBe("#585858");
+    expect(row[2].fg).toBe("#ffffff");
+    expect(row[3].fg).toBe("#cd3131");
+    // All palette paths now emit "#rrggbb"; no "p<NNN>" sentinels leak
+    // out of the parser into on-disk JSON.
+    for (const cell of row.slice(0, 4)) {
+      expect(cell.fg?.startsWith("#")).toBe(true);
+    }
+  });
 });
