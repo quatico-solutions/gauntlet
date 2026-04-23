@@ -146,6 +146,7 @@ export function runRoutes(
       contextTree,
       maxTurns: effective.turns,
       runConfig,
+      saveScreencast: effective.saveScreencast,
       provider: resolveProvider(effective.model),
       model: effective.model,
     }).catch((err) => {
@@ -193,6 +194,14 @@ export interface ExecuteRunOpts {
   maxTurns?: number;
   /** Config snapshot stamped into result.json. */
   runConfig?: RunConfigSnapshot;
+  /**
+   * When true, the screencast streamer also writes frames to
+   * `<outDir>/frames/`. When false, frames still fan out to the
+   * broadcaster/registry for live viewing, but nothing touches disk.
+   * Omit to inherit the legacy always-save behavior — production callers
+   * thread the merged flag through from the effective run config.
+   */
+  saveScreencast?: boolean;
   /** LLM provider name (e.g. "anthropic", "openai"). Threaded to run_start. */
   provider?: string;
   /** LLM model name. Threaded to run_start. */
@@ -200,7 +209,7 @@ export interface ExecuteRunOpts {
 }
 
 export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
-  const { runId: optsRunId, card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt, contextTree, maxTurns, runConfig, provider, model } = opts;
+  const { runId: optsRunId, card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt, contextTree, maxTurns, runConfig, saveScreencast, provider, model } = opts;
   // Routing key for the broadcaster and registry. Defaults to cardId so
   // ad-hoc test fixtures continue to work without supplying a runId.
   const runId = optsRunId ?? card.id;
@@ -237,7 +246,12 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
 
     if (adapterType === "web" && (broadcaster || registry)) {
       const { ScreencastStreamer } = await import("../../streaming/screencast");
-      const framesDir = join(outDir, "frames");
+      // The live WS stream (broadcaster.send) is always on — the
+      // streamer writes to disk only when saveScreencast is true.
+      // Legacy callers that omit the flag retain the previous
+      // always-save behavior; the production route threads
+      // effective.saveScreencast (default false).
+      const framesDir = saveScreencast === false ? undefined : join(outDir, "frames");
       streamer = new ScreencastStreamer(0, (frame) => {
         broadcaster?.send(runId, {
           type: "frame",

@@ -16,11 +16,25 @@ function parseIntFlag(raw: string | undefined, label: string): number | undefine
   return parsed;
 }
 
-const RUN_ALLOWED = new Set(["target", "out", "adapter", "model", "chrome", "project-dir", "turns", "viewport"]);
+/**
+ * Parse a boolean CLI flag. A bareword `--flag` yields true (parseFlags
+ * stores "true"); an explicit `--flag false` / `--flag 0` yields false.
+ * Returns undefined when absent so loadConfig can fall through to env /
+ * server default.
+ */
+function parseBoolFlag(raw: string | undefined, label: string): boolean | undefined {
+  if (raw === undefined) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === "true" || v === "1" || v === "yes" || v === "on") return true;
+  if (v === "false" || v === "0" || v === "no" || v === "off") return false;
+  throw new Error(`Invalid ${label} value "${raw}": expected a boolean (true/false, 1/0, yes/no, on/off)`);
+}
+
+const RUN_ALLOWED = new Set(["target", "out", "adapter", "model", "chrome", "project-dir", "turns", "viewport", "save-screencast"]);
 const VALIDATE_ALLOWED = new Set<string>([]);
 const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
-const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "turns", "viewport"]);
-const CONFIG_ALLOWED = new Set(["json", "project-dir", "port", "chrome", "target", "model", "turns", "viewport"]);
+const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "turns", "viewport", "save-screencast"]);
+const CONFIG_ALLOWED = new Set(["json", "project-dir", "port", "chrome", "target", "model", "turns", "viewport", "save-screencast"]);
 
 function rejectUnknownFlags(
   flags: Record<string, unknown>,
@@ -111,6 +125,7 @@ function parseConfigArgs(args: string[]): ConfigArgs {
       target: flags.target,
       turns: parseIntFlag(flags.turns, "--turns"),
       viewport: flags.viewport,
+      saveScreencast: parseBoolFlag(flags["save-screencast"], "--save-screencast"),
       models: parseModelFlagArray(flags.model),
     },
   };
@@ -149,6 +164,7 @@ function parseRunArgs(args: string[]): RunArgs {
       target: flags.target,
       turns: parseIntFlag(flags.turns, "--turns"),
       viewport: flags.viewport,
+      saveScreencast: parseBoolFlag(flags["save-screencast"], "--save-screencast"),
       models: parseModelFlagArray(flags.model),
     },
   };
@@ -203,6 +219,7 @@ function parseServeArgs(args: string[]): ServeArgs {
       target: flags.target,
       turns: parseIntFlag(flags.turns, "--turns"),
       viewport: flags.viewport,
+      saveScreencast: parseBoolFlag(flags["save-screencast"], "--save-screencast"),
       models: parseModelFlagArray(flags.model),
     },
   };
@@ -283,6 +300,7 @@ Commands:
     --adapter <type>     web | cli | tui (default: web)
     --turns <n>          Max agent turns for this run (default: 50)
     --viewport WxH       Browser viewport (default: 1440x900)
+    --save-screencast    Persist screencast frames to disk (default: off; live WS stream is always on)
     --out <dir>          Evidence output directory (default: <project>/.gauntlet/results/<runId>)
     --project-dir <dir>  Project root (contains .gauntlet/ state dir)
 
@@ -300,6 +318,7 @@ Commands:
     --target <url>           Default target (prefilled in the UI; request body still overrides)
     --turns <n>              Default max turns per run (default: 50)
     --viewport WxH           Default browser viewport (default: 1440x900)
+    --save-screencast        Default: persist screencast frames to disk (default: off)
     --model agent=<name>     Default agent model
 
   config                   Print effective configuration
@@ -313,6 +332,7 @@ Environment:
   GAUNTLET_TARGET          Default target URL (UI prefill)
   GAUNTLET_TURNS           Default max turns per run
   GAUNTLET_VIEWPORT        Default browser viewport (WxH, e.g. 1440x900)
+  GAUNTLET_SAVE_SCREENCAST Persist screencast frames to disk (1/0, default: 0)
   GAUNTLET_AGENT_MODEL     Default agent model
   GAUNTLET_FANOUT_MODEL    Default fanout model
   GAUNTLET_MODELS          Comma-separated model allow-list

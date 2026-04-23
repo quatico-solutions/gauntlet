@@ -32,6 +32,15 @@ export interface AppConfig {
    * body `viewport` or CLI `--viewport`) take precedence.
    */
   defaultViewport: Viewport;
+  /**
+   * When true, web-adapter runs persist each screencast frame to
+   * `<runDir>/frames/`. Default is false: the live WebSocket stream to
+   * watching UI clients is unaffected, but disk writes are skipped.
+   * Screencast files are typically 100MB–1GB per run and are rarely
+   * consulted post-run. Per-run override via body `saveScreencast` or
+   * CLI `--save-screencast`.
+   */
+  defaultSaveScreencast: boolean;
   models: {
     agent: string;
     fanout?: string;
@@ -48,6 +57,7 @@ export interface AppConfig {
     defaultTarget: "default" | "env" | "flag" | "unset";
     defaultTurns: "default" | "env" | "flag";
     defaultViewport: "default" | "env" | "flag";
+    defaultSaveScreencast: "default" | "env" | "flag";
     "models.agent": "default" | "env" | "flag";
     "models.fanout": "default" | "env" | "flag" | "unset";
     "models.available": "default" | "env" | "flag";
@@ -61,6 +71,7 @@ export interface CliArgsInput {
   target?: string;
   turns?: number;
   viewport?: string;
+  saveScreencast?: boolean;
   models?: { agent?: string; fanout?: string };
 }
 
@@ -71,6 +82,7 @@ export interface RunRequestBody {
   adapter?: AdapterType;
   turns?: number;
   viewport?: Viewport;
+  saveScreencast?: boolean;
 }
 
 export interface EffectiveRunConfig {
@@ -85,10 +97,16 @@ export interface EffectiveRunConfig {
   adapter: AdapterType;
   turns: number;
   viewport: Viewport;
+  /**
+   * Whether this run should persist screencast frames to disk. The live
+   * WS stream to watching UI clients is always on regardless of this
+   * flag; only the disk writer is gated.
+   */
+  saveScreencast: boolean;
   projectRoot: string;
 }
 
-const RUN_BODY_ALLOWED = new Set(["target", "model", "chrome", "adapter", "turns", "viewport"]);
+const RUN_BODY_ALLOWED = new Set(["target", "model", "chrome", "adapter", "turns", "viewport", "saveScreencast"]);
 export const DEFAULT_MAX_TURNS = 50;
 export const DEFAULT_VIEWPORT: Viewport = { width: 1440, height: 900 };
 
@@ -152,6 +170,13 @@ export function validateRunBody(body: unknown): RunRequestBody {
     assertViewportBounds(candidate, "run request body: viewport");
     viewport = candidate;
   }
+  let saveScreencast: boolean | undefined;
+  if (bodyObj.saveScreencast !== undefined) {
+    if (typeof bodyObj.saveScreencast !== "boolean") {
+      throw new Error("run request body: saveScreencast must be a boolean");
+    }
+    saveScreencast = bodyObj.saveScreencast;
+  }
   return {
     target: bodyObj.target,
     model: typeof bodyObj.model === "string" ? bodyObj.model : undefined,
@@ -159,6 +184,7 @@ export function validateRunBody(body: unknown): RunRequestBody {
     adapter: bodyObj.adapter,
     turns,
     viewport,
+    saveScreencast,
   };
 }
 
@@ -180,6 +206,7 @@ export function mergeRunConfig(app: AppConfig, body: RunRequestBody): EffectiveR
     adapter: body.adapter ?? "web",
     turns: body.turns ?? app.defaultTurns,
     viewport: body.viewport ?? app.defaultViewport,
+    saveScreencast: body.saveScreencast ?? app.defaultSaveScreencast,
     projectRoot: app.projectRoot,
   };
 }
@@ -212,6 +239,18 @@ function parsePortNumber(raw: string, label: string): number {
     throw new Error(`Invalid ${label} "${raw}": not a number`);
   }
   return port;
+}
+
+/**
+ * Parse a boolean-ish env var. Accepts the usual affirmatives (1, true,
+ * yes, on) and negatives (0, false, no, off); rejects anything else to
+ * avoid "well I set it to 'maybe'..." surprises.
+ */
+function parseBoolEnv(raw: string, label: string): boolean {
+  const v = raw.trim().toLowerCase();
+  if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
+  if (v === "0" || v === "false" || v === "no" || v === "off" || v === "") return false;
+  throw new Error(`Invalid ${label} "${raw}": expected a boolean (1/0, true/false, yes/no, on/off)`);
 }
 
 /**
@@ -294,6 +333,21 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     viewportSource = "flag";
   }
 
+  // defaultSaveScreencast — opt-in persistence of screencast frames.
+  // Defaults off because per-run screencast files are 100MB–1GB and
+  // rarely consulted post-run; the live WS stream to UI clients is
+  // unaffected either way.
+  let defaultSaveScreencast = false;
+  let saveScreencastSource: "default" | "env" | "flag" = "default";
+  if (env.GAUNTLET_SAVE_SCREENCAST !== undefined) {
+    defaultSaveScreencast = parseBoolEnv(env.GAUNTLET_SAVE_SCREENCAST, "GAUNTLET_SAVE_SCREENCAST");
+    saveScreencastSource = "env";
+  }
+  if (args.saveScreencast !== undefined) {
+    defaultSaveScreencast = args.saveScreencast;
+    saveScreencastSource = "flag";
+  }
+
   // defaultTurns — hard cap on agent turns per run.
   let defaultTurns = DEFAULT_MAX_TURNS;
   let turnsSource: "default" | "env" | "flag" = "default";
@@ -360,6 +414,7 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     defaultTarget,
     defaultTurns,
     defaultViewport,
+    defaultSaveScreencast,
     models: {
       agent: agentModel,
       fanout: fanoutModel,
@@ -373,6 +428,7 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
       defaultTarget: targetSource,
       defaultTurns: turnsSource,
       defaultViewport: viewportSource,
+      defaultSaveScreencast: saveScreencastSource,
       "models.agent": agentSource,
       "models.fanout": fanoutSource,
       "models.available": availableSource,

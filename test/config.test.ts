@@ -75,6 +75,38 @@ describe("loadConfig", () => {
     const c = loadConfig({}, { ANTHROPIC_API_KEY: "sk-ant-xxx", OPENAI_API_KEY: "sk-xxx" } as NodeJS.ProcessEnv);
     expect(c.apiKeys).toEqual({ anthropic: true, openai: true });
   });
+
+  test("defaultSaveScreencast defaults to false", () => {
+    const c = loadConfig({}, emptyEnv);
+    expect(c.defaultSaveScreencast).toBe(false);
+    expect(c.sources.defaultSaveScreencast).toBe("default");
+  });
+
+  test("GAUNTLET_SAVE_SCREENCAST=1 enables (env source)", () => {
+    const c = loadConfig({}, { GAUNTLET_SAVE_SCREENCAST: "1" } as NodeJS.ProcessEnv);
+    expect(c.defaultSaveScreencast).toBe(true);
+    expect(c.sources.defaultSaveScreencast).toBe("env");
+  });
+
+  test("GAUNTLET_SAVE_SCREENCAST=false disables explicitly (still env source)", () => {
+    const c = loadConfig({}, { GAUNTLET_SAVE_SCREENCAST: "false" } as NodeJS.ProcessEnv);
+    expect(c.defaultSaveScreencast).toBe(false);
+    expect(c.sources.defaultSaveScreencast).toBe("env");
+  });
+
+  test("--save-screencast flag overrides env", () => {
+    const c = loadConfig(
+      { saveScreencast: true },
+      { GAUNTLET_SAVE_SCREENCAST: "0" } as NodeJS.ProcessEnv,
+    );
+    expect(c.defaultSaveScreencast).toBe(true);
+    expect(c.sources.defaultSaveScreencast).toBe("flag");
+  });
+
+  test("invalid GAUNTLET_SAVE_SCREENCAST throws", () => {
+    expect(() => loadConfig({}, { GAUNTLET_SAVE_SCREENCAST: "maybe" } as NodeJS.ProcessEnv))
+      .toThrow(/GAUNTLET_SAVE_SCREENCAST/);
+  });
 });
 
 describe("validateRunBody", () => {
@@ -116,6 +148,20 @@ describe("validateRunBody", () => {
   test("rejects non-object body", () => {
     expect(() => validateRunBody(null)).toThrow(/object/);
     expect(() => validateRunBody("string")).toThrow(/object/);
+  });
+
+  test("accepts saveScreencast boolean", () => {
+    const b = validateRunBody({ target: "http://x", saveScreencast: true });
+    expect(b.saveScreencast).toBe(true);
+    const b2 = validateRunBody({ target: "http://x", saveScreencast: false });
+    expect(b2.saveScreencast).toBe(false);
+  });
+
+  test("rejects non-boolean saveScreencast", () => {
+    expect(() => validateRunBody({ target: "http://x", saveScreencast: "yes" }))
+      .toThrow(/saveScreencast/);
+    expect(() => validateRunBody({ target: "http://x", saveScreencast: 1 }))
+      .toThrow(/saveScreencast/);
   });
 });
 
@@ -161,6 +207,28 @@ describe("mergeRunConfig", () => {
     const appFlag = loadConfig({ chrome: "flaghost:9001" }, {} as NodeJS.ProcessEnv);
     const eff = mergeRunConfig(appFlag, { target: "http://x" });
     expect(eff.chrome).toEqual({ host: "flaghost", port: 9001 });
+  });
+
+  test("saveScreencast falls through to server default (false) when body omits it", () => {
+    const eff = mergeRunConfig(app, { target: "http://x" });
+    expect(eff.saveScreencast).toBe(false);
+  });
+
+  test("saveScreencast server default propagates when env sets it", () => {
+    const appEnv = loadConfig({}, { GAUNTLET_SAVE_SCREENCAST: "1" } as NodeJS.ProcessEnv);
+    const eff = mergeRunConfig(appEnv, { target: "http://x" });
+    expect(eff.saveScreencast).toBe(true);
+  });
+
+  test("body saveScreencast=true overrides server default (false)", () => {
+    const eff = mergeRunConfig(app, { target: "http://x", saveScreencast: true });
+    expect(eff.saveScreencast).toBe(true);
+  });
+
+  test("body saveScreencast=false overrides server default (true)", () => {
+    const appEnv = loadConfig({}, { GAUNTLET_SAVE_SCREENCAST: "1" } as NodeJS.ProcessEnv);
+    const eff = mergeRunConfig(appEnv, { target: "http://x", saveScreencast: false });
+    expect(eff.saveScreencast).toBe(false);
   });
 });
 

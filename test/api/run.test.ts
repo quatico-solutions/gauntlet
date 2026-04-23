@@ -259,4 +259,75 @@ describe("Run API", () => {
     expect(body.error).toContain("adapter");
     expect(body.error).toContain("web");
   });
+
+  // Screencast save-opt-in gate.
+  //
+  // These drive executeRun directly with a stub "web" adapter so we can
+  // pin the disk behavior without spinning up Chrome. The streamer's
+  // constructor calls mkdirSync(framesDir, {recursive: true}) BEFORE
+  // start() is awaited — so even though streamer.start() will fail when
+  // chrome.getTabs() has no real browser to talk to, the dir-creation
+  // side-effect has already happened (or not) by that point.
+  //
+  // We assert both directions: saveScreencast=false => no frames dir,
+  // saveScreencast=true => frames dir exists.
+  async function runExecuteWithStubbedWebAdapter(saveScreencast: boolean) {
+    const { ActiveRunRegistry } = await import("../../src/api/active-runs");
+    const registry = new ActiveRunRegistry();
+
+    const stubAdapter: Adapter = {
+      name: "web",
+      start: async () => {},
+      close: async () => {},
+      type: async () => {},
+      press: async () => {},
+      readOutput: () => "",
+      describeTarget: (t: string) => `running: ${t}`,
+      defaultViewport: () => null,
+    } as unknown as Adapter;
+    const stubClient: LLMClient = {} as unknown as LLMClient;
+    const card: StoryCard = {
+      id: "story-001",
+      title: "Test",
+      status: "draft",
+      tags: ["core"],
+      body: "",
+      acceptance: ["Something works"],
+    } as unknown as StoryCard;
+
+    const runId = `story-001_20260422T120000Z_${saveScreencast ? "save" : "drop"}`;
+    const resultsDir = gauntletPath(projectRoot, "results", runId);
+    const { EvidenceLogger } = await import("../../src/evidence/logger");
+    const logger = new EvidenceLogger(resultsDir);
+
+    // executeRun catches the streamer.start() failure (chrome not
+    // running) and falls through to cleanup — fine for our purposes,
+    // the constructor's mkdir side-effect already happened synchronously.
+    await executeRun({
+      runId,
+      card,
+      adapter: stubAdapter,
+      adapterType: "web",
+      client: stubClient,
+      target: "http://localhost:3000",
+      outDir: resultsDir,
+      logger,
+      registry,
+      saveScreencast,
+    });
+
+    return { resultsDir, framesDir: join(resultsDir, "frames") };
+  }
+
+  test("screencast gate: saveScreencast=false does NOT create frames/ on disk", async () => {
+    const { existsSync } = await import("fs");
+    const { framesDir } = await runExecuteWithStubbedWebAdapter(false);
+    expect(existsSync(framesDir)).toBe(false);
+  });
+
+  test("screencast gate: saveScreencast=true creates frames/ on disk", async () => {
+    const { existsSync } = await import("fs");
+    const { framesDir } = await runExecuteWithStubbedWebAdapter(true);
+    expect(existsSync(framesDir)).toBe(true);
+  });
 });

@@ -57,4 +57,19 @@ describe("Config API", () => {
     const body = await res.json();
     expect(body.defaultModel).toBe("claude-opus-4-6");
   });
+
+  test("GET /api/config exposes defaultSaveScreencast (false by default, true under env)", async () => {
+    // UI's NewRunModal reads this to prefill the checkbox state.
+    const appDefault = loadConfig({}, {} as NodeJS.ProcessEnv);
+    const app1 = new Hono();
+    app1.route("/api/config", configRoutes(appDefault));
+    const b1 = await (await app1.request("/api/config")).json();
+    expect(b1.defaultSaveScreencast).toBe(false);
+
+    const appEnv = loadConfig({}, { GAUNTLET_SAVE_SCREENCAST: "1" } as NodeJS.ProcessEnv);
+    const app2 = new Hono();
+    app2.route("/api/config", configRoutes(appEnv));
+    const b2 = await (await app2.request("/api/config")).json();
+    expect(b2.defaultSaveScreencast).toBe(true);
+  });
 });

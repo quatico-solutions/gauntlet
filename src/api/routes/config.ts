@@ -17,6 +17,7 @@ export function configRoutes(config: AppConfig) {
       defaultTarget: config.defaultTarget ?? null,
       defaultTurns: config.defaultTurns,
       defaultViewport: config.defaultViewport,
+      defaultSaveScreencast: config.defaultSaveScreencast,
     });
   });
 
