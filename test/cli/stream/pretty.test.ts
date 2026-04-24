@@ -34,4 +34,13 @@ describe("PrettyRenderer", () => {
     r.close();
     expect(sink.out).toBe(expected);
   });
+
+  test("renders event (meta) line and run_error fatal panel", () => {
+    const { events, expected } = loadFixture("fatal");
+    const sink = collect();
+    const r = new PrettyRenderer(sink, { color: false, columns: 100 });
+    for (const e of events) r.handle(e);
+    r.close();
+    expect(sink.out).toBe(expected);
+  });
 });

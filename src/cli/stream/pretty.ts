@@ -37,6 +37,10 @@ export class PrettyRenderer implements StreamRenderer {
       case "tool_result":
         this.renderToolResult(event);
         return;
+      case "event":
+        if (event.name === "run_error") this.renderRunError(event);
+        else this.renderEventMeta(event);
+        return;
       default:
         return;
     }
@@ -144,6 +148,25 @@ export class PrettyRenderer implements StreamRenderer {
       else if (e.capturePath) this.write(`      ${p.dim("→")} ${p.blue(String(e.capturePath))}`);
     }
     this.write("");
+  }
+
+  private renderEventMeta(e: StreamEvent): void {
+    const p = this.paint;
+    const { type: _t, eventId: _id, parentEventId: _pid, ts: _ts, name, ...rest } = e;
+    const parts = Object.entries(rest)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
+    this.write(`  ${p.dim(`· ${name} ${parts.join(" ")}`)}`);
+  }
+
+  private renderRunError(e: StreamEvent): void {
+    const p = this.paint;
+    const turn = Number(e.turn ?? 0);
+    this.write("");
+    this.write(`${p.dim("─── Run failed ──────────────────────────────────")} ${p.red("✗")} ${p.red("error")}`);
+    this.write(`  ${p.dim("runId")}     ${this.runId ?? ""}`);
+    this.write(`  ${p.dim("turn")}      ${turn} / ${this.maxTurns ?? "?"}`);
+    this.write(`  ${p.dim("error")}     ${String(e.message ?? "")}`);
   }
 }
 
