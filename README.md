@@ -176,8 +176,14 @@ Results are written to a `results/` directory as `result.json` alongside the evi
 # Run a test scenario against a target URL
 gauntlet run scenario.md --target http://localhost:3000
 
-# Run with a specific model and adapter
-gauntlet run scenario.md --target http://localhost:3000 --model claude-sonnet-4-6 --adapter web
+# Run with a specific model, adapter, viewport, and turn cap
+gauntlet run scenario.md --target http://localhost:3000 --model agent=claude-sonnet-4-6 --adapter web --viewport 1440x900 --turns 50
+
+# Stream machine-readable events instead of the pretty terminal transcript
+gauntlet run scenario.md --target http://localhost:3000 --format jsonl
+
+# Suppress the run transcript and only print the runId on stderr
+gauntlet run scenario.md --target http://localhost:3000 --silent
 
 # Validate a story card's format
 gauntlet validate scenario.md
@@ -270,14 +276,31 @@ The web `POST /api/run/:id` body is validated against an explicit allow-list. Un
 | `run` | `--model agent=<name>` | Model for the agent |
 | `run` | `--chrome host:port` | Chrome debugging endpoint |
 | `run` | `--adapter web\|cli\|tui` | Adapter type (default: web) |
+| `run` | `--turns <n>` | Max agent turns for this run (default: 50) |
+| `run` | `--viewport WxH` | Browser viewport for web-adapter runs (default: 1440x900) |
+| `run` | `--save-screencast [bool]` | Persist screencast frames to disk (default: off; live UI stream is unchanged) |
 | `run` | `--out <dir>` | Evidence output directory |
 | `run` | `--project-dir <dir>` | Project root (contains `.gauntlet/` state dir) |
+| `run` | `--silent` | Suppress the streaming transcript; prints only `runId` on stderr |
+| `run` | `--format pretty\|jsonl` | Streaming transcript format (default: auto by TTY) |
+| `run` | `--no-color` | Disable ANSI color output; `NO_COLOR` is also respected |
 | `serve` | `--port <n>` | Server port |
 | `serve` | `--project-dir <dir>` | Project root (contains `.gauntlet/` state dir) |
 | `serve` | `--chrome host:port` | Default Chrome endpoint for runs |
 | `serve` | `--target <url>` | Default target hint for the UI |
 | `serve` | `--model agent=<name>` | Default agent model |
+| `serve` | `--turns <n>` | Default max turns per run (default: 50) |
+| `serve` | `--viewport WxH` | Default browser viewport (default: 1440x900) |
+| `serve` | `--save-screencast [bool]` | Default screencast-frame persistence (default: off) |
 | `config` | `--json` | Emit JSON instead of formatted text |
+| `config` | `--project-dir <dir>` | Inspect config with this project root override |
+| `config` | `--port <n>` | Inspect config with this server port override |
+| `config` | `--chrome host:port` | Inspect config with this Chrome endpoint override |
+| `config` | `--target <url>` | Inspect config with this target override |
+| `config` | `--model agent=<name>` | Inspect config with this agent model override |
+| `config` | `--turns <n>` | Inspect config with this turn cap override |
+| `config` | `--viewport WxH` | Inspect config with this viewport override |
+| `config` | `--save-screencast [bool]` | Inspect config with this screencast override |
 | `fanout` | `--out <dir>` | Output directory |
 | `fanout` | `--model fanout=<name>` | Model for generation |
 | `fanout` | `--from-result <dir>` | Generate from an existing result |
@@ -293,6 +316,10 @@ Gauntlet-prefixed (consumed by `loadConfig`):
 | `GAUNTLET_PORT` | Server port | `4400` |
 | `GAUNTLET_PROJECT_ROOT` | Project root (contains `.gauntlet/` state dir) | `.` |
 | `GAUNTLET_CHROME` | Default Chrome endpoint (`host:port`) | `127.0.0.1:9222` |
+| `GAUNTLET_TARGET` | Default target URL, surfaced as a UI prefill | -- |
+| `GAUNTLET_TURNS` | Default max turns per run | `50` |
+| `GAUNTLET_VIEWPORT` | Default browser viewport (`WxH`) | `1440x900` |
+| `GAUNTLET_SAVE_SCREENCAST` | Persist screencast frames to disk (`1/0`, `true/false`, `yes/no`, `on/off`) | `0` |
 | `GAUNTLET_AGENT_MODEL` | Default agent model | `claude-sonnet-4-6` |
 | `GAUNTLET_FANOUT_MODEL` | Default fanout model | -- |
 | `GAUNTLET_MODELS` | Comma-separated allow-list of models (opt-in) | `[]` (no restriction) |
@@ -347,6 +374,10 @@ See the [Configuration](#configuration) section above for the full list. Quick r
 | `GAUNTLET_PORT` | Server port | 4400 |
 | `GAUNTLET_PROJECT_ROOT` | Project root (contains `.gauntlet/` state dir) | `.` |
 | `GAUNTLET_CHROME` | Default Chrome endpoint | `127.0.0.1:9222` |
+| `GAUNTLET_TARGET` | Default target URL for the web UI | -- |
+| `GAUNTLET_TURNS` | Default max turns per run | 50 |
+| `GAUNTLET_VIEWPORT` | Default browser viewport | `1440x900` |
+| `GAUNTLET_SAVE_SCREENCAST` | Persist screencast frames to disk | `0` |
 | `GAUNTLET_AGENT_MODEL` | Default model for test execution | `claude-sonnet-4-6` |
 | `GAUNTLET_FANOUT_MODEL` | Model for scenario generation | -- |
 | `GAUNTLET_MODELS` | Comma-separated model allow-list (opt-in) | `[]` (no restriction) |
