@@ -15,6 +15,7 @@ export class PrettyRenderer implements StreamRenderer {
   private maxTurns: number | undefined;
   private runId: string | undefined;
   private model: string | undefined;
+  private pendingRewrite: { base: string } | undefined;
 
   constructor(private sink: WriteSink, private opts: PrettyOptions) {
     this.paint = makePaint(opts.color);
@@ -128,7 +129,15 @@ export class PrettyRenderer implements StreamRenderer {
     const p = this.paint;
     const name = String(e.name ?? "");
     const args = truncateArgs(JSON.stringify(e.arguments ?? {}), 200);
-    this.write(`  ${p.cyan("▸")} ${p.bold(name)} ${p.dim(args)}`);
+    const base = `  ${p.cyan("▸")} ${p.bold(name)} ${p.dim(args)}`;
+    if (this.opts.color) {
+      // Inline-rewrite path: include a trailing pending marker so the user sees progress.
+      this.write(`${base} ${p.dim("⋯")}`);
+      this.pendingRewrite = { base };
+    } else {
+      this.write(base);
+      this.pendingRewrite = undefined;
+    }
   }
 
   private renderToolResult(e: StreamEvent): void {
@@ -136,18 +145,30 @@ export class PrettyRenderer implements StreamRenderer {
     const ms = Number(e.durationMs ?? 0);
     const err = Boolean(e.error);
     const timing = `${ms}ms`;
+
+    if (this.pendingRewrite && this.opts.color) {
+      // Erase the previous line and rewrite with the final timing inline.
+      const mark = err ? p.red("✗") : p.green("✓");
+      this.sink.write("\x1b[1A\x1b[2K"); // cursor up, erase line
+      this.write(`${this.pendingRewrite.base}   ${mark} ${p.dim(timing)}`);
+      this.pendingRewrite = undefined;
+    } else {
+      // Two-line fallback — same as the existing no-color path.
+      if (err) this.write(`    ${p.dim("↳")} ${p.red("✗")} ${p.dim(timing)}`);
+      else     this.write(`    ${p.dim("↳")} ${p.green("✓")} ${p.dim(timing)}`);
+    }
+
+    // Secondary lines always print as a separate indented line regardless of mode.
     if (err) {
-      this.write(`    ${p.dim("↳")} ${p.red("✗")} ${p.dim(timing)}`);
       const text = String(e.text ?? "");
       if (text) this.write(`      ${p.dim("╵ error ")} ${text}`);
       if (e.hint) this.write(`      ${p.dim("╵ hint  ")} ${String(e.hint)}`);
     } else {
-      this.write(`    ${p.dim("↳")} ${p.green("✓")} ${p.dim(timing)}`);
       if (e.image)            this.write(`      ${p.dim("→")} ${p.blue(String(e.image))}`);
       else if (e.artifact)    this.write(`      ${p.dim("→")} ${p.blue(String(e.artifact))}`);
       else if (e.capturePath) this.write(`      ${p.dim("→")} ${p.blue(String(e.capturePath))}`);
     }
-    this.write("");
+    this.write(""); // trailing blank — matches the non-color path
   }
 
   private renderEventMeta(e: StreamEvent): void {
