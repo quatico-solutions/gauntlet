@@ -64,10 +64,12 @@ function makeMockAdapter(
 function makeMockClient(responses: AgentResponse[]): LLMClient {
   let callIndex = 0;
   const chatCalls: unknown[][] = [];
+  const toolsPerCall: string[][] = [];
 
   return {
-    async chat(messages) {
+    async chat(messages, tools) {
       chatCalls.push([...messages]);
+      toolsPerCall.push((tools ?? []).map((t) => t.name));
       const response = responses[callIndex++];
       if (!response) throw new Error("No more mock responses");
       return response;
@@ -83,7 +85,8 @@ function makeMockClient(responses: AgentResponse[]): LLMClient {
       }));
     },
     _chatCalls: chatCalls,
-  } as LLMClient & { _chatCalls: unknown[][] };
+    _toolsPerCall: toolsPerCall,
+  } as LLMClient & { _chatCalls: unknown[][]; _toolsPerCall: string[][] };
 }
 
 describe("runAgent", () => {
@@ -632,5 +635,123 @@ describe("runAgent", () => {
       tool_call_id: "call_1",
       content: "Error: Element not found: .missing",
     });
+  });
+
+  test("max_turns exhaustion injects SYSTEM-REMINDER grace turn and honors the agent's final report", async () => {
+    const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+    const logger = makeMockLogger();
+    (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+      eventLog.push({ name, params });
+    };
+
+    const client = makeMockClient([
+      // Turn 1 (the only working turn): agent takes a screenshot, doesn't
+      // report — this would normally fall through to the generic exhausted
+      // result before this feature.
+      {
+        text: "Taking a look",
+        toolCalls: [{ id: "c1", name: "screenshot", arguments: {} }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "t1" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+      // Grace turn: agent responds to the SYSTEM-REMINDER with a proper report.
+      {
+        text: "Out of turns; summarizing",
+        toolCalls: [
+          {
+            id: "c2",
+            name: "report_result",
+            arguments: {
+              status: "investigate",
+              summary: "Did not finish within turn budget",
+              reasoning: "Reached turn limit after one screenshot; still exploring",
+              observations: [
+                { kind: "suggestion", description: "Increase --turns for this scenario" },
+              ],
+            },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "grace" },
+        usage: { inputTokens: 20, outputTokens: 15 },
+      },
+    ]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, {
+      runId: makeRunId(card.id),
+      maxTurns: 1,
+    });
+
+    // Honor the agent's verdict from the grace turn.
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toBe("Did not finish within turn budget");
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0]).toEqual({
+      kind: "suggestion",
+      description: "Increase --turns for this scenario",
+    });
+
+    // usage.turns reflects the caller's budget (1), not the extra grace call.
+    // Token counts still accumulate across both calls.
+    expect(result.usage).toEqual({
+      inputTokens: 30,
+      outputTokens: 20,
+      turns: 1,
+    });
+
+    // Two chat() calls happened: one working turn + one grace turn.
+    const chatCalls = (client as any)._chatCalls;
+    expect(chatCalls).toHaveLength(2);
+
+    // The grace turn's final user message is the SYSTEM-REMINDER.
+    const graceMessages = chatCalls[1];
+    const lastMessage = graceMessages[graceMessages.length - 1];
+    expect(lastMessage).toMatchObject({ role: "user" });
+    expect(String(lastMessage.content)).toContain("<SYSTEM-REMINDER>");
+    expect(String(lastMessage.content)).toContain("all 1 of your available turns");
+    expect(String(lastMessage.content)).toContain("report_result");
+
+    // Grace turn was called with ONLY report_result exposed — no adapter tools.
+    const toolsPerCall = (client as any)._toolsPerCall;
+    expect(toolsPerCall[0]).toContain("screenshot");
+    expect(toolsPerCall[1]).toEqual(["report_result"]);
+
+    // max_turns_reminder event was logged (for stream renderers).
+    const reminder = eventLog.find((e) => e.name === "max_turns_reminder");
+    expect(reminder).toBeDefined();
+    expect(reminder?.params.maxTurns).toBe(1);
+  });
+
+  test("falls through to generic exhausted result when grace turn also fails to report", async () => {
+    const client = makeMockClient([
+      // Turn 1: works but doesn't report.
+      {
+        text: "working",
+        toolCalls: [{ id: "c1", name: "screenshot", arguments: {} }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "t1" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+      // Grace turn: text only, no tool calls — the agent ignored the reminder.
+      {
+        text: "I should have called report_result",
+        toolCalls: [],
+        stopReason: "end_turn",
+        rawAssistantMessage: { role: "assistant", content: "grace" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+    ]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, {
+      runId: makeRunId(card.id),
+      maxTurns: 1,
+    });
+
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toContain("maximum turn limit");
+    expect(result.reasoning).toContain("grace");
+    // Still two chat() calls — we tried the grace turn before falling through.
+    expect((client as any)._chatCalls).toHaveLength(2);
   });
 });

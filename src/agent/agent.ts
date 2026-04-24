@@ -358,10 +358,88 @@ export async function runAgent(
     }
   }
 
-  // Max turns reached
+  // Max turns reached. The run promised the caller `maxTurns` turns of tool
+  // access and delivered them. Rather than ending with a generic "exhausted"
+  // verdict, we inject one final SYSTEM-REMINDER and let the agent call
+  // report_result with a best-effort summary of where it got stuck and why.
+  // This extra LLM call does not count against `usage.turns` — the caller
+  // contract is preserved; the grace turn is overhead.
+  logger.logEvent("max_turns_reminder", { maxTurns });
+
+  const reminderText =
+    `<SYSTEM-REMINDER>\n` +
+    `You have used all ${maxTurns} of your available turns without calling report_result. ` +
+    `No more application tools are available — only report_result can be called now. ` +
+    `This is your final response.\n` +
+    `\n` +
+    `Call report_result to end the run with an actionable summary:\n` +
+    `  - Set status to "investigate" (the run did not complete).\n` +
+    `  - In summary, describe what you did and what you observed.\n` +
+    `  - In reasoning, explain where you got stuck and why you couldn't finish ` +
+    `within the turn budget.\n` +
+    `  - Include concrete recommendations as observations (kind: "suggestion") ` +
+    `for whoever picks this up next.\n` +
+    `</SYSTEM-REMINDER>`;
+
+  const graceTurn = turns + 1;
+  logger.logUserMessage(graceTurn, reminderText);
+  messages.push(client.userMessage(reminderText));
+
+  logger.logLlmRequest(graceTurn, messages.length);
+  const graceResponse = await client.chat(messages, [REPORT_TOOL], systemPrompt);
+  totalInputTokens += graceResponse.usage.inputTokens;
+  totalOutputTokens += graceResponse.usage.outputTokens;
+  totalCacheCreation += graceResponse.usage.cacheCreationInputTokens ?? 0;
+  totalCacheRead += graceResponse.usage.cacheReadInputTokens ?? 0;
+
+  const graceThinking: Array<{ text: string; signature?: string }> = [];
+  const graceRaw = graceResponse.rawAssistantMessage as { content?: Array<Record<string, unknown>> } | undefined;
+  if (graceRaw && Array.isArray(graceRaw.content)) {
+    for (const block of graceRaw.content) {
+      if (block && block.type === "thinking" && typeof block.thinking === "string") {
+        graceThinking.push({
+          text: block.thinking as string,
+          signature: typeof block.signature === "string" ? block.signature : undefined,
+        });
+      }
+    }
+  }
+
+  logger.logLlmResponse({
+    turn: graceTurn,
+    stopReason: graceResponse.stopReason,
+    text: graceResponse.text,
+    thinking: graceThinking,
+    toolCalls: graceResponse.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
+    usage: {
+      inputTokens: graceResponse.usage.inputTokens,
+      outputTokens: graceResponse.usage.outputTokens,
+      cacheCreationInputTokens: graceResponse.usage.cacheCreationInputTokens,
+      cacheReadInputTokens: graceResponse.usage.cacheReadInputTokens,
+    },
+    rawAssistantMessage: graceResponse.rawAssistantMessage,
+  });
+
+  const graceReport = graceResponse.toolCalls.find((tc) => tc.name === "report_result");
+  if (graceReport) {
+    const parsed = parseReportResult(graceReport.arguments);
+    if (parsed.ok) {
+      return buildResult({
+        status: parsed.value.status,
+        summary: parsed.value.summary,
+        reasoning: parsed.value.reasoning,
+        observations: parsed.value.observations,
+      });
+    }
+    // Grace turn produced report_result but it was malformed. Log and fall
+    // through to the generic result — same posture as the in-loop malformed
+    // path, minus the raw-args dump (already captured in logLlmResponse).
+    logger.logEvent("max_turns_grace_malformed_report", { reason: parsed.reason });
+  }
+
   return buildResult({
     status: "investigate",
     summary: "Agent reached maximum turn limit without reporting a result",
-    reasoning: `Exhausted ${maxTurns} turns`,
+    reasoning: `Exhausted ${maxTurns} turns; grace-turn reminder did not yield a valid report_result.`,
   });
 }
