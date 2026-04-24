@@ -1,6 +1,7 @@
 import type { StreamEvent, StreamRenderer } from "./renderer";
 import type { WriteSink } from "./jsonl";
 import { makePaint, type Paint } from "./colors";
+import { softWrap } from "./wrap";
 
 const RULE = "──────────────────────────────────────────────────────";
 
@@ -26,6 +27,9 @@ export class PrettyRenderer implements StreamRenderer {
         return;
       case "run_end":
         this.renderRunEnd(event);
+        return;
+      case "llm_response":
+        this.renderLlmResponse(event);
         return;
       default:
         return;
@@ -78,6 +82,36 @@ export class PrettyRenderer implements StreamRenderer {
       this.write(`  ${p.dim("usage")}     ${parts.join("  ")}`);
     }
     if (e.summary) this.write(`  ${p.dim("summary")}   ${e.summary}`);
+  }
+
+  private renderLlmResponse(e: StreamEvent): void {
+    const p = this.paint;
+    const turn = Number(e.turn ?? 0);
+    // Model is cached from run_start. No leading blank here — the preceding
+    // section (run_start or tool_result) emits its own trailing blank.
+    const modelLabel = this.model ?? "";
+    const maxTurnsStr = this.maxTurns ?? "?";
+    const header = `${p.cyan("▎")} ${p.bold(`Turn ${turn}`)} ${p.dim(`· ${modelLabel} · turn ${turn} / ${maxTurnsStr}`)}`;
+    this.write(header);
+
+    const thinking = (e.thinking ?? []) as Array<{ text: string }>;
+    for (const th of thinking) {
+      this.write("");
+      this.write(`  ${p.magenta("~ thinking")}`);
+      for (const line of softWrap(th.text, this.opts.columns - 4)) {
+        this.write(`    ${p.dim(line)}`);
+      }
+    }
+
+    const text = String(e.text ?? "");
+    if (text.length > 0) {
+      this.write("");
+      this.write(`  ${p.yellow("= assistant")}`);
+      for (const line of softWrap(text, this.opts.columns - 4)) {
+        this.write(`    ${line}`);
+      }
+    }
+    this.write("");
   }
 }
 

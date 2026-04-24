@@ -17,13 +17,15 @@ function collect(): { out: string; write: (s: string) => void } {
 }
 
 describe("PrettyRenderer", () => {
-  test("renders run_start and run_end panels (happy fixture, start/end only)", () => {
+  test("renders full happy fixture excluding tool + llm_request events", () => {
     const { events, expected } = loadFixture("happy");
-    const startAndEnd = events.filter((e) => e.type === "run_start" || e.type === "run_end");
+    const filtered = events.filter((e) =>
+      e.type !== "tool_call" && e.type !== "tool_result" && e.type !== "llm_request"
+    );
 
     const sink = collect();
     const r = new PrettyRenderer(sink, { color: false, columns: 100 });
-    for (const e of startAndEnd) r.handle(e);
+    for (const e of filtered) r.handle(e);
     r.close();
 
     expect(sink.out).toBe(expected);

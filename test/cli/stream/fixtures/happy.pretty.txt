@@ -7,6 +7,14 @@
   max turns 50
 ──────────────────────────────────────────────────────
 
+▎ Turn 1 · claude-sonnet-4-6 · turn 1 / 50
+
+  ~ thinking
+    Let me see the page state.
+
+  = assistant
+    I'll take a screenshot first.
+
 ─── Run complete ────────────────────────────── ✓ pass
   runId     r-8f21
   duration  3.0s
