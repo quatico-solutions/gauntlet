@@ -8,7 +8,7 @@ import type { WriteSink } from "./stream/jsonl";
 export interface BatchOptions {
   scenarioPaths: string[];
   target: string;
-  adapterType: "web" | "cli" | "tui";
+  adapterType: RunOneOptions["adapterType"];
   config: AppConfig;
   silent: boolean;
   format: "pretty" | "jsonl" | undefined;
@@ -79,10 +79,15 @@ export async function runBatch(
         onLogger,
       });
       const s = summary.result.status;
-      if (s === "pass") pass++;
-      else if (s === "fail") fail++;
-      else if (s === "investigate") investigate++;
-      else errored++;
+      switch (s) {
+        case "pass": pass++; break;
+        case "fail": fail++; break;
+        case "investigate": investigate++; break;
+        default: {
+          const _exhaustive: never = s;
+          throw new Error(`unexpected VetStatus: ${JSON.stringify(_exhaustive)}`);
+        }
+      }
     } catch (err) {
       errored++;
       const msg = err instanceof Error ? err.message : String(err);
