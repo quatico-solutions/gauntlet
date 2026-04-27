@@ -21,6 +21,7 @@ export interface BatchTableOptions {
 export class BatchTableRenderer {
   private rows = new Map<string, CardRow>();
   private order: string[] = [];
+  private linesLastWritten = 0;
 
   constructor(private sink: WriteSink, private opts: BatchTableOptions) {}
 
@@ -81,6 +82,7 @@ export class BatchTableRenderer {
   }
 
   finalize(): void {
+    if (this.opts.isTTY) this.redrawTTY();
     let pass = 0, fail = 0, investigate = 0, errored = 0;
     for (const cardId of this.order) {
       const row = this.rows.get(cardId);
@@ -90,13 +92,55 @@ export class BatchTableRenderer {
       else if (row.finalStatus === "fail") fail++;
       else if (row.finalStatus === "investigate") investigate++;
     }
-    this.emitAppendLine(
-      `batch: ${pass} pass · ${fail} fail · ${investigate} investigate · ${errored} errored`,
+    this.sink.write(
+      `\nbatch: ${pass} pass · ${fail} fail · ${investigate} investigate · ${errored} errored\n`,
     );
   }
 
   private emitAppendLine(line: string): void {
-    if (this.opts.isTTY) return; // TTY mode handled in Task 3
+    if (this.opts.isTTY) {
+      this.redrawTTY();
+      return;
+    }
     this.sink.write(line + "\n");
+  }
+
+  private redrawTTY(): void {
+    const frame = this.renderFrame();
+    if (this.linesLastWritten > 0) {
+      // Cursor up N lines, erase from there to end of screen.
+      this.sink.write(`\x1b[${this.linesLastWritten}A\x1b[0J`);
+    }
+    this.sink.write(frame);
+    this.linesLastWritten = frame.split("\n").length - 1; // trailing \n doesn't add a line
+  }
+
+  private renderFrame(): string {
+    const header = "Gauntlet running in Batch Mode";
+    const rule = "==============================";
+    const idWidth = Math.max(...this.order.map((c) => c.length), 1);
+    const lines: string[] = [header, rule];
+    for (const cardId of this.order) {
+      const row = this.rows.get(cardId);
+      if (!row) continue;
+      lines.push(`  ${cardId.padEnd(idWidth)}  ${this.statusText(row)}`);
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  private statusText(row: CardRow): string {
+    switch (row.state) {
+      case "queued":
+        return "(queued)";
+      case "running":
+        return `Running turn ${row.turn} / ${row.maxTurns}`;
+      case "done":
+        return `Complete on turn ${row.turn} / ${row.maxTurns}    ${row.finalStatus}`;
+      case "errored":
+        if (row.errorTurn === null) return "Errored before start    error";
+        return `Errored on turn ${row.errorTurn}    error`;
+      default:
+        throw new Error("unreachable: " + JSON.stringify((row as CardRow).state));
+    }
   }
 }

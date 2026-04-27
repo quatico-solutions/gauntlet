@@ -38,3 +38,34 @@ describe("BatchTableRenderer (append mode)", () => {
     expect(sink.out).toContain("story-x: errored before start");
   });
 });
+
+describe("BatchTableRenderer (TTY mode)", () => {
+  test("renders the full table on each state change with a cursor-up + erase prefix on subsequent frames", () => {
+    const sink = collect();
+    const r = new BatchTableRenderer(sink, { isTTY: true, color: false, columns: 80 });
+    r.setQueued("story-a");
+    r.setQueued("story-b");
+    // Two frames so far. The second frame must be preceded by a cursor-up
+    // sequence sized to the previous frame's line count.
+    expect(sink.out).toContain("Gauntlet running in Batch Mode");
+    expect(sink.out).toContain("story-a");
+    expect(sink.out).toContain("story-b");
+    expect(sink.out).toContain("(queued)");
+    // Cursor-up + erase-to-end-of-screen sequence appears at least once.
+    expect(sink.out).toMatch(/\x1b\[\d+A\x1b\[0J/);
+  });
+
+  test("running and done rows render with the right status text and result flag", () => {
+    const sink = collect();
+    const r = new BatchTableRenderer(sink, { isTTY: true, color: false, columns: 100 });
+    r.setQueued("story-a");
+    r.setRunning("story-a", "run-1", 20);
+    r.onTurn("story-a", 7);
+    r.setDone("story-a", "investigate", 8);
+    r.finalize();
+    // The final frame must contain the completed status text and the
+    // VetStatus result flag.
+    expect(sink.out).toContain("Complete on turn 8 / 20");
+    expect(sink.out).toContain("investigate");
+  });
+});
