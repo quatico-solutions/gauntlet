@@ -128,6 +128,7 @@ describe("runBatch — error handling", () => {
       stub,
     );
     expect(exitCode).toBe(1);
+    expect(sink.out).toContain("batch: 0 pass · 0 fail · 1 investigate · 0 errored");
   });
 });
 
