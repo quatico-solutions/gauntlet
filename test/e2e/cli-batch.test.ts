@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
-import { mkdtempSync, writeFileSync, existsSync } from "fs";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { mkdtempSync, readdirSync, writeFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -37,6 +37,10 @@ describe("gauntlet batch — e2e against CLI adapter", () => {
     pathB = join(projectRoot, "b.md");
     writeFileSync(pathA, STORY_A);
     writeFileSync(pathB, STORY_B);
+  });
+
+  afterEach(() => {
+    mock.restore();
   });
 
   test("two cards: one pass, one fail; exit code 1; both evidence dirs created", async () => {
@@ -85,5 +89,11 @@ describe("gauntlet batch — e2e against CLI adapter", () => {
 
     const resultsRoot = join(projectRoot, ".gauntlet", "results");
     expect(existsSync(resultsRoot)).toBe(true);
+    // RunIds embed the cardId as their stem (`<cardId>_<ts>_<nonce>`),
+    // so we expect exactly two run dirs and one per card.
+    const runDirs = readdirSync(resultsRoot);
+    expect(runDirs.length).toBe(2);
+    expect(runDirs.some((d) => d.startsWith("cli-batch-a_"))).toBe(true);
+    expect(runDirs.some((d) => d.startsWith("cli-batch-b_"))).toBe(true);
   });
 });
