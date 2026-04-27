@@ -71,3 +71,131 @@ describe("runBatch", () => {
     expect(sink.out).toContain("batch: 2 pass · 0 fail · 0 investigate · 0 errored");
   });
 });
+
+describe("runBatch — error handling", () => {
+  test("runOne throwing marks the row errored and the loop continues", async () => {
+    const sink = collectSink();
+    const calls: string[] = [];
+    let i = 0;
+    const stub: any = async (opts: any) => {
+      calls.push(opts.scenarioPath);
+      if (i++ === 0) throw new Error("boom");
+      const observer = (await new Promise<EventObserver>((resolve) => {
+        const fakeLog: any = { addEventObserver: (fn: EventObserver) => { resolve(fn); return () => {}; }, logEvent: () => {} };
+        opts.onLogger?.(fakeLog);
+      }));
+      observer({ type: "run_start", runId: "r2", cardId: "b.md", maxTurns: 20 } as any);
+      observer({ type: "run_end", status: "pass", usage: { turns: 1 } } as any);
+      return { runId: "r2", outDir: "/tmp/b.md", result: { status: "pass" } };
+    };
+
+    const exitCode = await runBatch(
+      {
+        scenarioPaths: ["a.md", "b.md"],
+        target: "x", adapterType: "cli", config: makeConfig(),
+        silent: false, format: undefined, noColor: true,
+        sink, isTTY: false,
+      },
+      stub,
+    );
+
+    expect(calls).toEqual(["a.md", "b.md"]);
+    expect(exitCode).toBe(1);
+    expect(sink.out).toContain("a: errored");
+    expect(sink.out).toContain("b: done (pass)");
+    expect(sink.out).toContain("batch: 1 pass · 0 fail · 0 investigate · 1 errored");
+  });
+
+  test("any non-pass result yields exit code 1", async () => {
+    const sink = collectSink();
+    const stub: any = async (opts: any) => {
+      const observer = (await new Promise<EventObserver>((resolve) => {
+        const fakeLog: any = { addEventObserver: (fn: EventObserver) => { resolve(fn); return () => {}; }, logEvent: () => {} };
+        opts.onLogger?.(fakeLog);
+      }));
+      observer({ type: "run_start", runId: "r", cardId: opts.scenarioPath, maxTurns: 20 } as any);
+      observer({ type: "run_end", status: "investigate", usage: { turns: 1 } } as any);
+      return { runId: "r", outDir: "/tmp/x", result: { status: "investigate" } };
+    };
+
+    const exitCode = await runBatch(
+      {
+        scenarioPaths: ["a.md"],
+        target: "x", adapterType: "cli", config: makeConfig(),
+        silent: false, format: undefined, noColor: true,
+        sink, isTTY: false,
+      },
+      stub,
+    );
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe("runBatch — output modes", () => {
+  test("--format jsonl emits one event per line with runId injected", async () => {
+    const sink = collectSink();
+    const stub: any = async (opts: any) => {
+      const observer = (await new Promise<EventObserver>((resolve) => {
+        const fakeLog: any = { addEventObserver: (fn: EventObserver) => { resolve(fn); return () => {}; }, logEvent: () => {} };
+        opts.onLogger?.(fakeLog);
+      }));
+      observer({ type: "run_start", runId: "RUN-1", cardId: "a", maxTurns: 20 } as any);
+      observer({ type: "llm_response", turn: 1, stopReason: "end_turn" } as any);
+      observer({ type: "run_end", status: "pass", usage: { turns: 1 } } as any);
+      return { runId: "RUN-1", outDir: "/tmp/a", result: { status: "pass" } };
+    };
+
+    await runBatch(
+      {
+        scenarioPaths: ["a.md"],
+        target: "x", adapterType: "cli", config: makeConfig(),
+        silent: false, format: "jsonl", noColor: true,
+        sink, isTTY: false,
+      },
+      stub,
+    );
+
+    const lines = sink.out.split("\n").filter(Boolean);
+    expect(lines.length).toBe(3);
+    for (const line of lines) {
+      const parsed = JSON.parse(line);
+      expect(parsed.runId).toBe("RUN-1");
+    }
+    expect(sink.out).not.toContain("queued");
+    expect(sink.out).not.toContain("batch:");
+  });
+
+  test("--silent suppresses everything except the final summary on stderr", async () => {
+    const sink = collectSink();
+    const stderrLines: string[] = [];
+    const origErr = console.error;
+    console.error = (...a: unknown[]) => { stderrLines.push(a.join(" ")); };
+
+    const stub: any = async (opts: any) => {
+      const observer = (await new Promise<EventObserver>((resolve) => {
+        const fakeLog: any = { addEventObserver: (fn: EventObserver) => { resolve(fn); return () => {}; }, logEvent: () => {} };
+        opts.onLogger?.(fakeLog);
+      }));
+      observer({ type: "run_start", runId: "r", cardId: "a", maxTurns: 20 } as any);
+      observer({ type: "run_end", status: "pass", usage: { turns: 1 } } as any);
+      return { runId: "r", outDir: "/tmp/a", result: { status: "pass" } };
+    };
+
+    try {
+      await runBatch(
+        {
+          scenarioPaths: ["a.md"],
+          target: "x", adapterType: "cli", config: makeConfig(),
+          silent: true, format: undefined, noColor: true,
+          sink, isTTY: false,
+        },
+        stub,
+      );
+    } finally {
+      console.error = origErr;
+    }
+
+    expect(sink.out).toBe("");
+    expect(stderrLines.join("\n")).toContain("batch: 1 pass");
+  });
+});
