@@ -35,11 +35,9 @@ const RUN_ALLOWED = new Set([
   "turns", "viewport", "save-screencast",
   "silent", "format", "no-color",
 ]);
-const BATCH_ALLOWED = new Set([
-  "target", "adapter", "model", "chrome", "project-dir",
-  "turns", "viewport", "save-screencast",
-  "silent", "format", "no-color",
-]);
+// Everything `run` accepts, minus `--out` — batch doesn't invent a
+// batch-level results dir; each card writes to its default per-run dir.
+const BATCH_ALLOWED = new Set([...RUN_ALLOWED].filter((f) => f !== "out"));
 const VALIDATE_ALLOWED = new Set<string>([]);
 const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
 const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "turns", "viewport", "save-screencast"]);
@@ -206,6 +204,9 @@ function parseRunArgs(args: string[]): RunArgs {
 }
 
 function parseBatchArgs(args: string[]): BatchArgs {
+  // Positionals must precede all flags. A bareword flag immediately before a
+  // path would absorb that path as its value (same convention as
+  // extractPositional / parseRunArgs).
   const positionals: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith("--")) { i++; continue; }
