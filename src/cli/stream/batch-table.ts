@@ -1,6 +1,5 @@
 import type { WriteSink } from "./jsonl";
-
-export type VetStatus = "pass" | "fail" | "investigate";
+import type { VetStatus } from "../../types";
 
 interface CardRow {
   cardId: string;
