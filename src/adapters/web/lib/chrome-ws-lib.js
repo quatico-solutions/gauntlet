@@ -3019,6 +3019,60 @@ async function clearCookies(tabIndexOrWsUrl) {
   await sendCdpCommand(wsUrl, 'Network.clearBrowserCookies', {});
 }
 
+/**
+ * Install cookies into the browser, one CDP call per entry. Returns a
+ * per-cookie result array so the caller (the install_cookies tool) can
+ * report partial success to the agent — Chrome silently rejects cookies
+ * for reasons it does not surface (third-party blocking, schemeful same-
+ * site mismatches, sourcePort/sourceScheme cross-checks), and the agent
+ * needs to learn which entries got in.
+ *
+ * Why singular `Network.setCookie` (not `setCookies`): the singular form
+ * returns `{ success: boolean }` per call. The plural form swallows the
+ * per-cookie status and returns nothing useful for partial-failure
+ * diagnostics. The spec (§3.4) calls this out explicitly.
+ *
+ * Aggregation rules:
+ *  - sendCdpCommand throws → success: false, errorReason = thrown message.
+ *    This covers transport/protocol-level failures (WS dead, malformed
+ *    params, missing required field).
+ *  - response.success === false → success: false, errorReason =
+ *    "chrome rejected cookie (no detail provided)". CDP does not expose
+ *    a reason field on Network.setCookie; the cookie is silently dropped.
+ *  - response.success === true → success: true.
+ *
+ * Never throws on partial failure; returns the array unconditionally.
+ *
+ * @param {number|string} tabIndexOrWsUrl - Tab index or WebSocket URL.
+ * @param {Array<Object>} cookies - CDP CookieParam objects.
+ * @returns {Promise<Array<{name: string, success: boolean, errorReason?: string}>>}
+ */
+async function setCookies(tabIndexOrWsUrl, cookies) {
+  const wsUrl = await resolveWsUrl(tabIndexOrWsUrl);
+  const results = [];
+  for (const cookie of cookies) {
+    try {
+      const response = await sendCdpCommand(wsUrl, 'Network.setCookie', cookie);
+      if (response && response.success === true) {
+        results.push({ name: cookie.name, success: true });
+      } else {
+        results.push({
+          name: cookie.name,
+          success: false,
+          errorReason: 'chrome rejected cookie (no detail provided)',
+        });
+      }
+    } catch (err) {
+      results.push({
+        name: cookie.name,
+        success: false,
+        errorReason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return results;
+}
+
 // ===== GAUNTLET DIVERGENCE START: Gauntlet-only additions =====
 // Everything below this line up to the matching DIVERGENCE END marker
 // is Gauntlet-specific and does not exist upstream. New upstream
@@ -3418,6 +3472,7 @@ module.exports = {
 
   // Cookie management
   clearCookies,
+  setCookies,
   clearBrowserData,
 
   // WebAuthn virtual authenticator (pinned session — see comment on
