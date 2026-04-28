@@ -25,6 +25,7 @@
     "@anthropic-ai/sdk": "^0.78.0",
     "@xterm/headless": "^6.0.0",
     "hono": "^4.12.5",
-    "openai": "^6.27.0"
+    "openai": "^6.27.0",
+    "yaml": "^2.8.3"
   }
 }
