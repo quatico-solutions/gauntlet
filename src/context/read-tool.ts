@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync, statSync } from "fs";
+import { readFileSync, statSync } from "fs";
 import type { ToolDefinition, ToolResult } from "../models/provider";
-import { resolveInside } from "../paths";
+import { contextRootIsPopulated, resolveInside } from "../paths";
 
 // The `read` tool is the agent-facing primitive for pulling file contents
 // out of `.gauntlet/context/`. It is a pure filesystem primitive — the
@@ -26,19 +26,6 @@ const TOOL_DESCRIPTION =
   "Binary files are not supported; attempts to read binary content return an " +
   "error. This is the tool to use when a story names a user and you need " +
   "their credentials, character notes, or any other file the story references.";
-
-// Registration predicate: true when `contextRoot` exists, is a directory,
-// and is non-empty. Matches the passkey tool's predicate and honors the
-// "invisible when unused" shape of v1's profile tool.
-function contextRootIsPopulated(contextRoot: string): boolean {
-  try {
-    const stat = statSync(contextRoot);
-    if (!stat.isDirectory()) return false;
-    return readdirSync(contextRoot).length > 0;
-  } catch {
-    return false;
-  }
-}
 
 const errorMessage = (err: unknown) =>
   err instanceof Error ? err.message : String(err);

@@ -1,7 +1,7 @@
 // The one and only path-safety guard for Gauntlet. All containment checks go through this.
 
 import { isAbsolute, join, resolve as resolvePath, sep } from "path";
-import { realpathSync } from "fs";
+import { readdirSync, realpathSync, statSync } from "fs";
 
 export const GAUNTLET_DIRNAME = ".gauntlet";
 
@@ -113,4 +113,23 @@ export function resolveInside(root: string, rel: string): string {
     throw new Error(`path "${rel}" escapes the context root`);
   }
   return resolved;
+}
+
+/**
+ * Registration predicate shared by every context-aware tool (`read`,
+ * `install_passkey`, `install_cookies`): the tool is registered iff
+ * `contextRoot` exists, is a directory, and is non-empty. Honors spec
+ * §2.1's principle that the runner does not interpret filenames — the
+ * predicate looks only at directory population, never at what's inside.
+ * If the author has no relevant files, the agent sees the tool in its
+ * registry but never calls it.
+ */
+export function contextRootIsPopulated(contextRoot: string): boolean {
+  try {
+    const stat = statSync(contextRoot);
+    if (!stat.isDirectory()) return false;
+    return readdirSync(contextRoot).length > 0;
+  } catch {
+    return false;
+  }
 }

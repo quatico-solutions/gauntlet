@@ -1,8 +1,8 @@
-import { readdirSync, readFileSync, statSync } from "fs";
+import { readFileSync } from "fs";
 import * as YAML from "yaml";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
-import { resolveInside } from "../../paths";
+import { contextRootIsPopulated, resolveInside } from "../../paths";
 
 // CDP CookieParam — the shape passed verbatim to `Network.setCookie`.
 // Field set mirrors Chrome's protocol; we don't try to interpret cookie
@@ -186,26 +186,6 @@ function cookieContext(cookie: CookieParam): Record<string, unknown> {
     sameSite: cookie.sameSite ?? null,
     valueLength: cookie.value.length,
   };
-}
-
-// Registration predicate: true when `contextRoot` exists, is a
-// directory, and is non-empty. Matches `read` and `install_passkey`'s
-// predicates; honors spec §2.1's principle that the runner does not
-// interpret filenames. The runner never scans for `cookies.yaml` —
-// if the author has no cookies, the agent sees the tool but never
-// calls it.
-//
-// Duplicated from passkey.ts deliberately (per the plan's
-// out-of-scope notes); a future refactor can lift this into
-// src/paths.ts as a shared helper.
-function contextRootIsPopulated(contextRoot: string): boolean {
-  try {
-    const stat = statSync(contextRoot);
-    if (!stat.isDirectory()) return false;
-    return readdirSync(contextRoot).length > 0;
-  } catch {
-    return false;
-  }
 }
 
 const errorMessage = (err: unknown) =>

@@ -1,8 +1,8 @@
-import { readdirSync, readFileSync, statSync } from "fs";
+import { readFileSync } from "fs";
 import * as YAML from "yaml";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
-import { resolveInside } from "../../paths";
+import { contextRootIsPopulated, resolveInside } from "../../paths";
 
 // A pinned CDP session with WebAuthn enabled. Bypasses the chrome-ws-lib
 // connection pool so that every WebAuthn operation rides the same
@@ -136,21 +136,6 @@ function credentialContext(credential: PasskeyCredential): Record<string, unknow
     hasUserHandle: credential.userHandle !== undefined,
     userHandleLength: credential.userHandle?.length ?? 0,
   };
-}
-
-// Registration predicate: true when `contextRoot` exists, is a directory,
-// and is non-empty. Matches the `read` tool's predicate and honors
-// spec §2.1's principle that the runner does not interpret filenames.
-// The runner never scans for `passkey.yaml` — if the author has no
-// passkeys, the agent sees the tool in its registry but never calls it.
-function contextRootIsPopulated(contextRoot: string): boolean {
-  try {
-    const stat = statSync(contextRoot);
-    if (!stat.isDirectory()) return false;
-    return readdirSync(contextRoot).length > 0;
-  } catch {
-    return false;
-  }
 }
 
 const errorMessage = (err: unknown) =>

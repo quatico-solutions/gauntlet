@@ -151,11 +151,18 @@ describe("WebAdapter", () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-web-credentials-"));
     try {
       mkdirSync(join(tmp, ".gauntlet", "context", "matt"), { recursive: true });
-      // A non-credential file is enough to make the directory non-empty;
-      // the predicate doesn't care what's in it (spec §2.1).
+      // Stress the filename-blindness claim by planting files that LOOK
+      // like the credential files by name but are malformed: if the
+      // predicate ever started parsing them, this test would fail. The
+      // tools register anyway because the predicate only checks
+      // directory population.
       writeFileSync(
-        join(tmp, ".gauntlet", "context", "matt", "identity.md"),
-        "# matt\n",
+        join(tmp, ".gauntlet", "context", "matt", "passkey.yaml"),
+        "this is not valid passkey YAML",
+      );
+      writeFileSync(
+        join(tmp, ".gauntlet", "context", "matt", "cookies.yaml"),
+        ":\n  : :",
       );
       const adapter = new WebAdapter({ contextRoot: join(tmp, ".gauntlet", "context") });
       const names = adapter.toolDefinitions().map((t) => t.name);
