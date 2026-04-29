@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { parseArgs } from "./cli/args";
 import { run } from "./cli/run";
 import type { AppConfig, CliArgsInput } from "./config";
