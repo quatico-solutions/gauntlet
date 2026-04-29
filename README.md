@@ -168,6 +168,52 @@ During each run, the `EvidenceLogger` captures:
 
 Results are written to a `results/` directory as `result.json` alongside the evidence files.
 
+## Installation
+
+Gauntlet ships as a `gauntlet` command on your PATH. The package isn't published to a registry; it's consumed via a local clone, with `bun link` registering the repo's `bin` entry globally so every shell sees it.
+
+### Prerequisites
+
+- [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
+- Google Chrome — the browser adapter drives Chrome via CDP
+- An LLM API key — `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in your environment
+
+### Install
+
+```bash
+git clone <gauntlet-repo-url>
+cd gauntlet
+bun install
+bun link            # registers the package globally; adds `gauntlet` to ~/.bun/bin
+```
+
+Verify:
+
+```bash
+cd /tmp
+gauntlet            # prints usage
+gauntlet config     # reads project + env config
+```
+
+`~/.bun/bin` is on your PATH after `bun.sh/install`. If `gauntlet: command not found`, add `~/.bun/bin` to PATH manually.
+
+### Upgrade
+
+```bash
+cd <gauntlet-repo>
+git pull
+bun install
+```
+
+The symlink already points at the repo — no re-link needed.
+
+### Uninstall
+
+```bash
+cd <gauntlet-repo>
+bun unlink
+```
+
 ## Usage
 
 ### CLI
