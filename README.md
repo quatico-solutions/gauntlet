@@ -181,7 +181,7 @@ Gauntlet ships as a `gauntlet` command on your PATH. The package isn't published
 ### Install
 
 ```bash
-git clone <gauntlet-repo-url>
+git clone git@github.com:prime-radiant-inc/gauntlet.git
 cd gauntlet
 bun install
 bun link            # registers the package globally; adds `gauntlet` to ~/.bun/bin
