@@ -46,6 +46,7 @@ export function RunSetDetail() {
       await api.runSets.cancel(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cancel failed");
+    } finally {
       setCancelling(false);
     }
   };
