@@ -64,6 +64,35 @@ describe("BatchTableRenderer (append mode)", () => {
   });
 });
 
+describe("BatchTableRenderer (attemptNumber)", () => {
+  test("attemptNumber defaults to 1, behavior unchanged", () => {
+    const sink = collect();
+    const r = new BatchTableRenderer(sink, NON_TTY);
+    r.setQueued("story-a");
+    r.setRunning("story-a", "story-a_t1_x", 50);
+    r.onTurn("story-a", 1);
+    r.setDone("story-a", "pass", 5);
+    r.finalize();
+    expect(sink.out).toContain("story-a");
+    expect(sink.out).toContain("pass");
+  });
+
+  test("two attempts of same card render distinct rows", () => {
+    const sink = collect();
+    const r = new BatchTableRenderer(sink, NON_TTY);
+    r.setQueued("story-a", 1);
+    r.setQueued("story-a", 2);
+    r.setRunning("story-a", "story-a_t1_x", 50, 1);
+    r.setDone("story-a", "pass", 5, 1);
+    r.setRunning("story-a", "story-a_t2_y", 50, 2);
+    r.setDone("story-a", "fail", 7, 2);
+    r.finalize();
+    // Both attempts represented in non-TTY append output:
+    expect(sink.out.match(/story-a.*pass/)).toBeTruthy();
+    expect(sink.out.match(/story-a.*fail/)).toBeTruthy();
+  });
+});
+
 describe("BatchTableRenderer (TTY mode — Mock B ticker)", () => {
   test("setQueued does not emit anything (queued cards are tracked silently)", () => {
     const sink = collect();

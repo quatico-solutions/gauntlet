@@ -3,6 +3,8 @@ import type { VetStatus } from "../../types";
 
 interface CardRow {
   cardId: string;
+  attemptNumber: number;
+  passes: number;
   runId: string | null;
   state: "queued" | "running" | "done" | "errored";
   turn: number;
@@ -49,7 +51,7 @@ export class BatchTableRenderer {
 
   // TTY-mode state
   private headerWritten = false;
-  private activeCardId: string | null = null;
+  private activeKey: string | null = null;
   private cardIndex = 0;            // 1-indexed; the currently-running card
   private spinnerStep = 0;
   private spinnerTimer: ReturnType<typeof setInterval> | null = null;
@@ -62,10 +64,17 @@ export class BatchTableRenderer {
 
   constructor(private sink: WriteSink, private opts: BatchTableOptions) {}
 
-  setQueued(cardId: string): void {
-    if (!this.rows.has(cardId)) this.order.push(cardId);
-    this.rows.set(cardId, {
+  private rowKey(cardId: string, attemptNumber = 1): string {
+    return `${cardId}#${attemptNumber}`;
+  }
+
+  setQueued(cardId: string, attemptNumber = 1, passes = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    if (!this.rows.has(key)) this.order.push(key);
+    this.rows.set(key, {
       cardId,
+      attemptNumber,
+      passes,
       runId: null,
       state: "queued",
       turn: 0,
@@ -80,12 +89,14 @@ export class BatchTableRenderer {
     // TTY: queued cards aren't shown until they start; the model is enough.
   }
 
-  setRunning(cardId: string, runId: string, maxTurns: number): void {
-    const row = this.rows.get(cardId);
+  setRunning(cardId: string, runId: string, maxTurns: number, attemptNumber = 1, passes = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    const row = this.rows.get(key);
     if (!row) return;
     row.runId = runId;
     row.state = "running";
     row.maxTurns = maxTurns;
+    row.passes = passes;
     row.startedAt = Date.now();
 
     if (!this.opts.isTTY) {
@@ -94,7 +105,7 @@ export class BatchTableRenderer {
     }
 
     this.cardIndex += 1;
-    this.activeCardId = cardId;
+    this.activeKey = key;
     if (!this.headerWritten) {
       // First card: header writes its own trailing blank, spinner sits
       // directly underneath. No "\n" added here.
@@ -110,19 +121,21 @@ export class BatchTableRenderer {
     this.startSpinnerTimer();
   }
 
-  onTurn(cardId: string, turn: number): void {
-    const row = this.rows.get(cardId);
+  onTurn(cardId: string, turn: number, attemptNumber = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    const row = this.rows.get(key);
     if (!row || row.state !== "running") return;
     row.turn = turn;
     if (!this.opts.isTTY) {
       this.sink.write(`${cardId}: running turn ${turn} / ${row.maxTurns}\n`);
       return;
     }
-    if (this.activeCardId === cardId) this.drawSpinner();
+    if (this.activeKey === key) this.drawSpinner();
   }
 
-  setDone(cardId: string, finalStatus: VetStatus, turn: number): void {
-    const row = this.rows.get(cardId);
+  setDone(cardId: string, finalStatus: VetStatus, turn: number, attemptNumber = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    const row = this.rows.get(key);
     if (!row) return;
     row.state = "done";
     row.finalStatus = finalStatus;
@@ -136,8 +149,9 @@ export class BatchTableRenderer {
     this.commit(row);
   }
 
-  setErrored(cardId: string, turn: number | null, message: string): void {
-    const row = this.rows.get(cardId);
+  setErrored(cardId: string, turn: number | null, message: string, attemptNumber = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    const row = this.rows.get(key);
     if (!row) return;
     // If the caller didn't pass a turn but the row was already running,
     // use the row's last-known turn. This way batch.ts can call
@@ -160,18 +174,18 @@ export class BatchTableRenderer {
 
   finalize(): void {
     this.stopSpinnerTimer();
-    if (this.opts.isTTY && this.activeCardId !== null) {
+    if (this.opts.isTTY && this.activeKey !== null) {
       // Defensive: a run that produces no terminal event would leak the
       // spinner line. Erase it so the summary sits cleanly.
       this.sink.write(ERASE_LINE);
       if (this.pendingBlankAboveSpinner) this.sink.write(CURSOR_UP_AND_ERASE);
-      this.activeCardId = null;
+      this.activeKey = null;
       this.pendingBlankAboveSpinner = false;
     }
 
     let pass = 0, fail = 0, investigate = 0, errored = 0;
-    for (const cardId of this.order) {
-      const row = this.rows.get(cardId);
+    for (const key of this.order) {
+      const row = this.rows.get(key);
       if (!row) continue;
       if (row.state === "errored") errored++;
       else if (row.finalStatus === "pass") pass++;
@@ -198,9 +212,9 @@ export class BatchTableRenderer {
   }
 
   private drawSpinner(): void {
-    const cardId = this.activeCardId;
-    if (cardId === null) return;
-    const row = this.rows.get(cardId);
+    const key = this.activeKey;
+    if (key === null) return;
+    const row = this.rows.get(key);
     if (!row) return;
     const c = this.colors();
     const frame = SPINNER_FRAMES[this.spinnerStep % SPINNER_FRAMES.length];
@@ -210,7 +224,7 @@ export class BatchTableRenderer {
       ? `starting…`
       : `turn ${row.turn} / ${row.maxTurns}`;
     this.sink.write(
-      `${ERASE_LINE}${c.bold}${frame}${c.reset} ${c.dim}[${idx}/${total}]${c.reset} ${cardId}   ${c.dim}${turn}${c.reset}`,
+      `${ERASE_LINE}${c.bold}${frame}${c.reset} ${c.dim}[${idx}/${total}]${c.reset} ${row.cardId}   ${c.dim}${turn}${c.reset}`,
     );
   }
 
@@ -222,10 +236,10 @@ export class BatchTableRenderer {
     // above it, if we wrote one). The committed result then takes the
     // spinner's slot, stacking flush with the previous commit (or, for
     // the first card, sitting directly under the header's blank line).
-    if (this.activeCardId !== null) {
+    if (this.activeKey !== null) {
       this.sink.write(ERASE_LINE);
       if (this.pendingBlankAboveSpinner) this.sink.write(CURSOR_UP_AND_ERASE);
-      this.activeCardId = null;
+      this.activeKey = null;
       this.pendingBlankAboveSpinner = false;
     }
     // Else: parse-failure / setErrored before setRunning. Cursor is on
