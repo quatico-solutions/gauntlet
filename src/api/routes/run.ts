@@ -131,6 +131,7 @@ export function runRoutes(
         target: effective.target,
         model: effective.model,
         startedAt,
+        status: "running",
       });
     }
 

@@ -145,6 +145,7 @@ describe("Run API", () => {
       target: "x",
       model: "m",
       startedAt: 1,
+      status: "running",
     });
 
     // Track the order of unregister vs. the terminal broadcast. A fake WS

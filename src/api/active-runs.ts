@@ -12,6 +12,13 @@ export interface ActiveRunInfo {
   target: string;
   model: string;
   startedAt: number; // ms since epoch
+  status: "queued" | "running";
+  /** Link back to the run set, if any. */
+  runSetId?: string;
+  /** 1-indexed attempt number when part of a run set. */
+  attemptNumber?: number;
+  /** Total passes in the run set. */
+  passes?: number;
 }
 
 export interface RunSnapshot {
@@ -45,6 +52,14 @@ export class ActiveRunRegistry {
     if (!snap) return;
     if (startedAt !== undefined && snap.info.startedAt !== startedAt) return;
     this.runs.delete(runId);
+  }
+
+  /**
+   * Transition a run's status (e.g. from "queued" to "running").
+   */
+  setStatus(runId: string, status: "queued" | "running"): void {
+    const snap = this.runs.get(runId);
+    if (snap) snap.info.status = status;
   }
 
   recordFrame(runId: string, frame: { data: string; width: number; height: number }): void {

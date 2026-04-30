@@ -27,6 +27,7 @@ describe("handleWsOpen", () => {
       target: "http://localhost:3000",
       model: "claude-sonnet-4-6",
       startedAt: 100,
+      status: "running",
     });
     registry.recordFrame(RUN_ID, { data: "AAA", width: 10, height: 20 });
     registry.recordProgress(RUN_ID, "hello");
@@ -61,6 +62,7 @@ describe("handleWsOpen", () => {
       target: "x",
       model: "m",
       startedAt: 1,
+      status: "running",
     });
     const broadcaster = new RunBroadcaster();
     const { ws } = makeWs();
@@ -132,6 +134,7 @@ describe("handleWsOpen", () => {
         target: "http://localhost:3000",
         model: "claude-sonnet-4-6",
         startedAt: 100,
+        status: "running",
       });
 
       const broadcaster = new RunBroadcaster();

@@ -5,13 +5,14 @@ describe("ActiveRunRegistry", () => {
   // Per-run shape: `id` is the runId (the primary key), `cardId` is
   // payload metadata. Tests use synthetic ids that satisfy both fields
   // independently — the registry doesn't parse runId structure.
-  const info = (runId: string, startedAt: number, cardId = "card-x") => ({
+  const info = (runId: string, startedAt: number, cardId = "card-x", status: "queued" | "running" = "running") => ({
     id: runId,
     cardId,
     title: `Title ${runId}`,
     target: "http://localhost:3000",
     model: "claude-sonnet-4-6",
     startedAt,
+    status,
   });
 
   test("register + list + has", () => {
@@ -127,5 +128,56 @@ describe("ActiveRunRegistry", () => {
     expect(list.every((x) => x.cardId === "login-001")).toBe(true);
     // Both ids present and distinct.
     expect(new Set(list.map((x) => x.id)).size).toBe(2);
+  });
+});
+
+describe("ActiveRunRegistry — status", () => {
+  test("registered runs can have status='running'", () => {
+    const r = new ActiveRunRegistry();
+    r.register({
+      id: "card-a_t_x",
+      cardId: "card-a",
+      title: "X",
+      target: "stub",
+      model: "m",
+      startedAt: 1,
+      status: "running",
+    });
+    expect(r.list()[0].status).toBe("running");
+  });
+
+  test("registered runs can have status='queued'", () => {
+    const r = new ActiveRunRegistry();
+    r.register({
+      id: "card-a_t_x",
+      cardId: "card-a",
+      title: "X",
+      target: "stub",
+      model: "m",
+      startedAt: 1,
+      status: "queued",
+    });
+    expect(r.list()[0].status).toBe("queued");
+  });
+
+  test("setStatus transitions queued → running", () => {
+    const r = new ActiveRunRegistry();
+    r.register({
+      id: "r1",
+      cardId: "card-a",
+      title: "X",
+      target: "stub",
+      model: "m",
+      startedAt: 1,
+      status: "queued",
+    });
+    expect(r.list()[0].status).toBe("queued");
+    r.setStatus("r1", "running");
+    expect(r.list()[0].status).toBe("running");
+  });
+
+  test("setStatus does nothing for unknown runId", () => {
+    const r = new ActiveRunRegistry();
+    expect(() => r.setStatus("nope", "running")).not.toThrow();
   });
 });
