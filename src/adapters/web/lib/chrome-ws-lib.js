@@ -582,7 +582,16 @@ async function closeTab(tabIndexOrWsUrl) {
   const wsUrl = await resolveWsUrl(tabIndexOrWsUrl);
   const tabs = await chromeHttp('/json');
   if (!Array.isArray(tabs)) return;
-  const tab = tabs.find(t => t.webSocketDebuggerUrl === wsUrl);
+  // PRI-1439: callers (e.g., WebAdapter's side-trip stack) cache the
+  // *rewritten* WS URL — the one getTabs() returns after host-override.
+  // Chrome's raw /json reports its own internal WS URL, which under a
+  // remote-host override is different from what we cached. Compare on
+  // the rewritten form so the find succeeds.
+  const tab = tabs.find(t => {
+    if (!t.webSocketDebuggerUrl) return false;
+    const rewritten = rewriteWsUrl(t.webSocketDebuggerUrl, hostOverride.getHost(), activePort);
+    return rewritten === wsUrl || t.webSocketDebuggerUrl === wsUrl;
+  });
   if (tab) {
     await chromeHttp(`/json/close/${tab.id}`, 'GET');
   }
