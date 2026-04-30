@@ -13,6 +13,8 @@ import { getMimeType } from "./mime-types";
 import { isSafePath, gauntletPath } from "../paths";
 import type { RunBroadcaster } from "./ws";
 import type { ActiveRunRegistry } from "./active-runs";
+import type { RunSetBroadcaster } from "./run-set-broadcaster";
+import type { CancelTokenRegistry } from "./run-cancel";
 import type { AppConfig } from "../config";
 
 export function createApp(
@@ -20,6 +22,8 @@ export function createApp(
   uiDir?: string,
   broadcaster?: RunBroadcaster,
   registry?: ActiveRunRegistry,
+  setBroadcaster?: RunSetBroadcaster,
+  cancelTokens?: CancelTokenRegistry,
 ) {
   const app = new Hono();
   const errorLog = new ErrorLog();
@@ -29,7 +33,7 @@ export function createApp(
   api.route("/scenarios", scenarioRoutes(projectRoot, errorLog));
   api.route("/results", resultRoutes(gauntletPath(projectRoot, "results"), registry));
   api.route("/fanout", fanoutRoutes(config, undefined, errorLog));
-  api.route("/run", runRoutes(config, broadcaster, errorLog, registry));
+  api.route("/run", runRoutes(config, broadcaster, errorLog, registry, setBroadcaster, cancelTokens));
   api.route("/config", configRoutes(config));
   api.route("/config/effective", configEffectiveRoutes(config));
   api.route("/errors", errorRoutes(errorLog));

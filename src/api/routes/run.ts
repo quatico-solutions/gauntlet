@@ -215,7 +215,6 @@ export function runRoutes(
           viewport: snapshotViewport(adapter),
         };
         const contextTree = renderContextTree(contextRoot);
-        const startedAt = Date.now();
 
         await executeRun({
           runId,
@@ -229,7 +228,11 @@ export function runRoutes(
           broadcaster,
           registry,
           errorLog,
-          startedAt,
+          // Omit startedAt so executeRun's internal unregister bypasses the
+          // startedAt guard (unregister(runId, undefined) always removes).
+          // The pre-registration startedAt and a fresh Date.now() would differ,
+          // causing the guarded unregister to silently no-op.
+          startedAt: undefined,
           contextTree,
           maxTurns: effective.turns,
           runConfig,

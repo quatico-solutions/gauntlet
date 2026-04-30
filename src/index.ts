@@ -120,6 +120,8 @@ async function main() {
       const { createApp } = await import("./api/server");
       const { RunBroadcaster } = await import("./api/ws");
       const { ActiveRunRegistry } = await import("./api/active-runs");
+      const { RunSetBroadcaster } = await import("./api/run-set-broadcaster");
+      const { CancelTokenRegistry } = await import("./api/run-cancel");
       const { handleWsOpen } = await import("./api/ws-handlers");
       const { join } = await import("path");
       const { gauntletPath } = await import("./paths");
@@ -131,7 +133,9 @@ async function main() {
       const resultsRoot = gauntletPath(config.projectRoot, "results");
       const broadcaster = new RunBroadcaster();
       const registry = new ActiveRunRegistry();
-      const app = createApp(config, uiDir, broadcaster, registry);
+      const setBroadcaster = new RunSetBroadcaster();
+      const cancelTokens = new CancelTokenRegistry();
+      const app = createApp(config, uiDir, broadcaster, registry, setBroadcaster, cancelTokens);
       const port = config.port;
       console.error(`gauntlet server listening on port ${port}`);
       Bun.serve<{ runId: string }>({
