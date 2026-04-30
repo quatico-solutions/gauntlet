@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { runSetRoutes } from "../../src/api/routes/run-sets";
+import { CancelTokenRegistry } from "../../src/api/run-cancel";
 
 let projectRoot: string;
 let runSetsDir: string;
@@ -69,6 +70,37 @@ describe("GET /api/run-sets/:id", () => {
     const app = new Hono();
     app.route("/api/run-sets", runSetRoutes(join(projectRoot, ".gauntlet")));
     const res = await app.request("/api/run-sets/..%2F..%2Fetc%2Fpasswd");
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("DELETE /api/run-sets/:id", () => {
+  test("flips cancel token and returns 202", async () => {
+    const cancelTokens = new CancelTokenRegistry();
+    const token = { cancelled: false };
+    cancelTokens.register("single_20260430T000000Z_abcd", token);
+
+    const app = new Hono();
+    app.route("/api/run-sets", runSetRoutes(join(projectRoot, ".gauntlet"), cancelTokens));
+
+    const res = await app.request("/api/run-sets/single_20260430T000000Z_abcd", { method: "DELETE" });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.status).toBe("cancelling");
+    expect(token.cancelled).toBe(true);
+  });
+
+  test("returns 404 if no in-flight set with that id", async () => {
+    const app = new Hono();
+    app.route("/api/run-sets", runSetRoutes(join(projectRoot, ".gauntlet"), new CancelTokenRegistry()));
+    const res = await app.request("/api/run-sets/single_20260430T000000Z_xyz", { method: "DELETE" });
+    expect(res.status).toBe(404);
+  });
+
+  test("rejects invalid id format with 400", async () => {
+    const app = new Hono();
+    app.route("/api/run-sets", runSetRoutes(join(projectRoot, ".gauntlet"), new CancelTokenRegistry()));
+    const res = await app.request("/api/run-sets/..%2F..%2Fetc%2Fpasswd", { method: "DELETE" });
     expect(res.status).toBe(400);
   });
 });

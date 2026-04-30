@@ -5,6 +5,7 @@ import { scenarioRoutes } from "./routes/scenarios";
 import { resultRoutes } from "./routes/results";
 import { fanoutRoutes } from "./routes/fanout";
 import { runRoutes } from "./routes/run";
+import { runSetRoutes } from "./routes/run-sets";
 import { configRoutes } from "./routes/config";
 import { configEffectiveRoutes } from "./routes/config-effective";
 import { ErrorLog, errorRoutes } from "./routes/errors";
@@ -34,6 +35,7 @@ export function createApp(
   api.route("/results", resultRoutes(gauntletPath(projectRoot, "results"), registry));
   api.route("/fanout", fanoutRoutes(config, undefined, errorLog));
   api.route("/run", runRoutes(config, broadcaster, errorLog, registry, setBroadcaster, cancelTokens));
+  api.route("/run-sets", runSetRoutes(gauntletPath(projectRoot), cancelTokens));
   api.route("/config", configRoutes(config));
   api.route("/config/effective", configEffectiveRoutes(config));
   api.route("/errors", errorRoutes(errorLog));
