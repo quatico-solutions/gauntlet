@@ -635,8 +635,309 @@ describe("WebAdapter", () => {
         expect(closeCalls).toHaveLength(2);
         expect(closeCalls[0][1][0]).toBe("ws://stub/2");
         expect(closeCalls[1][1][0]).toBe("ws://stub/1");
+        // Original tab WS URL is *not* in the closeTab list — close()
+        // must never close the original (it goes away with killChrome).
+        for (const c of closeCalls) {
+          expect(c[1][0]).not.toBe("ws://stub/0");
+        }
       } finally {
         rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    // --- Post-review fixes (PRI-1439 follow-up) ---------------------
+
+    test("new_tab with return_screenshot screenshots the NEW tab, not the pre-push tab", async () => {
+      // Regression for review finding F2: takeReturnScreenshot used the
+      // pre-mutation `tab` snapshot, so new_tab silently captured the
+      // wrong tab.
+      const stub = makeSideTripStub();
+      const { logger, dir } = tmpLogger();
+      try {
+        const adapter = new WebAdapter({ chromeSession: stub.session as never });
+        await adapter.start("https://example.com/");
+        await adapter.executeTool(
+          "new_tab",
+          { url: "https://mail.example/", return_screenshot: true },
+          logger,
+        );
+        const screenshotCalls = stub.calls.filter((c) => c[0] === "screenshot");
+        // One screenshot was requested by return_screenshot.
+        expect(screenshotCalls).toHaveLength(1);
+        // Its first arg (tab specifier) is the NEW tab's WS URL, not
+        // the original.
+        expect(screenshotCalls[0][1][0]).toBe("ws://stub/1");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("close_tab with return_screenshot screenshots the now-active tab, not the just-closed tab", async () => {
+      const stub = makeSideTripStub();
+      const { logger, dir } = tmpLogger();
+      try {
+        const adapter = new WebAdapter({ chromeSession: stub.session as never });
+        await adapter.start("https://example.com/");
+        await adapter.executeTool("new_tab", { url: "https://mail.example/" }, logger);
+        await adapter.executeTool(
+          "close_tab",
+          { return_screenshot: true },
+          logger,
+        );
+        const screenshotCalls = stub.calls.filter((c) => c[0] === "screenshot");
+        expect(screenshotCalls).toHaveLength(1);
+        // Screenshot must hit the original tab (now the active tab),
+        // NOT the just-popped ws://stub/1 (which would be a dead WS).
+        expect(screenshotCalls[0][1][0]).toBe("ws://stub/0");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("tab_focus_changed pop event includes both ws_url and url", async () => {
+      const stub = makeSideTripStub();
+      const { logger, dir } = tmpLogger();
+      try {
+        const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+        const original = logger.logEvent.bind(logger);
+        logger.logEvent = (name: string, data: Record<string, unknown>) => {
+          events.push({ name, data });
+          return original(name, data);
+        };
+        const adapter = new WebAdapter({ chromeSession: stub.session as never });
+        await adapter.start("https://example.com/");
+        await adapter.executeTool("new_tab", { url: "https://mail.example/" }, logger);
+        await adapter.executeTool("close_tab", {}, logger);
+        const pop = events.find(
+          (e) => e.name === "tab_focus_changed" && e.data.action === "pop",
+        );
+        expect(pop).toBeDefined();
+        expect(pop!.data.url).toBe("https://mail.example/");
+        expect(pop!.data.ws_url).toBe("ws://stub/1");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("close_tab surfaces a warning in result text when chrome.closeTab fails", async () => {
+      const stub = makeSideTripStub();
+      // Override closeTab to reject after the new_tab.
+      let rejected = false;
+      stub.session.closeTab = (...args: unknown[]) => {
+        stub.calls.push(["closeTab", args]);
+        rejected = true;
+        return Promise.reject(new Error("chrome went away"));
+      };
+      const { logger, dir } = tmpLogger();
+      try {
+        const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+        const orig = logger.logEvent.bind(logger);
+        logger.logEvent = (name, data) => { events.push({ name, data }); return orig(name, data); };
+        const adapter = new WebAdapter({ chromeSession: stub.session as never });
+        await adapter.start("https://example.com/");
+        await adapter.executeTool("new_tab", { url: "https://mail.example/" }, logger);
+        const result = await adapter.executeTool("close_tab", {}, logger);
+        expect(rejected).toBe(true);
+        expect(result.text).toContain("closed tab");
+        expect(result.text).toContain("warning");
+        expect(result.text).toContain("chrome went away");
+        const failEvent = events.find((e) => e.name === "tab_force_close_failed");
+        expect(failEvent).toBeDefined();
+        expect(failEvent!.data.ws_url).toBe("ws://stub/1");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("new_tab refuses an empty url with the absolute-URL error", async () => {
+      const stub = makeSideTripStub();
+      const { logger, dir } = tmpLogger();
+      try {
+        const adapter = new WebAdapter({ chromeSession: stub.session as never });
+        await adapter.start("https://example.com/");
+        const result = await adapter.executeTool("new_tab", { url: "" }, logger);
+        expect(result.text).toMatch(/new_tab requires an absolute URL/i);
+        // Schema validation may fire first; either way no chrome.newTab call.
+        const newTabCalls = stub.calls.filter((c) => c[0] === "newTab");
+        expect(newTabCalls).toHaveLength(0);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("new_tab refuses a non-http(s) scheme like javascript:", async () => {
+      const stub = makeSideTripStub();
+      const { logger, dir } = tmpLogger();
+      try {
+        const adapter = new WebAdapter({ chromeSession: stub.session as never });
+        await adapter.start("https://example.com/");
+        const result = await adapter.executeTool(
+          "new_tab",
+          { url: "javascript:alert(1)" },
+          logger,
+        );
+        expect(result.text).toMatch(/new_tab requires an absolute URL/i);
+        const newTabCalls = stub.calls.filter((c) => c[0] === "newTab");
+        expect(newTabCalls).toHaveLength(0);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("depth-cap error message names the side-trip cap, not the total stack depth", async () => {
+      // F15 (Hephaestus): the original message said "max 5" but only 4
+      // side trips fit (1 original + 4). Reword to phrase the limit in
+      // side-trip terms, which is what the agent thinks in.
+      const stub = makeSideTripStub();
+      const { logger, dir } = tmpLogger();
+      try {
+        const adapter = new WebAdapter({ chromeSession: stub.session as never });
+        await adapter.start("https://example.com/");
+        for (let i = 0; i < 4; i++) {
+          await adapter.executeTool("new_tab", { url: `https://side${i}/` }, logger);
+        }
+        const overflow = await adapter.executeTool(
+          "new_tab",
+          { url: "https://overflow/" },
+          logger,
+        );
+        // Should mention "max 4" (the side-trip cap), not "max 5"
+        // (the total stack depth, off by one).
+        expect(overflow.text).toContain("max 4");
+        expect(overflow.text).toContain("close_tab");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("close() emits tab_focus_changed pop events for force-closed side-trip tabs", async () => {
+      const stub = makeSideTripStub();
+      const { logger, dir } = tmpLogger();
+      try {
+        const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+        const orig = logger.logEvent.bind(logger);
+        logger.logEvent = (name, data) => { events.push({ name, data }); return orig(name, data); };
+        // close() uses the *constructor-passed* logger (not the dispatch
+        // logger), so wire it in here.
+        const adapter = new WebAdapter({ chromeSession: stub.session as never, logger });
+        await adapter.start("https://example.com/");
+        await adapter.executeTool("new_tab", { url: "https://side1/" }, logger);
+        await adapter.executeTool("new_tab", { url: "https://side2/" }, logger);
+        await adapter.close();
+        const pops = events.filter(
+          (e) => e.name === "tab_focus_changed" && e.data.action === "pop",
+        );
+        // Two force-closed pops on top of zero agent-driven pops.
+        expect(pops).toHaveLength(2);
+        // Force-close pops carry a `reason` distinguishing them from
+        // agent-driven pops (reviewers reading run.jsonl can tell which
+        // is which).
+        expect(pops[0].data.reason).toBe("adapter_close");
+        expect(pops[1].data.reason).toBe("adapter_close");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("close() drains side-trip tabs even when one closeTab call fails", async () => {
+      // Regression test for F8 (Hephaestus): a thrown closeTab in the
+      // teardown loop must not stop the loop from cleaning up siblings.
+      const stub = makeSideTripStub();
+      let firstCall = true;
+      stub.session.closeTab = (...args: unknown[]) => {
+        stub.calls.push(["closeTab", args]);
+        if (firstCall) {
+          firstCall = false;
+          return Promise.reject(new Error("first close failed"));
+        }
+        return Promise.resolve();
+      };
+      const { logger, dir } = tmpLogger();
+      try {
+        const adapter = new WebAdapter({ chromeSession: stub.session as never });
+        await adapter.start("https://example.com/");
+        await adapter.executeTool("new_tab", { url: "https://side1/" }, logger);
+        await adapter.executeTool("new_tab", { url: "https://side2/" }, logger);
+        await adapter.close(); // must not throw
+        // Both side-trip URLs were attempted, even though the first failed.
+        const closeCalls = stub.calls.filter((c) => c[0] === "closeTab");
+        expect(closeCalls).toHaveLength(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("seed failure (getTabs throws) is logged as tab_seed_failed", async () => {
+      const stub = makeSideTripStub();
+      stub.session.getTabs = (...args: unknown[]) => {
+        stub.calls.push(["getTabs", args]);
+        return Promise.reject(new Error("network blip"));
+      };
+      const { logger, dir } = tmpLogger();
+      try {
+        const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+        const orig = logger.logEvent.bind(logger);
+        logger.logEvent = (name, data) => { events.push({ name, data }); return orig(name, data); };
+        const adapter = new WebAdapter({
+          chromeSession: stub.session as never,
+          logger,
+        });
+        await adapter.start("https://example.com/");
+        const seedFailed = events.find((e) => e.name === "tab_seed_failed");
+        expect(seedFailed).toBeDefined();
+        expect(String(seedFailed!.data.reason)).toContain("network blip");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("install_passkey at depth > 1 logs an install_at_depth_warning", async () => {
+      // Build a tmp context root with a passkey-shaped file so the
+      // passkey tool registers (the predicate only checks that the dir
+      // is non-empty).
+      const tmpCtx = mkdtempSync(join(tmpdir(), "gauntlet-passkey-depth-"));
+      mkdirSync(join(tmpCtx, ".gauntlet", "context", "alice"), { recursive: true });
+      writeFileSync(join(tmpCtx, ".gauntlet", "context", "alice", "passkey.yaml"), "x");
+      const stub = makeSideTripStub();
+      // Stub out webAuthnOpenSession so the passkey tool can run far
+      // enough to be invoked (it'll fail downstream, but we only care
+      // about the warning event).
+      stub.session.webAuthnOpenSession = () => Promise.resolve({ close: () => {} });
+      const { logger, dir } = tmpLogger();
+      try {
+        const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+        const orig = logger.logEvent.bind(logger);
+        logger.logEvent = (name, data) => { events.push({ name, data }); return orig(name, data); };
+        const adapter = new WebAdapter({
+          chromeSession: stub.session as never,
+          contextRoot: join(tmpCtx, ".gauntlet", "context"),
+        });
+        await adapter.start("https://example.com/");
+        await adapter.executeTool("new_tab", { url: "https://side/" }, logger);
+        // The passkey tool will likely error trying to read alice's
+        // missing passkey.json — that's fine; we only want to see the
+        // warning event was emitted on dispatch.
+        try {
+          // Passkey tool's schema requires `path`; pass a value that
+          // satisfies validateToolArgs so dispatch reaches the depth-
+          // warning branch. The execute() body will error downstream
+          // (the YAML doesn't exist), which is fine — the warning is
+          // logged before execute runs.
+          await adapter.executeTool(
+            "install_passkey",
+            { path: "alice/passkey.yaml" },
+            logger,
+          );
+        } catch {
+          // ignored
+        }
+        const warn = events.find((e) => e.name === "install_at_depth_warning");
+        expect(warn).toBeDefined();
+        expect(warn!.data.tool).toBe("install_passkey");
+        expect(warn!.data.depth).toBe(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(tmpCtx, { recursive: true, force: true });
       }
     });
   });

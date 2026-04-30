@@ -136,14 +136,19 @@ export class WebAdapter implements Adapter {
    */
   private chrome: ChromeSession;
   /**
-   * PRI-1439: side-trip tab focus stack. Bottom of the stack is the
-   * original tab opened during start(); each new_tab call pushes a new
-   * entry, each close_tab pops. The top of the stack is the active tab
-   * — the WS URL passed to every chrome-ws-lib dispatch. Empty until
-   * start() seeds it; pre-start dispatches fall back to tab index 0
-   * (legacy test compatibility — production never exercises that path).
+   * PRI-1439: side-trip tab focus stack. Bottom is the original tab
+   * opened during start(); each new_tab call pushes a new entry, each
+   * close_tab pops. The top of the stack is the active tab — its
+   * `wsUrl` is passed to every chrome-ws-lib dispatch. The companion
+   * `url` field is the page URL the agent asked us to open (recorded
+   * for evidence — `tab_focus_changed` events on push *and* pop both
+   * carry it).
+   *
+   * Empty until start() seeds it; pre-start dispatches fall back to
+   * tab index 0. Tests construct WebAdapter without start() and rely
+   * on that fallback.
    */
-  private tabStack: string[] = [];
+  private tabStack: Array<{ wsUrl: string; url: string }> = [];
 
   constructor(options?: WebAdapterOptions) {
     this.remote = false;
@@ -205,7 +210,7 @@ export class WebAdapter implements Adapter {
    */
   private activeTab(): string | number {
     return this.tabStack.length > 0
-      ? this.tabStack[this.tabStack.length - 1]
+      ? this.tabStack[this.tabStack.length - 1].wsUrl
       : 0;
   }
 
@@ -223,12 +228,25 @@ export class WebAdapter implements Adapter {
     // subsequent dispatches address tabs by WS URL.
     try {
       const tabs = await this.chrome.getTabs();
-      if (Array.isArray(tabs) && tabs[0]?.webSocketDebuggerUrl) {
-        this.tabStack.push(tabs[0].webSocketDebuggerUrl);
+      const seed = Array.isArray(tabs) ? tabs[0] : null;
+      if (seed?.webSocketDebuggerUrl) {
+        this.tabStack.push({
+          wsUrl: seed.webSocketDebuggerUrl as string,
+          url: (seed.url as string | undefined) ?? url,
+        });
+      } else {
+        // Surface the unexpected shape: dispatches will degrade to
+        // numeric index 0 and the agent will likely route to whichever
+        // tab Chrome lists first. Visibility > silent fallback.
+        this.logger?.logEvent("tab_seed_failed", {
+          reason: "getTabs returned no usable tab",
+          shape: Array.isArray(tabs) ? `array(len=${tabs.length})` : typeof tabs,
+        });
       }
-    } catch {
-      // Best-effort; if we can't seed, dispatches fall back to numeric
-      // index 0 (the legacy behavior).
+    } catch (err) {
+      this.logger?.logEvent("tab_seed_failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // Pin the viewport before the observer opens so any downstream
@@ -309,15 +327,32 @@ export class WebAdapter implements Adapter {
     // PRI-1439: pop and close any side-trip tabs the agent left open
     // (anything pushed above the original). The original tab is left
     // alone — it'll go away when killChrome() runs (local) or be reset
-    // by the next run via clearBrowserData (remote).
+    // by the next run via clearBrowserData (remote). Each force-close
+    // emits a `tab_focus_changed` pop so the run.jsonl timeline shows
+    // every push paired with a pop.
     while (this.tabStack.length > 1) {
-      const wsUrl = this.tabStack.pop()!;
+      const popped = this.tabStack.pop()!;
+      this.logger?.logEvent("tab_focus_changed", {
+        action: "pop",
+        depth: this.tabStack.length,
+        ws_url: popped.wsUrl,
+        url: popped.url,
+        reason: "adapter_close",
+      });
       try {
-        await this.chrome.closeTab(wsUrl);
-      } catch {
-        // best-effort
+        await this.chrome.closeTab(popped.wsUrl);
+      } catch (err) {
+        this.logger?.logEvent("tab_force_close_failed", {
+          ws_url: popped.wsUrl,
+          url: popped.url,
+          reason: err instanceof Error ? err.message : String(err),
+        });
       }
     }
+    // Drop the original tab from the stack so a reused adapter would
+    // start clean. Reuse isn't a current code path, but the inconsistent
+    // post-close state is an easy footgun.
+    this.tabStack = [];
     // Tear the virtual authenticator down before killing Chrome so that
     // remote Chrome sessions (where we didn't start the process) don't
     // leak state across runs. For locally-spawned Chrome, killChrome
@@ -779,11 +814,33 @@ export class WebAdapter implements Adapter {
       return this.readTool.execute(args);
     }
 
+    // PRI-1439: install_passkey / install_cookies target tab index 0
+    // (the original tab) by construction. Cookies are origin-scoped, so
+    // tab routing is irrelevant. WebAuthn is per-target, but Chrome's
+    // /json typically reports the original (created-first) tab as
+    // pageTabs[0] even when a side-trip tab is open in the foreground.
+    // We log a warning at depth > 1 so any wrong-tab incident shows up
+    // in run.jsonl rather than as a silent agent failure. Full fix —
+    // routing these tools to the seeded WS URL — is tracked separately.
     if (name === "install_passkey" && this.passkeyTool) {
+      if (this.tabStack.length > 1) {
+        logger.logEvent("install_at_depth_warning", {
+          tool: name,
+          depth: this.tabStack.length,
+          note: "install_passkey targets tab index 0 by construction; verify it landed on the intended target",
+        });
+      }
       return this.passkeyTool.execute(args);
     }
 
     if (name === "install_cookies" && this.cookiesTool) {
+      if (this.tabStack.length > 1) {
+        logger.logEvent("install_at_depth_warning", {
+          tool: name,
+          depth: this.tabStack.length,
+          note: "install_cookies sets origin-scoped state on tab index 0; cookies are browser-wide so this is usually fine",
+        });
+      }
       return this.cookiesTool.execute(args);
     }
 
@@ -985,27 +1042,66 @@ export class WebAdapter implements Adapter {
         return { text: "nothing to wait for — provide selector or text" };
       }
       case "new_tab": {
+        // The cap is on total stack depth (1 original + N side trips).
+        // Frame the user-facing error in side-trip terms so the agent
+        // can plan against the number it cares about.
         if (this.tabStack.length >= MAX_TAB_DEPTH) {
           return {
-            text: `Error: too many side-trip tabs (max ${MAX_TAB_DEPTH})`,
+            text:
+              `Error: too many side-trip tabs (max ${MAX_TAB_DEPTH - 1}; ` +
+              `close one with close_tab before opening another)`,
+          };
+        }
+        const targetUrl = args.url as string | undefined;
+        // Empty / non-http URLs would otherwise become about:blank and
+        // silently consume a stack slot — refuse explicitly so the
+        // agent doesn't waste turns.
+        if (
+          typeof targetUrl !== "string" ||
+          !/^(https?:|file:|about:)/i.test(targetUrl)
+        ) {
+          return {
+            text:
+              "Error: new_tab requires an absolute URL (http://, https://, " +
+              "file://, or about:)",
           };
         }
         try {
-          const created = await this.chrome.newTab(args.url as string);
+          const created = await this.chrome.newTab(targetUrl);
           const wsUrl = created?.webSocketDebuggerUrl as string | undefined;
           if (!wsUrl) {
             return { text: "Error: chrome did not return a tab WebSocket URL" };
           }
-          this.tabStack.push(wsUrl);
+          this.tabStack.push({ wsUrl, url: targetUrl });
           logger.logEvent("tab_focus_changed", {
             action: "push",
             depth: this.tabStack.length,
             ws_url: wsUrl,
-            url: args.url as string,
+            url: targetUrl,
           });
+          // Recompute against the now-pushed tab so return_screenshot
+          // captures the *new* tab, not the one we just left.
+          const newActive = this.activeTab();
+          let shot: { image?: ToolResult["image"]; imagePath?: string } = {};
+          if (args.return_screenshot) {
+            const tmpFile = join(tmpdir(), `gauntlet-screenshot-${Date.now()}.png`);
+            try {
+              await this.chrome.screenshot(newActive, tmpFile, null, false);
+              const data = readFileSync(tmpFile);
+              const imagePath = logger.saveScreenshot(Buffer.from(data));
+              shot = {
+                image: { data: Buffer.from(data).toString("base64"), mediaType: "image/png" },
+                imagePath,
+              };
+              try { unlinkSync(tmpFile); } catch { /* best-effort */ }
+            } catch {
+              // Screenshot is supplementary — never let it mask the
+              // primary tool result.
+            }
+          }
           return {
             text: `opened tab (depth ${this.tabStack.length})`,
-            ...await takeReturnScreenshot(),
+            ...shot,
           };
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
@@ -1022,18 +1118,47 @@ export class WebAdapter implements Adapter {
         logger.logEvent("tab_focus_changed", {
           action: "pop",
           depth: this.tabStack.length,
-          ws_url: popped,
+          ws_url: popped.wsUrl,
+          url: popped.url,
         });
+        let closeWarning = "";
         try {
-          await this.chrome.closeTab(popped);
-        } catch {
-          // Best-effort — the tab is already gone from the agent's mental
-          // model. A failure to close on Chrome's side is logged below
-          // implicitly via the next dispatch's outcome.
+          await this.chrome.closeTab(popped.wsUrl);
+        } catch (err) {
+          // Surface the chrome-side failure so the agent knows the tab
+          // *might* still exist in Chrome (its stack-mutation already
+          // happened — focus has moved). Worst case the orphan is GC'd
+          // when the run ends.
+          const reason = err instanceof Error ? err.message : String(err);
+          closeWarning = ` (warning: chrome closeTab failed — ${reason})`;
+          logger.logEvent("tab_force_close_failed", {
+            ws_url: popped.wsUrl,
+            url: popped.url,
+            reason,
+          });
+        }
+        // Same fix as new_tab: return_screenshot must hit the *now-active*
+        // tab (the one we popped back to), not the just-closed tab.
+        const newActive = this.activeTab();
+        let shot: { image?: ToolResult["image"]; imagePath?: string } = {};
+        if (args.return_screenshot) {
+          const tmpFile = join(tmpdir(), `gauntlet-screenshot-${Date.now()}.png`);
+          try {
+            await this.chrome.screenshot(newActive, tmpFile, null, false);
+            const data = readFileSync(tmpFile);
+            const imagePath = logger.saveScreenshot(Buffer.from(data));
+            shot = {
+              image: { data: Buffer.from(data).toString("base64"), mediaType: "image/png" },
+              imagePath,
+            };
+            try { unlinkSync(tmpFile); } catch { /* best-effort */ }
+          } catch {
+            // Supplementary — agent already learned focus changed.
+          }
         }
         return {
-          text: `closed tab (depth ${this.tabStack.length})`,
-          ...await takeReturnScreenshot(),
+          text: `closed tab (depth ${this.tabStack.length})${closeWarning}`,
+          ...shot,
         };
       }
       default:
