@@ -640,100 +640,176 @@ if (passes === 1) {
   }, 202);
 }
 
-// Multi-pass path
-const { runRunSet } = await import("../../runs/run-set");
+// Multi-pass path — orchestrator owns the id, surfaced via prepareRunSet
+const { prepareRunSet } = await import("../../runs/run-set");
 const cancelToken = { cancelled: false };
 
-// We need the runIds *before* detach so we can include them in the response.
-// Pre-generate them with the same logic the orchestrator uses internally.
-const { makeRunId } = await import("../../util/id");
-const runIds: string[] = Array.from({ length: passes }, () => makeRunId(entry.card.id));
+const prepared = prepareRunSet({
+  resultsRoot: gauntletPath(config.projectRoot),
+  cards: [entry.card.id],
+  passes,
+  kind: "single",
+  cancelToken,
+  executor: async ({ runSetCtx, runId }) => {
+    if (registry) registry.setStatus(runId, "running");
+    if (setBroadcaster) {
+      setBroadcaster.send(runSetCtx.runSetId, {
+        kind: "pass_start", runId, attemptNumber: runSetCtx.attemptNumber, passes,
+      });
+    }
+    const result = await runSingleAttempt({
+      card: entry.card, cfg, body, registry, broadcaster, errorLog,
+      runId, runSetCtx,
+    });
+    if (registry) registry.unregister(runId);
+    if (setBroadcaster) {
+      setBroadcaster.send(runSetCtx.runSetId, {
+        kind: "pass_end", runId, attemptNumber: runSetCtx.attemptNumber,
+        finalStatus: result.status,
+      });
+    }
+    return { runId, outDir: "...", result };
+  },
+});
 
-// Pre-register all attempts as queued.
+// Pre-register all attempts as queued (we now have prepared.runs).
 if (registry) {
-  for (let i = 0; i < passes; i++) {
+  for (const r of prepared.runs) {
     registry.register({
-      id: runIds[i], cardId: entry.card.id, title: entry.card.title,
+      id: r.runId, cardId: entry.card.id, title: entry.card.title,
       target: body.target, model: cfg.model ?? "", startedAt: Date.now(),
-      status: "queued", attemptNumber: i + 1, passes,
-      // runSetId set after orchestrator generates it; or pass via onAllRunsKnown
+      status: "queued", attemptNumber: r.attemptNumber, passes,
+      runSetId: prepared.runSetId,
     });
   }
 }
 
-// Detach the orchestrator
+// Register the set-level cancel token for DELETE /api/run-sets/:id
+if (cancelTokens) cancelTokens.register(prepared.runSetId, cancelToken);
+
+// Detach the actual loop
 (async () => {
   try {
-    const setResult = await runRunSet({
-      resultsRoot: gauntletPath(config.projectRoot),
-      cards: [entry.card.id],
-      passes,
-      kind: "single",
-      cancelToken,
-      generateRunId: (_cardId, attemptNumber) => runIds[attemptNumber - 1],
-      onAllRunsKnown: (runs) => {
-        // Pre-registered already; just set the runSetId now that we know it.
-        // Implementation note: the orchestrator generates runSetId before this
-        // callback, but we don't have access to it here — restructure if needed
-        // by hoisting the runSetId assignment or by passing it through.
-      },
-      executor: async ({ runSetCtx, runId }) => {
-        if (registry) registry.setStatus(runId, "running");
-        if (setBroadcaster) {
-          setBroadcaster.send(runSetCtx.runSetId, {
-            kind: "pass_start", runId, attemptNumber: runSetCtx.attemptNumber, passes,
-          });
-        }
-        // Reuse the same executeRun setup as the solo path. Extract a helper if cleaner.
-        const result = await runSingleAttempt({
-          card: entry.card, cfg, body, registry, broadcaster, errorLog,
-          runId, runSetCtx,
-        });
-        if (registry) registry.unregister(runId);
-        if (setBroadcaster) {
-          setBroadcaster.send(runSetCtx.runSetId, {
-            kind: "pass_end", runId, attemptNumber: runSetCtx.attemptNumber,
-            finalStatus: result.status,
-          });
-        }
-        return { runId, outDir: "...", result };  // shape per ExecutorReturn
-      },
-    });
+    const setResult = await prepared.run();
     if (setBroadcaster) {
-      setBroadcaster.send(setResult.runSetId, { kind: "set_done", summary: setResult.summary });
+      setBroadcaster.send(prepared.runSetId, { kind: "set_done", summary: setResult.summary });
     }
   } catch (e) {
     errorLog?.record({ scope: "run-set", error: e });
   } finally {
-    // Unregister anything still registered (e.g. cancelled queued attempts)
-    if (registry) for (const id of runIds) registry.unregister(id);
+    if (cancelTokens) cancelTokens.unregister(prepared.runSetId);
+    if (registry) for (const r of prepared.runs) registry.unregister(r.runId);
   }
 })();
 
 return c.json({
-  runSetId: null, // The orchestrator generates this — we don't have it yet.
-  // Practical fix: hoist makeRunSetId out of runRunSet so we can generate it here.
-  kind: "single",
-  passes,
-  runs: runIds.map((runId, i) => ({ runId, attemptNumber: i + 1, status: "queued" as const })),
+  runSetId: prepared.runSetId,
+  kind: prepared.kind,
+  passes: prepared.passes,
+  runs: prepared.runs.map((r) => ({
+    runId: r.runId,
+    attemptNumber: r.attemptNumber,
+    status: "queued" as const,
+  })),
 }, 202);
 ```
 
-**Note: this code sketch has a chicken-and-egg issue** — the response wants the `runSetId`, but `runRunSet` generates it internally. **Resolution:** factor `makeRunSetId(kind)` out of the orchestrator into the caller (it's already a pure function in `src/util/id.ts`). Generate `runSetId` in the handler, pass it into `runRunSet` via a new `runSetId?: string` config field that overrides the internal generation. Update `runRunSet` accordingly.
+**The shape gap:** an HTTP `Create` handler needs to return the new resource's id synchronously while the long-running work continues in the background. `runRunSet` currently does both phases in one async call. **Resolution: split `runRunSet` into a synchronous `prepareRunSet` (id generation, eager runId allocation, writer stub) and an async `prepared.run()` (the loop).** The orchestrator still owns id generation — the caller never invents an id. This is a small refactor to Phase A's orchestrator.
 
-- [ ] **Step 3a: Add `runSetId` override to `RunSetConfig`**
+- [ ] **Step 3a: Refactor `runRunSet` into `prepareRunSet` + `prepared.run()`**
 
 ```ts
-// src/runs/run-set.ts — in RunSetConfig interface:
-runSetId?: string;   // override for caller-generated id
+// src/runs/run-set.ts — replace runRunSet with this two-phase shape
 
-// In runRunSet body, change:
-const runSetId = makeRunSetId(cfg.kind);
-// to:
-const runSetId = cfg.runSetId ?? makeRunSetId(cfg.kind);
+export interface PreparedRunSet {
+  runSetId: string;
+  kind: RunSetKind;
+  passes: number;
+  cards: string[];
+  runs: Array<{ runId: string; cardId: string; attemptNumber: number }>;
+  run(): Promise<RunSetResult>;
+}
+
+export function prepareRunSet(cfg: RunSetConfig): PreparedRunSet {
+  const runSetId = makeRunSetId(cfg.kind);
+  const gen = cfg.generateRunId ?? ((cardId, _i) => makeRunId(cardId));
+
+  const allRuns: Array<{ runId: string; cardId: string; attemptNumber: number }> = [];
+  for (let cardIndex = 0; cardIndex < cfg.cards.length; cardIndex++) {
+    for (let attemptNumber = 1; attemptNumber <= cfg.passes; attemptNumber++) {
+      allRuns.push({
+        runId: gen(cfg.cards[cardIndex], attemptNumber),
+        cardId: cfg.cards[cardIndex],
+        attemptNumber,
+      });
+    }
+  }
+
+  const ctx0: RunSetCtx = {
+    runSetId, kind: cfg.kind, passes: cfg.passes, cards: cfg.cards,
+    cardIndex: 0, attemptNumber: 1,
+  };
+  const writer = new RunSetWriter(cfg.resultsRoot, ctx0);
+  writer.start(allRuns);                 // synchronous fs write — set.json stub is on disk before return
+  cfg.onAllRunsKnown?.(allRuns);
+
+  return {
+    runSetId,
+    kind: cfg.kind,
+    passes: cfg.passes,
+    cards: cfg.cards,
+    runs: allRuns,
+    run: () => runPreparedRunSet({ cfg, writer, ctx0, allRuns }),
+  };
+}
+
+async function runPreparedRunSet(args: {
+  cfg: RunSetConfig;
+  writer: RunSetWriter;
+  ctx0: RunSetCtx;
+  allRuns: Array<{ runId: string; cardId: string; attemptNumber: number }>;
+}): Promise<RunSetResult> {
+  // Body of the existing runRunSet from the loop onward, unchanged:
+  // for (cardIndex...) for (attemptNumber...) { check cancelToken; executor; recordRunEnd }
+  // mark unstarted as cancelled if cancelToken.cancelled
+  // writer.finalize(...)
+  // return { runSetId, runs, summary }
+  // ...existing body, adapted to use args.cfg / args.writer / args.allRuns
+}
+
+// Back-compat shim for existing CLI callers that prefer one call:
+export async function runRunSet(cfg: RunSetConfig): Promise<RunSetResult> {
+  return prepareRunSet(cfg).run();
+}
 ```
 
-Add a unit test in `test/runs/run-set.test.ts` confirming the override works.
+The `runRunSet` shim keeps `src/cli/run.ts` and `src/cli/batch.ts` working unchanged — Phase A's CLI callers don't need to learn the new shape. The HTTP handler uses `prepareRunSet` directly to get the id synchronously.
+
+Update `test/runs/run-set.test.ts` to add tests for `prepareRunSet`:
+
+```ts
+test("prepareRunSet returns the id and runs synchronously", () => {
+  const prepared = prepareRunSet({
+    resultsRoot: mkdtempSync(join(tmpdir(), "gauntlet-prep-")),
+    cards: ["card-a"],
+    passes: 3,
+    kind: "single",
+    executor: async () => ({ runId: "x", outDir: "x", result: fakeResult("pass") }),
+    generateRunId: (cardId, i) => `${cardId}_t${i}_x000`,
+  });
+  expect(prepared.runSetId).toMatch(/^single_/);
+  expect(prepared.runs).toHaveLength(3);
+  expect(prepared.runs[0].attemptNumber).toBe(1);
+  // set.json must exist on disk before run() is called
+  // (the test config above puts it under prepared's resultsRoot)
+});
+
+test("prepareRunSet then run() == old runRunSet behavior", async () => {
+  // Verify the shim path still produces the same result.
+});
+```
+
+Existing tests of `runRunSet` continue to pass via the shim.
 
 - [ ] **Step 4: Extract a `runSingleAttempt` helper**
 
@@ -881,19 +957,9 @@ The handler in Task 5 created a `cancelToken` for the orchestrator. This task ex
 
 The simplest design: a parallel `SetCancelTokenRegistry` (or extend `CancelTokenRegistry` to handle both run and set IDs — since their formats are non-overlapping, a single registry works). For minimum change, **add a second registry**.
 
-- [ ] **Step 1: Extend `CancelTokenRegistry`**
+- [ ] **Step 1: Confirm Task 5's set-token registration**
 
-Tokens for solo runs and tokens for run sets live in the same registry — runIds and runSetIds have non-overlapping formats (`<cardId>_…` vs `<kind>_…`). No new class needed. Just register set tokens with the runSetId as the key.
-
-- [ ] **Step 2: Update `POST /api/run/:id`'s multi-pass branch to register the set-level cancel token**
-
-In the handler, after generating `runSetId` (Task 5 Step 3a):
-
-```ts
-if (cancelTokens) cancelTokens.register(runSetId, cancelToken);
-// In the finally block of the detached orchestrator IIFE:
-if (cancelTokens) cancelTokens.unregister(runSetId);
-```
+Tokens for solo runs and tokens for run sets live in the same registry — runIds and runSetIds have non-overlapping formats (`<cardId>_…` vs `<kind>_…`). No new class needed. Task 5's multi-pass branch already calls `cancelTokens.register(prepared.runSetId, cancelToken)` and unregisters in the finally; this task just exposes the DELETE endpoint.
 
 - [ ] **Step 3: Add the DELETE route**
 
