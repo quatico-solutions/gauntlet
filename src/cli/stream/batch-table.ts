@@ -151,7 +151,6 @@ export class BatchTableRenderer {
       return;
     }
     this.commit(row);
-    this.emitRollupTTY(cardId);
   }
 
   setErrored(cardId: string, turn: number | null, message: string, attemptNumber = 1): void {
@@ -176,7 +175,6 @@ export class BatchTableRenderer {
       return;
     }
     this.commit(row);
-    this.emitRollupTTY(cardId);
   }
 
   finalize(): void {
@@ -272,6 +270,15 @@ export class BatchTableRenderer {
       `  ${glyph} ${row.cardId}   ${status}   ${c.dim}${turnsLabel} · ${elapsedSec}s${c.reset}\n`,
     );
     this.sink.write(`        ${c.dim}→${c.reset} ${c.cyan}${runHint}${c.reset}\n`);
+
+    // Emit the rollup line (third committed line) while we still own the
+    // cursor and before pendingBlankAboveSpinner is cleared. This means the
+    // rollup is counted as part of the commit, so the next card's setRunning
+    // will correctly account for it when positioning its spinner.
+    const rollup = this.rollupFor(row.cardId);
+    if (rollup !== null) {
+      this.sink.write(`        ${c.dim}→${c.reset} ${rollup.cardStatus} · median ${rollup.medianTurns} turns\n`);
+    }
   }
 
   /** Compute the rollup for a card if all its attempts are finished and passes > 1.
@@ -309,13 +316,6 @@ export class BatchTableRenderer {
     const rollup = this.rollupFor(cardId);
     if (!rollup) return;
     this.sink.write(`${cardId}: rollup ${rollup.cardStatus} (median ${rollup.medianTurns} turns)\n`);
-  }
-
-  private emitRollupTTY(cardId: string): void {
-    const rollup = this.rollupFor(cardId);
-    if (!rollup) return;
-    const c = this.colors();
-    this.sink.write(`        ${c.dim}→${c.reset} ${rollup.cardStatus} · median ${rollup.medianTurns} turns\n`);
   }
 
   private glyphFor(row: CardRow): string {
