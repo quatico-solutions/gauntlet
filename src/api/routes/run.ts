@@ -263,9 +263,9 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
       // startChrome.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const webAdapter = adapter as any;
-      const chromeSession = typeof webAdapter.getChromeSession === "function"
-        ? webAdapter.getChromeSession()
-        : undefined;
+      // The branch above already gates on adapterType === "web", so the
+      // adapter is always a WebAdapter here and getChromeSession is defined.
+      const chromeSession = webAdapter.getChromeSession();
       streamer = new ScreencastStreamer(0, (frame) => {
         broadcaster?.send(runId, {
           type: "frame",
@@ -278,7 +278,7 @@ export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
           width: frame.metadata.width,
           height: frame.metadata.height,
         });
-      }, framesDir, chromeSession);
+      }, chromeSession, framesDir);
       await streamer.start();
     }
 

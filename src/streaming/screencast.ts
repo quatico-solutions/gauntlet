@@ -1,16 +1,11 @@
 // PRI-1436: chrome-ws-lib is now a per-session factory. The screencast must
 // share the WebAdapter's session (so it talks to the same Chrome on the same
-// activePort), so callers pass in a session via setChromeSession() before
-// start(). The fallback fresh-session is only used by tests that construct
-// a streamer but never call start() — the session has no work to do until
-// start() pulls tabs.
+// activePort), so the session is a required constructor argument. Constructing
+// a streamer without one was previously possible via a fresh-session fallback;
+// that fallback was a footgun (the fresh session has no Chrome behind it) so
+// callers must now pass the WebAdapter's session explicitly.
 import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { createSession } = require("../adapters/web/lib/chrome-ws-lib") as {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  createSession: (opts?: { host?: string; port?: number }) => Record<string, any>;
-};
 
 export interface ScreencastFrame {
   data: string; // base64 jpeg
@@ -31,16 +26,15 @@ export class ScreencastStreamer {
   constructor(
     tabIndex: number,
     onFrame: (frame: ScreencastFrame) => void,
+    chromeSession: ChromeSession,
     saveDir?: string,
-    chromeSession?: ChromeSession,
   ) {
     this.tabIndex = tabIndex;
     this.onFrame = onFrame;
     this.saveDir = saveDir;
-    // PRI-1436: prefer the caller-provided session (the WebAdapter's). Fall
-    // back to a fresh session for legacy callers; that session won't see the
-    // adapter's Chrome process but is fine for construction-only tests.
-    this.chrome = chromeSession ?? createSession();
+    // PRI-1436: required — must be the WebAdapter's session so the streamer
+    // talks to the same Chrome the adapter started.
+    this.chrome = chromeSession;
     if (saveDir) {
       mkdirSync(saveDir, { recursive: true });
     }
