@@ -57,6 +57,7 @@ async function main() {
         silent: args.silent,
         format: args.format,
         noColor: args.noColor,
+        passes: args.passes,
       });
       break;
     }
@@ -74,6 +75,7 @@ async function main() {
         noColor: args.noColor,
         sink: { write: (s: string) => process.stdout.write(s) },
         isTTY: Boolean(process.stdout.isTTY),
+        passes: args.passes,
       });
       if (exitCode !== 0) process.exit(exitCode);
       break;

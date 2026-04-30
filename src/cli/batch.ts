@@ -16,6 +16,7 @@ export interface BatchOptions {
   noColor: boolean;
   sink: WriteSink;
   isTTY: boolean;
+  passes: number;
 }
 
 type RunOneFn = (opts: RunOneOptions) => Promise<RunOneSummary>;

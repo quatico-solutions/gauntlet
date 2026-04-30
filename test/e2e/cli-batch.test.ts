@@ -80,6 +80,7 @@ describe("gauntlet batch — e2e against CLI adapter", () => {
       noColor: true,
       sink,
       isTTY: false,
+      passes: 1,
     });
 
     expect(exitCode).toBe(1);

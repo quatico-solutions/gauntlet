@@ -57,6 +57,7 @@ describe("runBatch", () => {
         noColor: true,
         sink,
         isTTY: false,
+        passes: 1,
       },
       stubRunOne as any,
     );
@@ -95,6 +96,7 @@ describe("runBatch — error handling", () => {
         target: "x", adapterType: "cli", config: makeConfig(),
         silent: false, format: undefined, noColor: true,
         sink, isTTY: false,
+        passes: 1,
       },
       stub,
     );
@@ -127,6 +129,7 @@ describe("runBatch — error handling", () => {
         target: "x", adapterType: "cli", config: makeConfig(),
         silent: false, format: undefined, noColor: true,
         sink, isTTY: false,
+        passes: 1,
       },
       stub,
     );
@@ -155,6 +158,7 @@ describe("runBatch — output modes", () => {
         target: "x", adapterType: "cli", config: makeConfig(),
         silent: false, format: "jsonl", noColor: true,
         sink, isTTY: false,
+        passes: 1,
       },
       stub,
     );
@@ -192,6 +196,7 @@ describe("runBatch — output modes", () => {
           target: "x", adapterType: "cli", config: makeConfig(),
           silent: true, format: undefined, noColor: true,
           sink, isTTY: false,
+          passes: 1,
         },
         stub,
       );
