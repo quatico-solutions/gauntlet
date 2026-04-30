@@ -93,6 +93,39 @@ describe("BatchTableRenderer (attemptNumber)", () => {
   });
 });
 
+describe("BatchTableRenderer rollup line", () => {
+  test("emits rollup as third line on final attempt of each card", () => {
+    const sink = collect();
+    const r = new BatchTableRenderer(sink, NON_TTY);
+    // 3 attempts of one card: pass, pass, investigate → cardStatus=mixed
+    r.setQueued("story-a", 1, 3);
+    r.setQueued("story-a", 2, 3);
+    r.setQueued("story-a", 3, 3);
+    r.setRunning("story-a", "rA1", 50, 1, 3);
+    r.setDone("story-a", "pass", 5, 1);
+    r.setRunning("story-a", "rA2", 50, 2, 3);
+    r.setDone("story-a", "pass", 6, 2);
+    r.setRunning("story-a", "rA3", 50, 3, 3);
+    r.setDone("story-a", "investigate", 8, 3);
+    r.finalize();
+    expect(sink.out).toContain("mixed");
+    // The card's name should still appear — it's three rows in non-TTY mode plus
+    // (probably) once for the rollup. At minimum 3 occurrences.
+    expect(sink.out.match(/story-a/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+  });
+
+  test("no rollup line when passes === 1 (default)", () => {
+    const sink = collect();
+    const r = new BatchTableRenderer(sink, NON_TTY);
+    r.setQueued("story-a");
+    r.setRunning("story-a", "rA1", 50);
+    r.setDone("story-a", "pass", 5);
+    r.finalize();
+    expect(sink.out).not.toContain("mixed");
+    expect(sink.out).not.toContain("consistent_pass");
+  });
+});
+
 describe("BatchTableRenderer (TTY mode — Mock B ticker)", () => {
   test("setQueued does not emit anything (queued cards are tracked silently)", () => {
     const sink = collect();

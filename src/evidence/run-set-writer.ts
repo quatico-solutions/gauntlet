@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { RunSetCtx, SetBucket } from "../runs/run-set-types";
+import { deriveBucket, median } from "../runs/aggregate";
 import type { VetResult, VetStatus } from "../types";
 
 interface RunEntry {
@@ -163,32 +164,6 @@ function summarizeOverall(perCard: CardSummary[]): OverallSummary {
     byStatus,
     overallStatus: deriveBucket(byStatus),
   };
-}
-
-function deriveBucket(by: {
-  pass: number;
-  fail: number;
-  investigate: number;
-  errored: number;
-  cancelled: number;
-}): SetBucket {
-  const errAndCancel = by.errored + by.cancelled;
-  const total = by.pass + by.fail + by.investigate + errAndCancel;
-  if (total === 0) return "errored"; // degenerate
-  if (by.pass === total) return "consistent_pass";
-  if (by.investigate === total) return "consistent_investigate";
-  if (by.fail === total) return "consistent_fail";
-  if (errAndCancel === total) return "errored";
-  if (errAndCancel > 0) return "mixed_with_errors";
-  return "mixed";
-}
-
-function median(xs: number[]): number {
-  if (xs.length === 0) return 0;
-  const sorted = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[mid];
-  return Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
 function renderSummaryMarkdown(m: SetManifest): string {

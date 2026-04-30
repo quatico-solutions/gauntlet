@@ -1,5 +1,8 @@
 import type { WriteSink } from "./jsonl";
 import type { VetStatus } from "../../types";
+import { deriveBucket, median } from "../../runs/aggregate";
+import type { ByStatus } from "../../runs/aggregate";
+import type { SetBucket } from "../../runs/run-set-types";
 
 interface CardRow {
   cardId: string;
@@ -144,9 +147,11 @@ export class BatchTableRenderer {
 
     if (!this.opts.isTTY) {
       this.sink.write(`${cardId}: done (${finalStatus}) on turn ${turn}\n`);
+      this.emitRollupNonTTY(cardId);
       return;
     }
     this.commit(row);
+    this.emitRollupTTY(cardId);
   }
 
   setErrored(cardId: string, turn: number | null, message: string, attemptNumber = 1): void {
@@ -167,9 +172,11 @@ export class BatchTableRenderer {
     if (!this.opts.isTTY) {
       if (effectiveTurn === null) this.sink.write(`${cardId}: errored before start\n`);
       else this.sink.write(`${cardId}: errored on turn ${effectiveTurn}\n`);
+      this.emitRollupNonTTY(cardId);
       return;
     }
     this.commit(row);
+    this.emitRollupTTY(cardId);
   }
 
   finalize(): void {
@@ -265,6 +272,50 @@ export class BatchTableRenderer {
       `  ${glyph} ${row.cardId}   ${status}   ${c.dim}${turnsLabel} · ${elapsedSec}s${c.reset}\n`,
     );
     this.sink.write(`        ${c.dim}→${c.reset} ${c.cyan}${runHint}${c.reset}\n`);
+  }
+
+  /** Compute the rollup for a card if all its attempts are finished and passes > 1.
+   *  Returns null if rollup is not applicable yet (or not needed). */
+  private rollupFor(cardId: string): { cardStatus: SetBucket; medianTurns: number } | null {
+    const cardRows = [...this.rows.values()].filter((r) => r.cardId === cardId);
+    if (cardRows.length === 0) return null;
+    // passes is stored per-row; read it from the first row.
+    const passes = cardRows[0].passes;
+    if (passes <= 1) return null;
+    // Only emit once all attempts for this card are terminal.
+    const allDone = cardRows.every((r) => r.state === "done" || r.state === "errored");
+    if (!allDone) return null;
+
+    const by: ByStatus = { pass: 0, fail: 0, investigate: 0, errored: 0, cancelled: 0 };
+    const turns: number[] = [];
+    for (const r of cardRows) {
+      if (r.state === "errored") {
+        by.errored++;
+      } else if (r.finalStatus === "pass") {
+        by.pass++;
+        turns.push(r.turn);
+      } else if (r.finalStatus === "fail") {
+        by.fail++;
+        turns.push(r.turn);
+      } else if (r.finalStatus === "investigate") {
+        by.investigate++;
+        turns.push(r.turn);
+      }
+    }
+    return { cardStatus: deriveBucket(by), medianTurns: median(turns) };
+  }
+
+  private emitRollupNonTTY(cardId: string): void {
+    const rollup = this.rollupFor(cardId);
+    if (!rollup) return;
+    this.sink.write(`${cardId}: rollup ${rollup.cardStatus} (median ${rollup.medianTurns} turns)\n`);
+  }
+
+  private emitRollupTTY(cardId: string): void {
+    const rollup = this.rollupFor(cardId);
+    if (!rollup) return;
+    const c = this.colors();
+    this.sink.write(`        ${c.dim}→${c.reset} ${rollup.cardStatus} · median ${rollup.medianTurns} turns\n`);
   }
 
   private glyphFor(row: CardRow): string {
