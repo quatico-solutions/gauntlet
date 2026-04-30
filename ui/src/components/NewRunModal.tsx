@@ -102,8 +102,8 @@ export function NewRunModal({ onClose, onStarted, prefill }: NewRunModalProps) {
     let passesNum: number | undefined;
     if (passes.trim() !== "") {
       const parsed = Number.parseInt(passes, 10);
-      if (Number.isNaN(parsed) || parsed < 1) {
-        setError("Passes must be a positive integer");
+      if (Number.isNaN(parsed) || parsed < 1 || parsed > 50) {
+        setError("Passes must be an integer in [1, 50]");
         return;
       }
       passesNum = parsed;
@@ -231,6 +231,7 @@ export function NewRunModal({ onClose, onStarted, prefill }: NewRunModalProps) {
               className="input-field"
               type="number"
               min={1}
+              max={50}
               value={passes}
               onChange={(e) => setPasses(e.target.value)}
               placeholder="1"
