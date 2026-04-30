@@ -9,6 +9,7 @@ import { RunsList } from "./components/RunsList";
 import { RunDetail } from "./components/RunDetail";
 import { NewRunModal, type NewRunPrefill } from "./components/NewRunModal";
 import { LiveRun } from "./components/LiveRun";
+import { RunSetDetail } from "./components/RunSetDetail";
 import { TranscriptView } from "./components/transcript";
 import { Spinner } from "./components/shared";
 import { api, type VetResult, type ActiveRun } from "./lib/api";
@@ -316,6 +317,7 @@ export default function App() {
           } />
           <Route path="/runs/:id/transcript" element={<TranscriptView mode="posthoc" />} />
           <Route path="/runs/live/:id/transcript" element={<TranscriptView mode="live" />} />
+          <Route path="/run-sets/:id" element={<RunSetDetail />} />
         </Routes>
       </AppShell>
 
