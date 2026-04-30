@@ -6,6 +6,8 @@
 //     action without re-eliciting the parameters.
 export const RESULT_SCHEMA_VERSION = 2;
 
+import type { RunSetCtx } from "./runs/run-set-types";
+
 export interface RunConfigSnapshot {
   target: string;
   model: string;
@@ -87,6 +89,7 @@ export interface VetResult {
    * re-asking the user for params.
    */
   config?: RunConfigSnapshot;
+  runSet?: RunSetCtx;
 }
 
 export interface ModelConfig {
