@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import type { VetResult, ActiveRun } from "../lib/api";
 import { StatusBadge, formatDuration } from "./shared";
 import { formatRunTimestamp } from "../lib/runId";
@@ -201,7 +202,18 @@ function CardGroupRow({ group, selectedId, onSelect, onSelectActive }: CardGroup
               <span className="text-xs text-slate">
                 {when ? `Run at ${when}` : result.runId}
               </span>
-              <StatusBadge status={result.status} />
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {result.runSet && (
+                  <Link
+                    to={`/run-sets/${result.runSet.runSetId}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs text-teal underline"
+                  >
+                    set · {result.runSet.attemptNumber}/{result.runSet.passes}
+                  </Link>
+                )}
+                <StatusBadge status={result.status} />
+              </div>
             </div>
             <div className="mt-0.5 flex items-center gap-2 text-xs text-slate">
               <span>{formatDuration(result.duration_ms)}</span>

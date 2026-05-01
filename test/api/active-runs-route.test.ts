@@ -30,6 +30,7 @@ describe("Active Runs API", () => {
       target: "http://localhost:3000",
       model: "claude-sonnet-4-6",
       startedAt: 123,
+      status: "running",
     });
     const res = await app.request("/api/runs/active");
     const body = await res.json();
@@ -47,6 +48,7 @@ describe("Active Runs API", () => {
       target: "http://localhost:3000",
       model: "claude-sonnet-4-6",
       startedAt: 123,
+      status: "running",
     });
     registry.recordProgress(RUN_ID, "hello");
     registry.recordFrame(RUN_ID, { data: "AAA", width: 10, height: 20 });

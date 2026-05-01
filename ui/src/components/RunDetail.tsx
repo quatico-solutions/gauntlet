@@ -66,6 +66,16 @@ export function RunDetail({ result, onFanout, onRunAgain }: RunDetailProps) {
         <p className="text-sm text-slate mb-6">Run at {when}</p>
       )}
 
+      {result.runSet && (
+        <div className="mb-3 text-sm">
+          Part of run set{" "}
+          <Link to={`/run-sets/${result.runSet.runSetId}`} className="text-teal underline">
+            {result.runSet.runSetId}
+          </Link>
+          {" — attempt "}{result.runSet.attemptNumber} of {result.runSet.passes}
+        </div>
+      )}
+
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error}
@@ -173,6 +183,7 @@ export function RunDetail({ result, onFanout, onRunAgain }: RunDetailProps) {
                 turns: result.config!.turns,
                 adapter: result.config!.adapter,
                 viewport: result.config!.viewport,
+                passes: result.runSet?.passes,
               })}
             >
               Run Again

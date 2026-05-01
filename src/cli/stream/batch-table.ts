@@ -1,8 +1,13 @@
 import type { WriteSink } from "./jsonl";
 import type { VetStatus } from "../../types";
+import { deriveBucket, median } from "../../runs/aggregate";
+import type { ByStatus } from "../../runs/aggregate";
+import type { SetBucket } from "../../runs/run-set-types";
 
 interface CardRow {
   cardId: string;
+  attemptNumber: number;
+  passes: number;
   runId: string | null;
   state: "queued" | "running" | "done" | "errored";
   turn: number;
@@ -49,7 +54,7 @@ export class BatchTableRenderer {
 
   // TTY-mode state
   private headerWritten = false;
-  private activeCardId: string | null = null;
+  private activeKey: string | null = null;
   private cardIndex = 0;            // 1-indexed; the currently-running card
   private spinnerStep = 0;
   private spinnerTimer: ReturnType<typeof setInterval> | null = null;
@@ -62,10 +67,17 @@ export class BatchTableRenderer {
 
   constructor(private sink: WriteSink, private opts: BatchTableOptions) {}
 
-  setQueued(cardId: string): void {
-    if (!this.rows.has(cardId)) this.order.push(cardId);
-    this.rows.set(cardId, {
+  private rowKey(cardId: string, attemptNumber = 1): string {
+    return `${cardId}#${attemptNumber}`;
+  }
+
+  setQueued(cardId: string, attemptNumber = 1, passes = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    if (!this.rows.has(key)) this.order.push(key);
+    this.rows.set(key, {
       cardId,
+      attemptNumber,
+      passes,
       runId: null,
       state: "queued",
       turn: 0,
@@ -80,12 +92,14 @@ export class BatchTableRenderer {
     // TTY: queued cards aren't shown until they start; the model is enough.
   }
 
-  setRunning(cardId: string, runId: string, maxTurns: number): void {
-    const row = this.rows.get(cardId);
+  setRunning(cardId: string, runId: string, maxTurns: number, attemptNumber = 1, passes = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    const row = this.rows.get(key);
     if (!row) return;
     row.runId = runId;
     row.state = "running";
     row.maxTurns = maxTurns;
+    row.passes = passes;
     row.startedAt = Date.now();
 
     if (!this.opts.isTTY) {
@@ -94,7 +108,7 @@ export class BatchTableRenderer {
     }
 
     this.cardIndex += 1;
-    this.activeCardId = cardId;
+    this.activeKey = key;
     if (!this.headerWritten) {
       // First card: header writes its own trailing blank, spinner sits
       // directly underneath. No "\n" added here.
@@ -110,19 +124,21 @@ export class BatchTableRenderer {
     this.startSpinnerTimer();
   }
 
-  onTurn(cardId: string, turn: number): void {
-    const row = this.rows.get(cardId);
+  onTurn(cardId: string, turn: number, attemptNumber = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    const row = this.rows.get(key);
     if (!row || row.state !== "running") return;
     row.turn = turn;
     if (!this.opts.isTTY) {
       this.sink.write(`${cardId}: running turn ${turn} / ${row.maxTurns}\n`);
       return;
     }
-    if (this.activeCardId === cardId) this.drawSpinner();
+    if (this.activeKey === key) this.drawSpinner();
   }
 
-  setDone(cardId: string, finalStatus: VetStatus, turn: number): void {
-    const row = this.rows.get(cardId);
+  setDone(cardId: string, finalStatus: VetStatus, turn: number, attemptNumber = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    const row = this.rows.get(key);
     if (!row) return;
     row.state = "done";
     row.finalStatus = finalStatus;
@@ -131,13 +147,15 @@ export class BatchTableRenderer {
 
     if (!this.opts.isTTY) {
       this.sink.write(`${cardId}: done (${finalStatus}) on turn ${turn}\n`);
+      this.emitRollupNonTTY(cardId);
       return;
     }
     this.commit(row);
   }
 
-  setErrored(cardId: string, turn: number | null, message: string): void {
-    const row = this.rows.get(cardId);
+  setErrored(cardId: string, turn: number | null, message: string, attemptNumber = 1): void {
+    const key = this.rowKey(cardId, attemptNumber);
+    const row = this.rows.get(key);
     if (!row) return;
     // If the caller didn't pass a turn but the row was already running,
     // use the row's last-known turn. This way batch.ts can call
@@ -153,6 +171,7 @@ export class BatchTableRenderer {
     if (!this.opts.isTTY) {
       if (effectiveTurn === null) this.sink.write(`${cardId}: errored before start\n`);
       else this.sink.write(`${cardId}: errored on turn ${effectiveTurn}\n`);
+      this.emitRollupNonTTY(cardId);
       return;
     }
     this.commit(row);
@@ -160,18 +179,18 @@ export class BatchTableRenderer {
 
   finalize(): void {
     this.stopSpinnerTimer();
-    if (this.opts.isTTY && this.activeCardId !== null) {
+    if (this.opts.isTTY && this.activeKey !== null) {
       // Defensive: a run that produces no terminal event would leak the
       // spinner line. Erase it so the summary sits cleanly.
       this.sink.write(ERASE_LINE);
       if (this.pendingBlankAboveSpinner) this.sink.write(CURSOR_UP_AND_ERASE);
-      this.activeCardId = null;
+      this.activeKey = null;
       this.pendingBlankAboveSpinner = false;
     }
 
     let pass = 0, fail = 0, investigate = 0, errored = 0;
-    for (const cardId of this.order) {
-      const row = this.rows.get(cardId);
+    for (const key of this.order) {
+      const row = this.rows.get(key);
       if (!row) continue;
       if (row.state === "errored") errored++;
       else if (row.finalStatus === "pass") pass++;
@@ -188,19 +207,35 @@ export class BatchTableRenderer {
 
   private writeHeader(): void {
     const { target } = this.opts;
-    const n = this.order.length;
     const c = this.colors();
-    const cardsLabel = n === 1 ? "1 card" : `${n} cards`;
+    const allRows = [...this.rows.values()];
+    const distinctCards = new Set(allRows.map((r) => r.cardId));
+    const cardCount = distinctCards.size;
+    const passes = allRows[0]?.passes ?? 1;
+
+    let label: string;
+    if (cardCount === 1 && passes > 1) {
+      // Single card, multiple attempts: "login-ok · 3 attempts"
+      const cardId = [...distinctCards][0];
+      label = `${cardId} · ${passes} attempts`;
+    } else if (cardCount > 1 && passes > 1) {
+      // Batch with multi-pass: "2 cards × 3 attempts"
+      label = `${cardCount} cards × ${passes} attempts`;
+    } else {
+      // Today's batch: "1 card" / "3 cards"
+      label = cardCount === 1 ? "1 card" : `${cardCount} cards`;
+    }
+
     this.sink.write(
-      `${c.bold}Gauntlet${c.reset}${c.dim} · ${cardsLabel} · target ${c.reset}${c.cyan}${target}${c.reset}\n\n`,
+      `${c.bold}Gauntlet${c.reset}${c.dim} · ${label} · target ${c.reset}${c.cyan}${target}${c.reset}\n\n`,
     );
     this.headerWritten = true;
   }
 
   private drawSpinner(): void {
-    const cardId = this.activeCardId;
-    if (cardId === null) return;
-    const row = this.rows.get(cardId);
+    const key = this.activeKey;
+    if (key === null) return;
+    const row = this.rows.get(key);
     if (!row) return;
     const c = this.colors();
     const frame = SPINNER_FRAMES[this.spinnerStep % SPINNER_FRAMES.length];
@@ -210,7 +245,7 @@ export class BatchTableRenderer {
       ? `starting…`
       : `turn ${row.turn} / ${row.maxTurns}`;
     this.sink.write(
-      `${ERASE_LINE}${c.bold}${frame}${c.reset} ${c.dim}[${idx}/${total}]${c.reset} ${cardId}   ${c.dim}${turn}${c.reset}`,
+      `${ERASE_LINE}${c.bold}${frame}${c.reset} ${c.dim}[${idx}/${total}]${c.reset} ${row.cardId}   ${c.dim}${turn}${c.reset}`,
     );
   }
 
@@ -222,10 +257,10 @@ export class BatchTableRenderer {
     // above it, if we wrote one). The committed result then takes the
     // spinner's slot, stacking flush with the previous commit (or, for
     // the first card, sitting directly under the header's blank line).
-    if (this.activeCardId !== null) {
+    if (this.activeKey !== null) {
       this.sink.write(ERASE_LINE);
       if (this.pendingBlankAboveSpinner) this.sink.write(CURSOR_UP_AND_ERASE);
-      this.activeCardId = null;
+      this.activeKey = null;
       this.pendingBlankAboveSpinner = false;
     }
     // Else: parse-failure / setErrored before setRunning. Cursor is on
@@ -251,6 +286,52 @@ export class BatchTableRenderer {
       `  ${glyph} ${row.cardId}   ${status}   ${c.dim}${turnsLabel} · ${elapsedSec}s${c.reset}\n`,
     );
     this.sink.write(`        ${c.dim}→${c.reset} ${c.cyan}${runHint}${c.reset}\n`);
+
+    // Emit the rollup line (third committed line) while we still own the
+    // cursor and before pendingBlankAboveSpinner is cleared. This means the
+    // rollup is counted as part of the commit, so the next card's setRunning
+    // will correctly account for it when positioning its spinner.
+    const rollup = this.rollupFor(row.cardId);
+    if (rollup !== null) {
+      this.sink.write(`        ${c.dim}→${c.reset} ${rollup.cardStatus} · median ${rollup.medianTurns} turns\n`);
+    }
+  }
+
+  /** Compute the rollup for a card if all its attempts are finished and passes > 1.
+   *  Returns null if rollup is not applicable yet (or not needed). */
+  private rollupFor(cardId: string): { cardStatus: SetBucket; medianTurns: number } | null {
+    const cardRows = [...this.rows.values()].filter((r) => r.cardId === cardId);
+    if (cardRows.length === 0) return null;
+    // passes is stored per-row; read it from the first row.
+    const passes = cardRows[0].passes;
+    if (passes <= 1) return null;
+    // Only emit once all attempts for this card are terminal.
+    const allDone = cardRows.every((r) => r.state === "done" || r.state === "errored");
+    if (!allDone) return null;
+
+    const by: ByStatus = { pass: 0, fail: 0, investigate: 0, errored: 0, cancelled: 0 };
+    const turns: number[] = [];
+    for (const r of cardRows) {
+      if (r.state === "errored") {
+        by.errored++;
+      } else if (r.finalStatus === "pass") {
+        by.pass++;
+        turns.push(r.turn);
+      } else if (r.finalStatus === "fail") {
+        by.fail++;
+        turns.push(r.turn);
+      } else if (r.finalStatus === "investigate") {
+        by.investigate++;
+        turns.push(r.turn);
+      }
+    }
+    return { cardStatus: deriveBucket(by), medianTurns: median(turns) };
+  }
+
+  private emitRollupNonTTY(cardId: string): void {
+    const rollup = this.rollupFor(cardId);
+    if (!rollup) return;
+    this.sink.write(`${cardId}: rollup ${rollup.cardStatus} (median ${rollup.medianTurns} turns)\n`);
   }
 
   private glyphFor(row: CardRow): string {

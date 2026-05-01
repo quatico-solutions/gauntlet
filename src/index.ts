@@ -57,6 +57,7 @@ async function main() {
         silent: args.silent,
         format: args.format,
         noColor: args.noColor,
+        passes: args.passes,
       });
       break;
     }
@@ -74,6 +75,7 @@ async function main() {
         noColor: args.noColor,
         sink: { write: (s: string) => process.stdout.write(s) },
         isTTY: Boolean(process.stdout.isTTY),
+        passes: args.passes,
       });
       if (exitCode !== 0) process.exit(exitCode);
       break;
@@ -118,7 +120,9 @@ async function main() {
       const { createApp } = await import("./api/server");
       const { RunBroadcaster } = await import("./api/ws");
       const { ActiveRunRegistry } = await import("./api/active-runs");
-      const { handleWsOpen } = await import("./api/ws-handlers");
+      const { RunSetBroadcaster } = await import("./api/run-set-broadcaster");
+      const { CancelTokenRegistry } = await import("./api/run-cancel");
+      const { handleWsOpen, handleSetWsOpen } = await import("./api/ws-handlers");
       const { join } = await import("path");
       const { gauntletPath } = await import("./paths");
 
@@ -126,17 +130,29 @@ async function main() {
       await requireLlmCapableOrExit(config);
 
       const uiDir = join(import.meta.dir, "..", "ui", "dist");
+      const gauntletRoot = gauntletPath(config.projectRoot);
       const resultsRoot = gauntletPath(config.projectRoot, "results");
       const broadcaster = new RunBroadcaster();
       const registry = new ActiveRunRegistry();
-      const app = createApp(config, uiDir, broadcaster, registry);
+      const setBroadcaster = new RunSetBroadcaster();
+      const cancelTokens = new CancelTokenRegistry();
+      const app = createApp(config, uiDir, broadcaster, registry, setBroadcaster, cancelTokens);
       const port = config.port;
       console.error(`gauntlet server listening on port ${port}`);
-      Bun.serve<{ runId: string }>({
+      Bun.serve<{ runId?: string; runSetId?: string }>({
         port,
         idleTimeout: 255, // seconds; LLM calls can take minutes
         fetch(req, server) {
           const url = new URL(req.url);
+          if (url.pathname.startsWith("/api/ws/run-sets/")) {
+            const runSetId = url.pathname.slice("/api/ws/run-sets/".length);
+            if (!/^[a-z]+_\d{8}T\d{6}Z_[a-z0-9]+$/.test(runSetId)) {
+              return new Response("invalid run set id", { status: 400 });
+            }
+            const upgraded = server.upgrade(req, { data: { runSetId } });
+            if (upgraded) return undefined;
+            return new Response("WebSocket upgrade failed", { status: 400 });
+          }
           if (url.pathname === "/api/ws") {
             const runId = url.searchParams.get("run") || "";
             const upgraded = server.upgrade(req, { data: { runId } });
@@ -147,12 +163,20 @@ async function main() {
         },
         websocket: {
           open(ws) {
-            const runId = (ws.data as any).runId;
-            if (runId) handleWsOpen(registry, broadcaster, runId, ws as any, resultsRoot);
+            const data = ws.data as any;
+            if (data.runSetId) {
+              handleSetWsOpen(setBroadcaster, data.runSetId, ws as any, gauntletRoot);
+            } else if (data.runId) {
+              handleWsOpen(registry, broadcaster, data.runId, ws as any, resultsRoot);
+            }
           },
           close(ws) {
-            const runId = (ws.data as any).runId;
-            if (runId) broadcaster.removeClient(runId, ws as any);
+            const data = ws.data as any;
+            if (data.runSetId) {
+              setBroadcaster.removeClient(data.runSetId, ws as any);
+            } else if (data.runId) {
+              broadcaster.removeClient(data.runId, ws as any);
+            }
           },
           message() {},
         },

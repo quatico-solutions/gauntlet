@@ -13,6 +13,7 @@ import { gauntletPath } from "../paths";
 import { snapshotRunInputs } from "../runs/snapshot";
 import type { AppConfig, Viewport } from "../config";
 import type { RunConfigSnapshot, VetResult } from "../types";
+import type { RunSetCtx } from "../runs/run-set-types";
 
 function viewportString(v: Viewport | undefined): string | undefined {
   return v ? `${v.width}x${v.height}` : undefined;
@@ -29,6 +30,11 @@ export interface RunOneOptions {
    * `finally`. The single-card command uses this to attach the streaming
    * renderer; batch.ts uses it to subscribe its per-card observer. */
   onLogger?: (logger: EvidenceLogger) => () => void;
+  runSetCtx?: RunSetCtx;
+  /** Externally-supplied runId (from the orchestrator). When provided, this
+   * overrides the `makeRunId(card.id)` call so the run directory name
+   * matches what the RunSet manifest already recorded. */
+  runId?: string;
 }
 
 export interface RunOneSummary {
@@ -42,7 +48,7 @@ export async function runOne(opts: RunOneOptions): Promise<RunOneSummary> {
 
   const content = readFileSync(scenarioPath, "utf-8");
   const card = parseStoryCard(content);
-  const runId = makeRunId(card.id);
+  const runId = opts.runId ?? makeRunId(card.id);
   const outDir = opts.outDir ?? gauntletPath(config.projectRoot, "results", runId);
   snapshotRunInputs({
     runDir: outDir,
@@ -109,6 +115,9 @@ export async function runOne(opts: RunOneOptions): Promise<RunOneSummary> {
       viewport: adapterType === "web" ? viewportString(snapshotViewport(adapter)) : undefined,
     });
     result.config = runConfig;
+    if (opts.runSetCtx) {
+      result.runSet = opts.runSetCtx;
+    }
     writeResultFiles(outDir, result);
     return { runId, outDir, result };
   } catch (err) {

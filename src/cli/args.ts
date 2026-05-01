@@ -30,10 +30,24 @@ function parseBoolFlag(raw: string | undefined, label: string): boolean | undefi
   throw new Error(`Invalid ${label} value "${raw}": expected a boolean (true/false, 1/0, yes/no, on/off)`);
 }
 
+/**
+ * Parse the --passes flag. Defaults to 1 when omitted. Must be an integer
+ * in the range [1, 50]. The soft cap at 50 is a v1 safety guard against
+ * accidental thousand-pass invocations.
+ */
+function parsePasses(raw: string | undefined): number {
+  if (raw === undefined) return 1;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 50) {
+    throw new Error(`--passes must be an integer in [1, 50], got: ${raw}`);
+  }
+  return n;
+}
+
 const RUN_ALLOWED = new Set([
   "target", "out", "adapter", "model", "chrome", "project-dir",
   "turns", "viewport", "save-screencast",
-  "silent", "format", "no-color",
+  "silent", "format", "no-color", "passes",
 ]);
 // Everything `run` accepts, minus `--out` — batch doesn't invent a
 // batch-level results dir; each card writes to its default per-run dir.
@@ -65,6 +79,7 @@ export interface RunArgs {
   silent: boolean;
   format: "pretty" | "jsonl" | undefined;
   noColor: boolean;
+  passes: number;
   cli: CliArgsInput;
 }
 
@@ -75,6 +90,7 @@ export interface BatchArgs {
   silent: boolean;
   format: "pretty" | "jsonl" | undefined;
   noColor: boolean;
+  passes: number;
   cli: CliArgsInput;
 }
 
@@ -191,6 +207,7 @@ function parseRunArgs(args: string[]): RunArgs {
     silent: flags.silent === "true",
     format,
     noColor: flags["no-color"] === "true",
+    passes: parsePasses(flags.passes),
     cli: {
       projectRoot: flags["project-dir"],
       chrome: flags.chrome,
@@ -247,6 +264,7 @@ function parseBatchArgs(args: string[]): BatchArgs {
     silent: flags.silent === "true",
     format,
     noColor: flags["no-color"] === "true",
+    passes: parsePasses(flags.passes),
     cli: {
       projectRoot: flags["project-dir"],
       chrome: flags.chrome,

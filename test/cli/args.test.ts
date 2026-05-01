@@ -171,3 +171,33 @@ describe("parseArgs", () => {
     expect(args.format).toBe("jsonl");
   });
 });
+
+describe("--passes flag", () => {
+  test("run defaults to passes: 1 when omitted", () => {
+    const args = parseArgs(["bun", "index.ts", "run", "story.md", "--target", "https://x"]);
+    expect(args.command).toBe("run");
+    if (args.command === "run") expect(args.passes).toBe(1);
+  });
+
+  test("run accepts --passes 3", () => {
+    const args = parseArgs(["bun", "index.ts", "run", "story.md", "--target", "https://x", "--passes", "3"]);
+    if (args.command === "run") expect(args.passes).toBe(3);
+  });
+
+  test("batch accepts --passes", () => {
+    const args = parseArgs(["bun", "index.ts", "batch", "a.md", "b.md", "--target", "https://x", "--passes", "2"]);
+    if (args.command === "batch") expect(args.passes).toBe(2);
+  });
+
+  test("rejects --passes 0", () => {
+    expect(() => parseArgs(["bun", "index.ts", "run", "story.md", "--target", "https://x", "--passes", "0"])).toThrow(/passes/i);
+  });
+
+  test("rejects --passes 51 (over soft cap)", () => {
+    expect(() => parseArgs(["bun", "index.ts", "run", "story.md", "--target", "https://x", "--passes", "51"])).toThrow(/passes/i);
+  });
+
+  test("rejects non-integer --passes", () => {
+    expect(() => parseArgs(["bun", "index.ts", "run", "story.md", "--target", "https://x", "--passes", "1.5"])).toThrow(/passes/i);
+  });
+});

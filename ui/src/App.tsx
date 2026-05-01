@@ -9,6 +9,7 @@ import { RunsList } from "./components/RunsList";
 import { RunDetail } from "./components/RunDetail";
 import { NewRunModal, type NewRunPrefill } from "./components/NewRunModal";
 import { LiveRun } from "./components/LiveRun";
+import { RunSetDetail } from "./components/RunSetDetail";
 import { TranscriptView } from "./components/transcript";
 import { Spinner } from "./components/shared";
 import { api, type VetResult, type ActiveRun } from "./lib/api";
@@ -316,6 +317,7 @@ export default function App() {
           } />
           <Route path="/runs/:id/transcript" element={<TranscriptView mode="posthoc" />} />
           <Route path="/runs/live/:id/transcript" element={<TranscriptView mode="live" />} />
+          <Route path="/run-sets/:id" element={<RunSetDetail />} />
         </Routes>
       </AppShell>
 
@@ -326,9 +328,13 @@ export default function App() {
           onStarted={async (cardId, config) => {
             setRunModal(null);
             try {
-              const { runId } = await api.run.start(cardId, config);
+              const result = await api.run.start(cardId, config);
               await refreshActive();
-              navigate(`/runs/live/${runId}`);
+              if (result.runSetId) {
+                navigate(`/run-sets/${result.runSetId}`);
+              } else {
+                navigate(`/runs/live/${result.runs[0].runId}`);
+              }
             } catch (e) {
               // Start failed synchronously — surface error via refresh so
               // any server-side error gets logged, then bounce to Runs tab.

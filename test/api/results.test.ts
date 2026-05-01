@@ -235,6 +235,7 @@ describe("Results API", () => {
       target: "http://localhost:3000",
       model: "claude-sonnet-4-6",
       startedAt: Date.now(),
+      status: "running",
     });
 
     const liveApp = makeAppWithRegistry(liveDir, registry);
