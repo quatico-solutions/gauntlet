@@ -1,7 +1,10 @@
 import type { StreamEvent, StreamRenderer } from "./renderer";
 import type { WriteSink } from "./jsonl";
 import { makePaint, type Paint } from "./colors";
-import { softWrap, truncateArgs } from "./wrap";
+import { softWrap } from "./wrap";
+import { formatToolArgs } from "./format-args";
+import { formatTiming } from "./format-timing";
+import { formatAnomalyEvent } from "./format-event";
 
 const RULE = "──────────────────────────────────────────────────────";
 
@@ -18,6 +21,14 @@ export class PrettyRenderer implements StreamRenderer {
   private outDir: string | undefined;
   private pendingRewrite: { base: string } | undefined;
   private pendingToolBlank = false;
+  /**
+   * Tracks whether we've rendered any section-like content yet (tools,
+   * anomaly events, or an actual section header). The first section
+   * sits directly under the run_start banner's trailing blank; once
+   * anything else has rendered, subsequent sections own their own
+   * leading blank so consecutive intents are visually separated.
+   */
+  private firstSection = true;
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private spinnerStartMs = 0;
   private spinnerActive = false;
@@ -39,13 +50,11 @@ export class PrettyRenderer implements StreamRenderer {
     if (this.pendingRewrite && event.type !== "tool_result") {
       this.pendingRewrite = undefined;
     }
-    // Defer the trailing blank after tool_result: only emit it when the next
-    // event isn't another tool_call, so consecutive tool calls pack tightly
-    // but turn headers / meta / run_end still get breathing room.
-    if (this.pendingToolBlank) {
-      if (event.type !== "tool_call") this.write("");
-      this.pendingToolBlank = false;
-    }
+    // `pendingToolBlank` is flushed inside the individual render handlers
+    // that know whether they want a leading blank: renderLlmResponse for
+    // section breaks, renderEventMeta / renderRunError / renderRunEnd
+    // before their respective panels. tool_call (consecutive tools) and
+    // llm_request (invisible) explicitly do not flush.
     switch (event.type) {
       case "run_start":
         this.renderRunStart(event);
@@ -105,6 +114,11 @@ export class PrettyRenderer implements StreamRenderer {
 
   private renderRunEnd(e: StreamEvent): void {
     const p = this.paint;
+    // Always separate the run-end panel from the preceding content with
+    // one blank, regardless of whether we just finished tools or text —
+    // it's a major boundary and deserves the breathing room.
+    this.write("");
+    this.pendingToolBlank = false;
     const status = String(e.status);
     const ok = status === "pass";
     const mark = ok ? p.green("✓") : p.red("✗");
@@ -159,17 +173,30 @@ export class PrettyRenderer implements StreamRenderer {
   private renderLlmResponse(e: StreamEvent): void {
     const p = this.paint;
     const turn = Number(e.turn ?? 0);
-    // Model is cached from run_start. No leading blank here — the preceding
-    // section (run_start or tool_result) emits its own trailing blank.
-    const modelLabel = this.model ?? "";
-    const maxTurnsStr = this.maxTurns ?? "?";
-    const header = `${p.cyan("▎")} ${p.bold(`Turn ${turn}`)} ${p.dim(`· ${modelLabel} · turn ${turn} / ${maxTurnsStr}`)}`;
-    this.write(header);
-
-    // First content block sits directly under the turn header (no leading
-    // blank); subsequent blocks get a separator blank.
-    let firstBlock = true;
     const thinking = (e.thinking ?? []) as Array<{ text: string }>;
+    const text = String(e.text ?? "").trim();
+    const hasContent = thinking.length > 0 || text.length > 0;
+
+    if (!hasContent) {
+      // Tool-only turn: the agent didn't speak this turn — its tool
+      // calls visually continue the previous intent. Suppress any
+      // pending blank so consecutive tool-only turns pack tightly,
+      // and emit no header of any kind.
+      this.pendingToolBlank = false;
+      return;
+    }
+
+    // Content turn: own the leading blank so each section is visually
+    // distinct from the previous one (tools, anomaly events, or another
+    // section). The very first section sits under the run_start banner's
+    // trailing blank, so we suppress the leading blank in that case.
+    if (!this.firstSection) {
+      this.write("");
+    }
+    this.firstSection = false;
+    this.pendingToolBlank = false;
+
+    let firstBlock = true;
     for (const th of thinking) {
       if (!firstBlock) this.write("");
       firstBlock = false;
@@ -179,23 +206,52 @@ export class PrettyRenderer implements StreamRenderer {
       }
     }
 
-    const text = String(e.text ?? "");
     if (text.length > 0) {
       if (!firstBlock) this.write("");
       firstBlock = false;
-      this.write(`  ${p.yellow("= assistant")}`);
-      for (const line of softWrap(text, this.opts.columns - 4)) {
-        this.write(`    ${line}`);
+      // The section header: `» <utterance> · t<N>`. The leading `»` glyph
+      // marks a new intent; the trailing `· tN` is the turn anchor for
+      // citations ("turn 23 was where it got stuck"). Continuations of
+      // a wrapped utterance indent under the first content column;
+      // the turn marker rides the last line that has budget for it,
+      // falling back to its own short trailing line otherwise.
+      const turnSuffix = ` ${p.dim(`· t${turn}`)}`;
+      const turnSuffixLen = ` · t${turn}`.length;
+      const lines = softWrap(text, this.opts.columns - 2);
+      if (lines.length === 0) {
+        this.write(`${p.yellow("»")}${turnSuffix}`);
+      } else {
+        const lastIdx = lines.length - 1;
+        // First line accounts for `» ` prefix (2 chars); continuations
+        // for `  ` indent (also 2 chars). Either way the available width
+        // is `columns - 2`, so a uniform check works.
+        const lastLineFits = lines[lastIdx].length + turnSuffixLen + 2 <= this.opts.columns;
+        for (let i = 0; i < lines.length; i++) {
+          const isFirst = i === 0;
+          const isLast = i === lastIdx;
+          const prefix = isFirst ? `${p.yellow("»")} ` : "  ";
+          const suffix = isLast && lastLineFits ? turnSuffix : "";
+          this.write(`${prefix}${lines[i]}${suffix}`);
+        }
+        if (!lastLineFits) {
+          this.write(`  ${p.dim(`· t${turn}`)}`);
+        }
       }
     }
-    this.write("");
   }
 
   private renderToolCall(e: StreamEvent): void {
     const p = this.paint;
     const name = String(e.name ?? "");
-    const args = truncateArgs(JSON.stringify(e.arguments ?? {}), 200);
-    const base = `  ${p.cyan("▸")} ${p.bold(name)} ${p.dim(args)}`;
+    const formatted = formatToolArgs(name, e.arguments as Record<string, unknown> | undefined);
+
+    const bodyParts: string[] = [];
+    if (formatted.body) bodyParts.push(p.dim(formatted.body));
+    if (formatted.marker) bodyParts.push(p.dim(formatted.marker));
+    const bodyStr = bodyParts.length > 0 ? " " + bodyParts.join(" ") : "";
+    const base = `  ${p.cyan("▸")} ${p.bold(name)}${bodyStr}`;
+    this.firstSection = false;
+
     if (this.opts.color) {
       // Inline-rewrite path: include a trailing pending marker so the user sees progress.
       this.write(`${base} ${p.dim("⋯")}`);
@@ -210,18 +266,22 @@ export class PrettyRenderer implements StreamRenderer {
     const p = this.paint;
     const ms = Number(e.durationMs ?? 0);
     const err = Boolean(e.error);
-    const timing = `${ms}ms`;
+    const timing = formatTiming(ms, err);
+    const timingText = timing ? (timing.slow && err ? p.red(timing.text) : timing.slow ? p.yellow(timing.text) : p.dim(timing.text)) : "";
 
     if (this.pendingRewrite && this.opts.color) {
       // Erase the previous line and rewrite with the final timing inline.
       const mark = err ? p.red("✗") : p.green("✓");
       this.sink.write("\x1b[1A\x1b[2K"); // cursor up, erase line
-      this.write(`${this.pendingRewrite.base}   ${mark} ${p.dim(timing)}`);
+      const tail = timing ? `   ${mark} ${timingText}` : (err ? `   ${mark}` : "");
+      this.write(`${this.pendingRewrite.base}${tail}`);
       this.pendingRewrite = undefined;
-    } else {
-      // Two-line fallback — same as the existing no-color path.
-      if (err) this.write(`    ${p.dim("↳")} ${p.red("✗")} ${p.dim(timing)}`);
-      else     this.write(`    ${p.dim("↳")} ${p.green("✓")} ${p.dim(timing)}`);
+    } else if (timing || err) {
+      // Two-line fallback — same as the existing no-color path. Skipped
+      // entirely when timing is suppressed AND the call succeeded; the
+      // call line stands on its own.
+      const mark = err ? p.red("✗") : p.green("✓");
+      this.write(`    ${p.dim("↳")} ${mark}${timing ? ` ${timingText}` : ""}`);
     }
 
     // Secondary lines always print as a separate indented line regardless of mode.
@@ -250,15 +310,21 @@ export class PrettyRenderer implements StreamRenderer {
 
   private renderEventMeta(e: StreamEvent): void {
     const p = this.paint;
-    const { type: _t, eventId: _id, parentEventId: _pid, ts: _ts, name, ...rest } = e;
-    const parts = Object.entries(rest)
-      .filter(([, v]) => v !== undefined && v !== null)
-      .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
-    this.write(`  ${p.dim(`· ${name} ${parts.join(" ")}`)}`);
+    if (this.pendingToolBlank) {
+      this.write("");
+      this.pendingToolBlank = false;
+    }
+    const formatted = formatAnomalyEvent(e as Record<string, unknown>);
+    const body = formatted.body ? `  ${p.dim(formatted.body)}` : "";
+    this.write(`  ${p.dim(`· ${formatted.name}`)}${body}`);
+    this.firstSection = false;
   }
 
   private renderRunError(e: StreamEvent): void {
     const p = this.paint;
+    if (this.pendingToolBlank) {
+      this.pendingToolBlank = false;
+    }
     const turn = Number(e.turn ?? 0);
     this.write("");
     this.write(`${p.dim("─── Run failed ──────────────────────────────────")} ${p.red("✗")} ${p.red("error")}`);
