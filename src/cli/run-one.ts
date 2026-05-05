@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { parseStoryCard } from "../format/story-card";
-import { EvidenceLogger } from "../evidence/logger";
+import type { EvidenceLogger } from "../evidence/logger";
 import { createClient } from "../models/resolve";
 import { executeRunCore, type RunAdapterType } from "../runs/orchestrator";
 import type { AppConfig } from "../config";
