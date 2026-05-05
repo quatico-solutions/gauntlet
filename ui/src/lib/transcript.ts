@@ -272,6 +272,63 @@ export function turnsInOrder(model: TranscriptModel): TurnModel[] {
   return Array.from(model.turns.values()).sort((a, b) => a.turn - b.turn);
 }
 
+// `read_output` returns the captured PTY buffer. For readline-style
+// prompts the active question is the last non-empty line — preceding
+// lines are leading banner / prior output. Used to pair a `read_output`
+// with the keystroke (`type` / `press`) that immediately follows it,
+// so the transcript reads as "answering: <prompt>" instead of bare
+// `Enter`s.
+export function extractPromptLine(text: string): string | null {
+  if (!text) return null;
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+// Tool calls that consume a previously-captured prompt. The transcript
+// pairs each one with the most recent `read_output` snippet in the same
+// turn so the reader sees what the keystroke was answering.
+const PROMPT_CONSUMER_TOOLS = new Set(["type", "press"]);
+
+export function isPromptConsumer(toolName: string): boolean {
+  return PROMPT_CONSUMER_TOOLS.has(toolName);
+}
+
+/**
+ * Walk all tool calls across all turns in chronological order, threading the
+ * most recent `read_output` snippet into the next prompt-consumer call (`type`
+ * / `press`). Returns a map of toolUseId → prompt text for those consumer
+ * calls. Used by the transcript to render an "answering: <prompt>" line on
+ * each keystroke card so the reader sees what the input was responding to —
+ * the read_output and its answering keystroke are typically in *different*
+ * turns, so this pairing has to span the run, not just one turn.
+ *
+ * Resets `lastPrompt` whenever a non-consumer, non-read_output call appears
+ * (e.g. an intervening file `read`) so we don't bleed a stale prompt across
+ * unrelated tool activity.
+ */
+export function computePromptPairings(model: TranscriptModel): Map<string, string> {
+  const pairings = new Map<string, string>();
+  let lastPrompt: string | null = null;
+  for (const turn of turnsInOrder(model)) {
+    for (const pair of turn.tools) {
+      if (isPromptConsumer(pair.call.name)) {
+        if (lastPrompt) pairings.set(pair.toolUseId, lastPrompt);
+        continue; // a consumer doesn't change lastPrompt — multiple keystrokes can answer one prompt
+      }
+      if (pair.call.name === "read_output" && pair.result && !pair.result.error) {
+        lastPrompt = extractPromptLine(pair.result.text);
+      } else {
+        lastPrompt = null;
+      }
+    }
+  }
+  return pairings;
+}
+
 // Soft-error detection: a tool_result with error=false whose text output
 // starts with an error-ish prefix. The tool call succeeded (no hard error),
 // but the tool's response tells the agent something went wrong — typically a

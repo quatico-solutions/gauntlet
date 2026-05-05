@@ -233,6 +233,17 @@ export class PrettyRenderer implements StreamRenderer {
       if (e.image)            this.write(`      ${p.dim("→")} ${p.blue(String(e.image))}`);
       else if (e.artifact)    this.write(`      ${p.dim("→")} ${p.blue(String(e.artifact))}`);
       else if (e.capturePath) this.write(`      ${p.dim("→")} ${p.blue(String(e.capturePath))}`);
+      else if (String(e.name ?? "") === "read_output") {
+        // Surface the captured prompt for CLI/TUI `read_output` calls.
+        // Without this, a sequence of agent keystrokes (`press Enter`,
+        // `press Enter`, …) reads as opaque noise because each prompt
+        // (`package name:`, `version:`, …) lives in the prior read_output
+        // body and was previously dropped. Scoped to `read_output` so
+        // unrelated text-bearing tools (e.g. file `read`) don't leak a
+        // misleading last-line snippet into the stream.
+        const snippet = pickResultSnippet(String(e.text ?? ""), this.opts.columns - 8);
+        if (snippet) this.write(`      ${p.dim("↳")} ${p.dim(snippet)}`);
+      }
     }
     this.pendingToolBlank = true;
   }
@@ -290,4 +301,24 @@ function formatThousands(n: number | undefined): string {
   if (n === undefined) return "0";
   if (n < 1000) return String(n);
   return `${(n / 1000).toFixed(1)}k`;
+}
+
+function pickResultSnippet(text: string, maxWidth: number): string | null {
+  if (!text) return null;
+  // Pick the last non-empty line. For readline-style prompts that redraw
+  // (e.g. `npm init`'s default-rendering) the active prompt is the bottom
+  // line of the captured buffer; the lines above are leading banner text.
+  const lines = text.split("\n");
+  let line: string | null = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (trimmed) {
+      line = trimmed;
+      break;
+    }
+  }
+  if (!line) return null;
+  const width = Math.max(20, maxWidth);
+  if (line.length <= width) return line;
+  return line.slice(0, width - 1) + "…";
 }

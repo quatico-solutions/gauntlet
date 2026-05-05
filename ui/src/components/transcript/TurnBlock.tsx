@@ -6,6 +6,13 @@ interface Props {
   runId: string;
   turn: TurnModel;
   isCurrent: boolean;
+  /**
+   * toolUseId → prompt text for prompt-consumer calls (`type` / `press`),
+   * computed globally across the run by `computePromptPairings`. The pairing
+   * spans turns: a `read_output` near the end of one turn typically pairs
+   * with keystrokes in the next turn or two.
+   */
+  promptPairings: Map<string, string>;
   activeArtifact: string | null;
   onOpenArtifact: (path: string) => void;
 }
@@ -26,7 +33,7 @@ function formatUsage(turn: TurnModel): string {
   return `${u.inputTokens.toLocaleString()} in · ${u.outputTokens.toLocaleString()} out`;
 }
 
-export function TurnBlock({ runId, turn, isCurrent, activeArtifact, onOpenArtifact }: Props) {
+export function TurnBlock({ runId, turn, isCurrent, promptPairings, activeArtifact, onOpenArtifact }: Props) {
   const duration = turnDuration(turn);
   const usage = formatUsage(turn);
   const thinking = turn.llmResponse?.thinking ?? [];
@@ -65,6 +72,7 @@ export function TurnBlock({ runId, turn, isCurrent, activeArtifact, onOpenArtifa
           key={pair.toolUseId}
           runId={runId}
           pair={pair}
+          respondingTo={promptPairings.get(pair.toolUseId) ?? null}
           activeArtifact={activeArtifact}
           onOpenArtifact={onOpenArtifact}
         />

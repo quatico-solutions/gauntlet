@@ -353,6 +353,32 @@
 
 .tr-tool-body { padding: 10px 14px; }
 
+.tr-tool-prompt {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-family: var(--tr-font-mono);
+  font-size: 12.5px;
+  background: var(--tr-surface);
+  border-left: 2px solid var(--tr-edge);
+  padding: 6px 10px;
+  margin: 0 0 10px;
+  border-radius: 0 4px 4px 0;
+}
+.tr-tool-prompt-label {
+  color: var(--tr-slate);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+.tr-tool-prompt-text {
+  color: var(--tr-ink);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
 .tr-tool-args {
   font-family: var(--tr-font-mono);
   font-size: 12.5px;

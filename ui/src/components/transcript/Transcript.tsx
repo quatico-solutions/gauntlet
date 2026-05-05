@@ -1,5 +1,10 @@
 import type { Observation } from "./RunEndPanel";
-import { findSoftErrors, type TranscriptEvent, type TranscriptModel } from "../../lib/transcript";
+import {
+  computePromptPairings,
+  findSoftErrors,
+  type TranscriptEvent,
+  type TranscriptModel,
+} from "../../lib/transcript";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { UserMessagePanel } from "./UserMessagePanel";
 import { TurnBlock } from "./TurnBlock";
@@ -24,6 +29,7 @@ interface Props {
 export function Transcript({ runId, model, currentTurn, activeArtifact, onOpenArtifact, observations }: Props) {
   const renderedTurns = new Set<number>();
   const blocks: React.ReactNode[] = [];
+  const promptPairings = computePromptPairings(model);
 
   for (const ev of model.ordered) {
     if (isTurnEvent(ev)) {
@@ -37,6 +43,7 @@ export function Transcript({ runId, model, currentTurn, activeArtifact, onOpenAr
           runId={runId}
           turn={turn}
           isCurrent={currentTurn === ev.turn}
+          promptPairings={promptPairings}
           activeArtifact={activeArtifact}
           onOpenArtifact={onOpenArtifact}
         />,
