@@ -466,6 +466,7 @@ Gauntlet-prefixed (consumed by `loadConfig`):
 | `GAUNTLET_AGENT_MODEL` | Default agent model | `claude-sonnet-4-6` |
 | `GAUNTLET_FANOUT_MODEL` | Default fanout model | -- |
 | `GAUNTLET_MODELS` | Comma-separated allow-list of models (opt-in) | `[]` (no restriction) |
+| `GAUNTLET_CHROME_VERBOSE` | Print Chrome lifecycle messages (reconnect, startup, session dir) on stderr. Any truthy string activates it. | unset |
 
 ### SDK env pass-through policy
 
@@ -524,6 +525,7 @@ See the [Configuration](#configuration) section above for the full list. Quick r
 | `GAUNTLET_AGENT_MODEL` | Default model for test execution | `claude-sonnet-4-6` |
 | `GAUNTLET_FANOUT_MODEL` | Model for story generation | -- |
 | `GAUNTLET_MODELS` | Comma-separated model allow-list (opt-in) | `[]` (no restriction) |
+| `GAUNTLET_CHROME_VERBOSE` | Print Chrome lifecycle messages on stderr | unset |
 
 ## Project structure
 
