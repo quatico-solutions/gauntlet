@@ -5,6 +5,7 @@ import { EvidenceLogger } from "../evidence/logger";
 import { writeResultFiles } from "../evidence/writer";
 import { runAgent } from "../agent/agent";
 import { createClient, resolveProvider } from "../models/resolve";
+import type { LLMClient } from "../models/provider";
 import { CLIAdapter } from "../adapters/cli/adapter";
 import { snapshotViewport } from "../adapters/adapter";
 import { renderContextTree } from "../context/tree";
@@ -35,6 +36,13 @@ export interface RunOneOptions {
    * overrides the `makeRunId(card.id)` call so the run directory name
    * matches what the RunSet manifest already recorded. */
   runId?: string;
+  /** Test seam: substitute the LLM client construction. Production callers
+   * leave this undefined and runOne falls through to the default
+   * `createClient` from `models/resolve`. Tests inject a scripted client
+   * here instead of replacing the resolve module globally with
+   * `mock.module(...)` — Bun's `mock.restore()` does not undo module
+   * mocks, and a leaked mock breaks unrelated tests (PRI-1505). */
+  clientFactory?: (model: string) => LLMClient;
 }
 
 export interface RunOneSummary {
@@ -58,7 +66,7 @@ export async function runOne(opts: RunOneOptions): Promise<RunOneSummary> {
   const logger = new EvidenceLogger(outDir);
   const detach = opts.onLogger?.(logger) ?? (() => {});
 
-  const client = createClient(config.models.agent);
+  const client = (opts.clientFactory ?? createClient)(config.models.agent);
   const contextRoot = join(outDir, "inputs", "context");
   const contextTree = renderContextTree(contextRoot);
 

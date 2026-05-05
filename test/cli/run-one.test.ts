@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, afterEach } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -29,10 +29,6 @@ status: ready
 A minimal card for runSetCtx threading tests.
 `;
 
-afterEach(() => {
-  mock.restore();
-});
-
 describe("runOne — runSetCtx threading", () => {
   test("runSetCtx is written into result.json when provided", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "gauntlet-runone-ctx-"));
@@ -49,10 +45,6 @@ describe("runOne — runSetCtx threading", () => {
     };
 
     const client = makeScriptedClient([report("pass", "all good", "looked fine")]);
-    mock.module("../../src/models/resolve", () => ({
-      createClient: () => client,
-      resolveProvider: () => "anthropic",
-    }));
 
     const { outDir } = await runOne({
       scenarioPath: cardPath,
@@ -60,6 +52,7 @@ describe("runOne — runSetCtx threading", () => {
       adapterType: "cli",
       config: makeConfig(projectRoot),
       runSetCtx: ctx,
+      clientFactory: () => client,
     });
 
     const resultJson = JSON.parse(readFileSync(join(outDir, "result.json"), "utf-8"));
@@ -72,16 +65,13 @@ describe("runOne — runSetCtx threading", () => {
     writeFileSync(cardPath, MINIMAL_CARD);
 
     const client = makeScriptedClient([report("pass", "all good", "looked fine")]);
-    mock.module("../../src/models/resolve", () => ({
-      createClient: () => client,
-      resolveProvider: () => "anthropic",
-    }));
 
     const { outDir } = await runOne({
       scenarioPath: cardPath,
       target: "true",
       adapterType: "cli",
       config: makeConfig(projectRoot),
+      clientFactory: () => client,
     });
 
     const resultJson = JSON.parse(readFileSync(join(outDir, "result.json"), "utf-8"));

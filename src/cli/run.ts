@@ -9,6 +9,7 @@ import { parseStoryCard } from "../format/story-card";
 import { BatchTableRenderer } from "./stream/batch-table";
 import type { AppConfig } from "../config";
 import type { EvidenceLogger, EventObserver } from "../evidence/logger";
+import type { LLMClient } from "../models/provider";
 import type { RunSetCtx } from "../runs/run-set-types";
 import type { WriteSink } from "./stream/jsonl";
 
@@ -22,6 +23,9 @@ export interface RunCommandOptions {
   format: "pretty" | "jsonl" | undefined;
   noColor: boolean;
   passes: number;
+  /** Test seam — see PRI-1505. Production callers leave this undefined; the
+   * runOne calls below thread it through so tests don't need mock.module. */
+  clientFactory?: (model: string) => LLMClient;
 }
 
 function makeRunObserver(
@@ -87,6 +91,7 @@ export async function run(opts: RunCommandOptions): Promise<void> {
       adapterType: opts.adapterType,
       config: opts.config,
       onLogger: (logger) => attachRenderer(logger, streamOpts, sink),
+      clientFactory: opts.clientFactory,
     });
 
     if (streamOpts.silent) {
@@ -154,6 +159,7 @@ export async function run(opts: RunCommandOptions): Promise<void> {
             onLogger,
             runSetCtx,
             runId,
+            clientFactory: opts.clientFactory,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

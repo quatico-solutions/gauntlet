@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, afterEach, afterAll } from "bun:test";
+import { describe, test, expect, afterAll } from "bun:test";
 import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -28,10 +28,6 @@ status: ready
 A minimal card for multi-pass run tests.
 `;
 
-afterEach(() => {
-  mock.restore();
-});
-
 describe("run — multi-pass RunSet integration", () => {
   const tmpdirs: string[] = [];
   afterAll(() => {
@@ -57,10 +53,6 @@ describe("run — multi-pass RunSet integration", () => {
       report("pass", "ok", "looks good"),
       report("pass", "ok", "looks good"),
     ]);
-    mock.module("../../src/models/resolve", () => ({
-      createClient: () => client,
-      resolveProvider: () => "anthropic",
-    }));
 
     await run({
       scenarioPath: cardPath,
@@ -71,6 +63,7 @@ describe("run — multi-pass RunSet integration", () => {
       format: undefined,
       noColor: true,
       passes: 3,
+      clientFactory: () => client,
     });
 
     // Assert: 3 per-run dirs under .gauntlet/results/
@@ -116,10 +109,6 @@ describe("run — multi-pass RunSet integration", () => {
     const { config, cardPath } = makeTmpConfig();
 
     const client = makeScriptedClient([report("pass", "ok", "looks good")]);
-    mock.module("../../src/models/resolve", () => ({
-      createClient: () => client,
-      resolveProvider: () => "anthropic",
-    }));
 
     await run({
       scenarioPath: cardPath,
@@ -130,6 +119,7 @@ describe("run — multi-pass RunSet integration", () => {
       format: undefined,
       noColor: true,
       passes: 1,
+      clientFactory: () => client,
     });
 
     // The single-pass path must not create any run-sets directory.
