@@ -40,12 +40,14 @@ function toJsonPath(ansiPath: string): string {
  * node sized uniformly by the grid, so CJK and emoji land in the slots
  * the terminal counted for them regardless of the browser font metrics.
  *
- * The parsed grid is fetched lazily on first expand. Default state is
- * collapsed because a single capture can be 120x40 = 4,800 DOM nodes
- * and most turns have one.
+ * Expanded by default — seeing the rendered terminal state inline is
+ * the point of the transcript. Captures stay collapsible per-instance.
+ * If long transcripts ever bog down (one capture is ~4,800 DOM nodes
+ * at 120x40), virtualize the transcript rather than re-defaulting to
+ * collapsed.
  */
 export function TuiCapture({ runId, ansiPath }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [capture, setCapture] = useState<Capture | null>(null);
   const [error, setError] = useState<string | null>(null);
 
