@@ -519,10 +519,13 @@ See the [Configuration](#configuration) section above for the full list. Quick r
 ```
 src/
   index.ts              CLI entry point and command router
-  types.ts              Core types (VetResult, Observation, etc.)
+  types.ts              Core types (VetResult, Observation, RunConfigSnapshot)
+  config.ts             Single loadConfig() — env + flags → AppConfig
+  paths.ts              .gauntlet/ project directory conventions
   agent/
-    agent.ts            Agentic loop: LLM + tools for up to 50 turns
-    prompts.ts          System prompt construction from story cards
+    agent.ts            Agentic loop: LLM + tools, with grace turn after max
+    prompts.ts          System prompt construction from story cards + context
+    validators.ts       Per-tool argument schema validation before dispatch
   models/
     provider.ts         LLM client interface
     anthropic.ts        Claude client (with prompt caching)
@@ -531,13 +534,29 @@ src/
   adapters/
     adapter.ts          Abstract adapter interface
     web/adapter.ts      Chrome CDP browser adapter (17 tools + 3 opt-in)
-    cli/adapter.ts      Terminal-based adapter
-    tui/adapter.ts      Text UI adapter
+    web/cookies.ts      install_cookies tool + cookies.yaml loader
+    web/passkey.ts      install_passkey tool + passkey.yaml loader
+    cli/adapter.ts      Terminal-based adapter (stdin/stdout target)
+    tui/adapter.ts      Text UI adapter (tmux-hosted target)
+    tui/capture-parser.ts  ANSI screen capture → structured cells
   api/
-    server.ts           Hono app with API routes + static UI serving
-    ws.ts               WebSocket broadcaster for live runs
-    routes/             HTTP route handlers (scenarios, results, run, fanout)
-    safe-path.ts        Path traversal protection
+    server.ts           Hono app: API routes + static UI serving
+    ws.ts               WebSocket broadcaster for single runs
+    ws-handlers.ts      Per-connection handler dispatch
+    active-runs.ts      In-process registry of running runs
+    run-cancel.ts       Cancellation plumbing for live runs
+    run-set-broadcaster.ts  WS broadcaster for run-sets (multi-pass / batch)
+    mime-types.ts       Static-file content-type table
+    routes/
+      scenarios.ts      Story-card CRUD
+      run.ts            POST /api/run/:id — start a run
+      run-sets.ts       Run-set retrieval, summary, deletion
+      results.ts        Result list + per-run files (manifest-gated)
+      fanout.ts         Generate variations / from-observations / from-failure
+      active-runs.ts    GET /api/runs/active
+      config.ts         GET /api/config
+      config-effective.ts  GET /api/config/effective
+      errors.ts         GET /api/errors (tail of recent error envelopes)
   cli/
     args.ts             CLI argument parsing
     run.ts              `run` command (single-card streaming wrapper)
@@ -546,25 +565,52 @@ src/
     batch.ts            `batch` command — serial runner + per-card observer
     validate.ts         `validate` command
     fanout.ts           `fanout` command
-    stream/             Streaming-transcript renderers for run/batch
-                        (pretty, jsonl, batch-table)
+    config-command.ts   `config` command (effective config inspector)
+    error-output.ts     Unified top-level error envelope across commands
+    signals.ts          SIGINT/SIGTERM handling for in-flight runs
+    stream/             Streaming-transcript renderers (pretty, jsonl,
+                        batch-table) plus shared formatters
+  cards/
+    store.ts            Story-card filesystem store (read/write/list)
+  runs/
+    orchestrator.ts     Shared run orchestrator (used by CLI and HTTP)
+    run-set.ts          Run-set lifecycle (passes × cards loop)
+    run-set-types.ts    RunSetCtx / SetBucket types
+    aggregate.ts        Per-set roll-up (consistent_pass / mixed / errored)
+    snapshot.ts         Per-run snapshot for /api/runs/active
+  context/
+    tree.ts             .gauntlet/context/ directory listing for system prompt
+    read-tool.ts        Opt-in `read` tool (when context tree non-empty)
   fanout/
     generator.ts        AI-powered test variation generation
   evidence/
-    logger.ts           Screenshot/action capture during runs
-    writer.ts           Result serialization to disk
+    logger.ts           Per-run event log + screenshot/capture writers
+    writer.ts           Result serialization (result.json + result.md)
+    run-set-writer.ts   Run-set roll-up serialization
   format/
     story-card.ts       Story card parsing and serialization
   streaming/
-    screencast.ts       Browser frame capture
+    screencast.ts       Browser frame capture (opt-in disk persistence)
+  util/
+    id.ts               runId composition
+    pick-free-port.ts   Local TCP port helper (dev / test / Chrome launch)
+    sanitize-error.ts   Stack-trace scrubbing for transmissible error envelopes
 ui/
   src/
     App.tsx             React Router setup
-    components/         CardsList, CardEditor, RunsList, RunDetail, LiveRun, etc.
-    hooks/              Data-fetching hooks (useCards, useResults, useRunStream)
+    main.tsx            Vite entry point
+    app.css             Global styles
+    components/         CardsList, CardEditor, RunsList, RunDetail, RunSetDetail,
+                        LiveRun, NewRunModal, AppShell, Sidebar, transcript/...
+    components/transcript/  Transcript view + ToolPairCard, EventLine,
+                            Screenshot, TuiCapture, ThinkingBlock, etc.
+    hooks/              useCards, useCard, useResults, useRunStream,
+                        useTranscript, useLiveTranscript, useActiveRuns
     lib/api.ts          HTTP client for the backend API
+    lib/runId.ts        runId parsing helpers (mirrors src/util/id.ts)
+    lib/transcript.ts   Reducer for transcriptSnapshot + event WS messages
 docker/
-  Dockerfile            Production image (Debian + Chrome + Bun)
+  Dockerfile            Production image (Debian + Chromium + Bun)
   Dockerfile.chrome     Standalone headless Chrome image (separate target)
 compose.yaml            Docker Compose entry point (mounts project root at /project)
 .env.example            Template for API keys and optional env overrides
