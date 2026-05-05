@@ -47,6 +47,30 @@ export interface AppConfig {
    * forcing exit. PRI-1477.
    */
   shutdownGraceMs: number;
+  /**
+   * Maximum HTTP request body size in bytes. Applied at the Bun.serve
+   * level (413 Payload Too Large before the route handler). PRI-1478.
+   */
+  maxRequestBodySize: number;
+  /**
+   * Maximum number of in-flight runs the daemon will accept. POST
+   * `/api/run` returns 429 with `Retry-After: 5` when at cap. PRI-1478.
+   */
+  maxConcurrentRuns: number;
+  /**
+   * Hard upper bound on the `turns` field in run request bodies. The
+   * existing `defaultTurns` is the *default* applied when the body
+   * omits `turns`; this cap rejects requests with an explicit value
+   * higher than the cap. PRI-1478.
+   */
+  maxTurnsCap: number;
+  /**
+   * Maximum length (bytes) of a `target` URL surfaced in the
+   * `/api/runs/active` list payload. Targets longer than this are
+   * truncated to `<MAX>...` in the list view; the per-run snapshot
+   * endpoint still returns the full string. PRI-1478.
+   */
+  activeRunTargetMaxBytes: number;
   models: {
     agent: string;
     fanout?: string;
@@ -65,6 +89,10 @@ export interface AppConfig {
     defaultViewport: "default" | "env" | "flag";
     defaultSaveScreencast: "default" | "env" | "flag";
     shutdownGraceMs: "default" | "env";
+    maxRequestBodySize: "default" | "env";
+    maxConcurrentRuns: "default" | "env";
+    maxTurnsCap: "default" | "env";
+    activeRunTargetMaxBytes: "default" | "env";
     "models.agent": "default" | "env" | "flag";
     "models.fanout": "default" | "env" | "flag" | "unset";
     "models.available": "default" | "env" | "flag";
@@ -138,7 +166,22 @@ function assertViewportBounds(v: Viewport, label: string): void {
   }
 }
 
-export function validateRunBody(body: unknown): RunRequestBody {
+export class TurnsTooHighError extends Error {
+  readonly code = "turns_too_high";
+  constructor(readonly requested: number, readonly cap: number) {
+    super(`run request body: turns ${requested} exceeds cap of ${cap}`);
+    this.name = "TurnsTooHighError";
+  }
+}
+
+export interface ValidateRunBodyOptions {
+  /** Hard upper bound on body.turns. Requests with `turns > maxTurnsCap`
+   * throw `TurnsTooHighError`, which the route translates to a 400 with
+   * `{error: "turns_too_high"}`. PRI-1478. */
+  maxTurnsCap?: number;
+}
+
+export function validateRunBody(body: unknown, opts: ValidateRunBodyOptions = {}): RunRequestBody {
   if (!body || typeof body !== "object") {
     throw new Error("run request body must be an object");
   }
@@ -161,6 +204,9 @@ export function validateRunBody(body: unknown): RunRequestBody {
   if (bodyObj.turns !== undefined) {
     if (typeof bodyObj.turns !== "number" || !Number.isFinite(bodyObj.turns) || !Number.isInteger(bodyObj.turns) || bodyObj.turns < 1) {
       throw new Error("run request body: turns must be a positive integer");
+    }
+    if (opts.maxTurnsCap !== undefined && bodyObj.turns > opts.maxTurnsCap) {
+      throw new TurnsTooHighError(bodyObj.turns, opts.maxTurnsCap);
     }
     turns = bodyObj.turns;
   }
@@ -231,6 +277,10 @@ const DEFAULT_PROJECT_ROOT = ".";
 const DEFAULT_PORT = 4400;
 const DEFAULT_CHROME: ChromeEndpoint = { host: "127.0.0.1", port: 9222 };
 const DEFAULT_SHUTDOWN_GRACE_MS = 10000;
+const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1 MB
+const DEFAULT_MAX_CONCURRENT_RUNS = 4;
+const DEFAULT_MAX_TURNS_CAP = 200;
+const DEFAULT_ACTIVE_RUN_TARGET_MAX_BYTES = 1024;
 const DEFAULT_AGENT_MODEL = "claude-sonnet-4-6";
 
 function parseChromeEndpoint(raw: string, label: string): ChromeEndpoint {
@@ -256,6 +306,19 @@ function parsePortNumber(raw: string, label: string): number {
     throw new Error(`Invalid ${label} "${raw}": not a number`);
   }
   return port;
+}
+
+/**
+ * Parse a non-negative integer env var with a default fallback. Used by
+ * the operator-level numeric knobs (PRI-1477, PRI-1478).
+ */
+function parseNonNegIntEnv(raw: string | undefined, label: string, fallback: number): number {
+  if (!raw) return fallback;
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid ${label} "${raw}": expected a non-negative integer`);
+  }
+  return parsed;
 }
 
 /**
@@ -386,18 +449,46 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
 
   // shutdownGraceMs — drain window for graceful shutdown (PRI-1477).
   // No flag override; this is an operator-level knob (env only).
-  let shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
-  let shutdownGraceMsSource: "default" | "env" = "default";
-  if (env.GAUNTLET_SHUTDOWN_GRACE_MS) {
-    const parsed = parseInt(env.GAUNTLET_SHUTDOWN_GRACE_MS, 10);
-    if (Number.isNaN(parsed) || parsed < 0) {
-      throw new Error(
-        `Invalid GAUNTLET_SHUTDOWN_GRACE_MS "${env.GAUNTLET_SHUTDOWN_GRACE_MS}": expected a non-negative integer`,
-      );
-    }
-    shutdownGraceMs = parsed;
-    shutdownGraceMsSource = "env";
-  }
+  const shutdownGraceMs = parseNonNegIntEnv(
+    env.GAUNTLET_SHUTDOWN_GRACE_MS,
+    "GAUNTLET_SHUTDOWN_GRACE_MS",
+    DEFAULT_SHUTDOWN_GRACE_MS,
+  );
+  const shutdownGraceMsSource: "default" | "env" = env.GAUNTLET_SHUTDOWN_GRACE_MS ? "env" : "default";
+
+  // PRI-1478 caps — operator-level knobs (env only). Each parses a
+  // non-negative integer or throws with a uniform shape.
+  const maxRequestBodySize = parseNonNegIntEnv(
+    env.GAUNTLET_MAX_REQUEST_BODY_SIZE,
+    "GAUNTLET_MAX_REQUEST_BODY_SIZE",
+    DEFAULT_MAX_REQUEST_BODY_SIZE,
+  );
+  const maxRequestBodySizeSource: "default" | "env" =
+    env.GAUNTLET_MAX_REQUEST_BODY_SIZE ? "env" : "default";
+
+  const maxConcurrentRuns = parseNonNegIntEnv(
+    env.GAUNTLET_MAX_CONCURRENT_RUNS,
+    "GAUNTLET_MAX_CONCURRENT_RUNS",
+    DEFAULT_MAX_CONCURRENT_RUNS,
+  );
+  const maxConcurrentRunsSource: "default" | "env" =
+    env.GAUNTLET_MAX_CONCURRENT_RUNS ? "env" : "default";
+
+  const maxTurnsCap = parseNonNegIntEnv(
+    env.GAUNTLET_MAX_TURNS_CAP,
+    "GAUNTLET_MAX_TURNS_CAP",
+    DEFAULT_MAX_TURNS_CAP,
+  );
+  const maxTurnsCapSource: "default" | "env" =
+    env.GAUNTLET_MAX_TURNS_CAP ? "env" : "default";
+
+  const activeRunTargetMaxBytes = parseNonNegIntEnv(
+    env.GAUNTLET_ACTIVE_RUN_TARGET_MAX_BYTES,
+    "GAUNTLET_ACTIVE_RUN_TARGET_MAX_BYTES",
+    DEFAULT_ACTIVE_RUN_TARGET_MAX_BYTES,
+  );
+  const activeRunTargetMaxBytesSource: "default" | "env" =
+    env.GAUNTLET_ACTIVE_RUN_TARGET_MAX_BYTES ? "env" : "default";
 
   // models.agent
   let agentModel = DEFAULT_AGENT_MODEL;
@@ -448,6 +539,10 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     defaultViewport,
     defaultSaveScreencast,
     shutdownGraceMs,
+    maxRequestBodySize,
+    maxConcurrentRuns,
+    maxTurnsCap,
+    activeRunTargetMaxBytes,
     models: {
       agent: agentModel,
       fanout: fanoutModel,
@@ -463,6 +558,10 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
       defaultViewport: viewportSource,
       defaultSaveScreencast: saveScreencastSource,
       shutdownGraceMs: shutdownGraceMsSource,
+      maxRequestBodySize: maxRequestBodySizeSource,
+      maxConcurrentRuns: maxConcurrentRunsSource,
+      maxTurnsCap: maxTurnsCapSource,
+      activeRunTargetMaxBytes: activeRunTargetMaxBytesSource,
       "models.agent": agentSource,
       "models.fanout": fanoutSource,
       "models.available": availableSource,

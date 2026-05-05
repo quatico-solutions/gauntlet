@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { join } from "path";
 import { existsSync, readFileSync, statSync } from "fs";
 import { scenarioRoutes } from "./routes/scenarios";
@@ -48,6 +49,17 @@ export function createApp(
     });
   }
 
+  // Body-size cap (PRI-1478). Applied at the Hono layer so both Bun and
+  // Node runtimes enforce it uniformly. 413 + a structured envelope.
+  app.use("*", bodyLimit({
+    maxSize: config.maxRequestBodySize,
+    onError: (c) => c.json({
+      error: "body_too_large",
+      message: `request body exceeds cap of ${config.maxRequestBodySize} bytes`,
+      cap: config.maxRequestBodySize,
+    }, 413),
+  }));
+
   const errorLog = new ErrorLog();
   const projectRoot = config.projectRoot;
 
@@ -60,7 +72,7 @@ export function createApp(
   api.route("/config", configRoutes(config));
   api.route("/config/effective", configEffectiveRoutes(config));
   api.route("/errors", errorRoutes(errorLog));
-  if (registry) api.route("/runs/active", activeRunRoutes(registry));
+  if (registry) api.route("/runs/active", activeRunRoutes(registry, config.activeRunTargetMaxBytes));
 
   app.route("/api", api);
 
