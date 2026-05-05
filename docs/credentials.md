@@ -20,14 +20,6 @@ project's `.gauntlet/context/` tree. The tool descriptions the
 agent sees at runtime are authoritative; this document is the
 human-facing reference that mirrors them.
 
-> **Note on filename extension.** Throughout this document we
-> use `.yaml` for both files. Parts of the codebase
-> historically reference `passkey.json` — Gauntlet's parser
-> accepts JSON as a strict subset of YAML, so either extension
-> works in practice. The runtime tool descriptions the agent
-> sees recommend `.yaml`, and that's the convention to use for
-> new fixtures.
-
 ## Username and password
 
 The most common case. Most apps have a sign-in form; the agent
@@ -104,8 +96,8 @@ parameters.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | Cookie name |
-| `value` | yes | Cookie value (string — even if numeric) |
-| `url` | one of | Full URL the cookie is for. Sets domain+path implicitly. |
+| `value` | yes | Cookie value. Must be a **quoted** string in YAML — an unquoted token like `value: 12345` is rejected because YAML coerces it to a number first. |
+| `url` | one of | Full URL the cookie is for. Chrome derives the cookie's domain and path from this URL — Gauntlet passes the field through to CDP unchanged. |
 | `domain` | one of | Cookie's domain (e.g., `app.example.com`). Pair with `path`. |
 | `path` | no | Cookie's path (default `/` when `domain` is given) |
 | `secure` | no | Boolean. Required if `sameSite: None`. |
@@ -130,7 +122,7 @@ silently dropped.
   secure: true
   httpOnly: true
   sameSite: Lax
-  expires: 1735689600
+  expires: 1893456000  # 2030-01-01 UTC
 
 - name: csrf
   value: kJh92h3jKdLm
@@ -218,6 +210,12 @@ How do you actually get a credential or a usable cookie set?
 **Do not commit either file.** Add `cookies.yaml` and
 `passkey.yaml` to your `.gitignore`. They contain personal
 auth material even for test accounts.
+
+The run's action log (`run.jsonl`) records only the *length* of
+each cookie value and never the bytes themselves; same for
+passkey `credentialId` and `privateKey` fields. So the evidence
+files Gauntlet writes to disk don't leak the secrets, even
+though the YAML inputs do contain them.
 
 ## Lifecycle reference
 
