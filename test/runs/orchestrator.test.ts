@@ -210,3 +210,45 @@ describe("executeRunCore — onLogger hook", () => {
     expect(attached).toBe(true);
   });
 }, 15000);
+
+describe("executeRunCore — lifecycle hooks", () => {
+  test("calls hooks in spec order: onLogger.attach → beforeAgent → beforeClose → adapter.close → onLogger.detach → afterClose", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "gauntlet-orch-hooks-"));
+    const storyPath = join(projectRoot, "card.md");
+    writeFileSync(storyPath, HAPPY_CARD);
+    const card = parseStoryCard(HAPPY_CARD);
+    const client = makeScriptedClient([report("pass", "ok", "fine")]);
+
+    const calls: string[] = [];
+
+    await executeRunCore({
+      card,
+      storyPath,
+      client,
+      runConfig: {
+        projectRoot,
+        model: "claude-sonnet-4-6",
+        adapter: "cli",
+        target: "true",
+        turns: 5,
+      },
+      hooks: {
+        onLogger: () => {
+          calls.push("onLogger.attach");
+          return () => calls.push("onLogger.detach");
+        },
+        beforeAgent: () => { calls.push("beforeAgent"); },
+        beforeClose: () => { calls.push("beforeClose"); },
+        afterClose: () => { calls.push("afterClose"); },
+      },
+    });
+
+    expect(calls).toEqual([
+      "onLogger.attach",
+      "beforeAgent",
+      "beforeClose",
+      "onLogger.detach",
+      "afterClose",
+    ]);
+  });
+}, 15000);

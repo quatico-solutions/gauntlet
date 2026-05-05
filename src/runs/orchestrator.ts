@@ -150,6 +150,8 @@ export async function executeRunCore(
 
   try {
     await adapter.start(runConfig.target);
+    const started: RunCoreStarted = { ...prepared, contextRoot, adapter };
+    await hooks?.beforeAgent?.(started);
 
     const stampedRunConfig: RunConfigSnapshot = {
       target: runConfig.target,
@@ -174,9 +176,19 @@ export async function executeRunCore(
     result.config = stampedRunConfig;
     if (runSetCtx) result.runSet = runSetCtx;
     writeResultFiles(outDir, result);
-    return { runId, outDir, result };
-  } finally {
-    try { await adapter.close(); } catch { /* swallow during cleanup */ }
+
+    await hooks?.beforeClose?.(started);
+    try { await adapter.close(); } catch { /* swallow */ }
     detachLogger();
+    await hooks?.afterClose?.(started);
+
+    return { runId, outDir, result };
+  } catch (err) {
+    const ctx: RunCoreStarted = { ...prepared, contextRoot, adapter };
+    try { await hooks?.beforeClose?.(ctx); } catch { /* swallow */ }
+    try { await adapter.close(); } catch { /* swallow */ }
+    detachLogger();
+    try { await hooks?.afterClose?.(ctx); } catch { /* swallow */ }
+    throw err;
   }
 }
