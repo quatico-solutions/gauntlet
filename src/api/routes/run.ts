@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { join } from "path";
-import { readFileSync } from "fs";
 import { findCard } from "../../cards/store";
 import {
   SUPPORTED_MODEL_PREFIXES_MESSAGE,
@@ -8,16 +7,16 @@ import {
   createClientForProvider,
   resolveProvider,
 } from "../../models/resolve";
-import { EvidenceLogger } from "../../evidence/logger";
-import { writeResultFiles } from "../../evidence/writer";
-import { runAgent } from "../../agent/agent";
-import { renderContextTree } from "../../context/tree";
 import { makeRunId } from "../../util/id";
 import { gauntletPath } from "../../paths";
-import { snapshotRunInputs } from "../../runs/snapshot";
-import { mergeRunConfig, validateRunBody, type AppConfig, type ChromeEndpoint, type Viewport } from "../../config";
-import { snapshotViewport, type Adapter } from "../../adapters/adapter";
+import { mergeRunConfig, validateRunBody, type AppConfig } from "../../config";
 import { runRunSet } from "../../runs/run-set";
+import {
+  executeRunCore,
+  type ExecuteRunCoreOptions,
+  type ExecuteRunCoreResult,
+  type RunCoreHooks,
+} from "../../runs/orchestrator";
 import type { RunBroadcaster } from "../ws";
 import type { ActiveRunRegistry } from "../active-runs";
 import type { RunSetBroadcaster } from "../run-set-broadcaster";
@@ -26,36 +25,138 @@ import type { ScreencastStreamer as ScreencastStreamerType } from "../../streami
 import type { ErrorLog } from "./errors";
 import type { StoryCard } from "../../format/story-card";
 import type { LLMClient } from "../../models/provider";
-import type { RunConfigSnapshot } from "../../types";
 import type { RunSetCtx } from "../../runs/run-set-types";
 
-function viewportString(v: Viewport | undefined): string | undefined {
-  return v ? `${v.width}x${v.height}` : undefined;
+export interface ExecuteHttpRunOpts {
+  runId: string;
+  card: StoryCard;
+  storyPath: string;
+  client: LLMClient;
+  effective: ReturnType<typeof mergeRunConfig>;
+  projectRoot: string;
+  broadcaster?: RunBroadcaster;
+  registry?: ActiveRunRegistry;
+  errorLog?: ErrorLog;
+  /** Token used to guard against clobbering a freshly-registered entry
+   * with the same key. Omit for multi-pass attempts so the unregister
+   * always wins; pre-register-then-detach (solo) supplies it. */
+  startedAt?: number;
+  runSetCtx?: RunSetCtx;
+  /** Test seam: forwarded to executeRunCore. Production routes leave
+   * undefined; tests stub the adapter without touching modules. */
+  adapterFactory?: ExecuteRunCoreOptions["adapterFactory"];
 }
 
-function createAdapter(
-  type: string,
-  chrome: ChromeEndpoint | undefined,
-  contextRoot: string,
-  logger: EvidenceLogger,
-  chromeProfileName: string | undefined,
-  viewport: Viewport | undefined,
-): Adapter {
-  switch (type) {
-    case "cli": {
-      const { CLIAdapter } = require("../../adapters/cli/adapter");
-      return new CLIAdapter({ contextRoot });
-    }
-    case "tui": {
-      const { TUIAdapter } = require("../../adapters/tui/adapter");
-      return new TUIAdapter({ contextRoot });
-    }
-    case "web": {
-      const { WebAdapter } = require("../../adapters/web/adapter");
-      return new WebAdapter({ chrome, contextRoot, logger, chromeProfileName, viewport });
-    }
-    default:
-      throw new Error(`Unknown adapter type: ${type}`);
+/**
+ * HTTP wrapper around executeRunCore. Owns: progress observer, event
+ * observer, screencast streamer, error log writes, registry unregister,
+ * terminal broadcast (in unregister-then-broadcast order so a
+ * late-connecting WS sees an empty registry).
+ */
+export async function executeHttpRun(
+  opts: ExecuteHttpRunOpts,
+): Promise<ExecuteRunCoreResult> {
+  const { runId, card, storyPath, client, effective, projectRoot,
+          broadcaster, registry, errorLog, startedAt, runSetCtx } = opts;
+
+  let streamer: ScreencastStreamerType | undefined;
+  let terminal: Record<string, unknown> | null = null;
+
+  const hooks: RunCoreHooks = {
+    onLogger: (logger) => {
+      const detachers: Array<() => void> = [];
+      if (broadcaster || registry) {
+        detachers.push(logger.addObserver((action, params) => {
+          const message = `[${action}] ${JSON.stringify(params)}`;
+          broadcaster?.send(runId, {
+            type: "progress",
+            message,
+            status: "running",
+            card: card.id,
+          });
+          registry?.recordProgress(runId, message);
+        }));
+      }
+      if (broadcaster) {
+        detachers.push(logger.addEventObserver((event) => {
+          broadcaster.send(runId, { type: "event", event });
+        }));
+      }
+      return () => { for (const d of detachers) d(); };
+    },
+    beforeAgent: async (ctx) => {
+      if (effective.adapter === "web" && (broadcaster || registry)) {
+        const { ScreencastStreamer } = await import("../../streaming/screencast");
+        // PRI-1436: share the WebAdapter's chrome-ws-lib session so the
+        // screencast talks to the same Chrome the adapter started
+        // (correct activePort, correct connection pool).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const webAdapter = ctx.adapter as any;
+        const chromeSession = webAdapter.getChromeSession();
+        const framesDir = effective.saveScreencast === false
+          ? undefined
+          : join(gauntletPath(projectRoot, "results", runId), "frames");
+        streamer = new ScreencastStreamer(0, (frame) => {
+          broadcaster?.send(runId, {
+            type: "frame",
+            data: frame.data,
+            width: frame.metadata.width,
+            height: frame.metadata.height,
+          });
+          registry?.recordFrame(runId, {
+            data: frame.data,
+            width: frame.metadata.width,
+            height: frame.metadata.height,
+          });
+        }, chromeSession, framesDir);
+        await streamer.start();
+      }
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      errorLog?.add("run", `${runId}: ${message}`);
+      terminal = { type: "error", message };
+    },
+    beforeClose: async () => {
+      if (streamer) {
+        try { await streamer.stop(); } catch { /* ignore */ }
+      }
+    },
+    afterClose: () => {
+      registry?.unregister(runId, startedAt);
+      if (terminal) broadcaster?.send(runId, terminal);
+    },
+  };
+
+  try {
+    const result = await executeRunCore({
+      card,
+      storyPath,
+      runId,
+      client,
+      runSetCtx,
+      adapterFactory: opts.adapterFactory,
+      runConfig: {
+        projectRoot,
+        model: effective.model,
+        adapter: effective.adapter,
+        target: effective.target,
+        turns: effective.turns,
+        chrome: effective.chrome,
+        viewport: effective.viewport,
+      },
+      hooks,
+    });
+    terminal = { type: "complete", result: result.result };
+    // afterClose has already run by this point in the success path,
+    // so emit the success terminal directly.
+    broadcaster?.send(runId, terminal);
+    return result;
+  } catch (err) {
+    // onError already populated `terminal` and ErrorLog; afterClose
+    // already broadcast it. Just rethrow so the multi-pass executor
+    // observes the failure.
+    throw err;
   }
 }
 
@@ -111,46 +212,11 @@ export function runRoutes(
       : createClientForProvider(effective.model, provider);
 
     const passes = body.passes ?? 1;
+    const storyPath = join(gauntletPath(config.projectRoot, "stories"), entry.filename);
 
     if (passes === 1) {
-      // ── Solo path (unchanged behavior, new response shape) ──
-      // runId is the primary key for the run end to end: results dir,
-      // active-runs registry, WS broadcaster channel, and the runId field
-      // written into result.json. The cardId is preserved as payload
-      // metadata where it matters (the registry, the result manifest).
+      // ── Solo path ──
       const runId = makeRunId(entry.card.id);
-      const outDir = gauntletPath(config.projectRoot, "results", runId);
-      // Snapshot story + context into <outDir>/inputs/ synchronously,
-      // before the logger, the adapter, the tree renderer, or the
-      // detached executeRun touch anything. Downstream consumers then
-      // see the snapshotted paths. The story path is composed from the
-      // stories dir + the filename findCard already resolved for us.
-      snapshotRunInputs({
-        runDir: outDir,
-        storyPath: join(gauntletPath(config.projectRoot, "stories"), entry.filename),
-        contextRoot: gauntletPath(config.projectRoot, "context"),
-      });
-      const contextRoot = join(outDir, "inputs", "context");
-      // Create the logger *before* the adapter so WebAdapter can open its
-      // background observer session against it in start().
-      const logger = new EvidenceLogger(outDir);
-      // Per-run Chrome profile name for browser state isolation (spec
-      // §5.1). The cardId is already encoded in runId, so no additional
-      // suffix is needed.
-      const chromeProfileName = `gauntlet-run-${runId}`;
-      const adapter = createAdapter(effective.adapter, effective.chrome, contextRoot, logger, chromeProfileName, effective.viewport);
-      const runConfig: RunConfigSnapshot = {
-        target: effective.target,
-        model: effective.model,
-        adapter: effective.adapter,
-        chrome: effective.chrome ? `${effective.chrome.host}:${effective.chrome.port}` : undefined,
-        turns: effective.turns,
-        viewport: snapshotViewport(adapter),
-      };
-      // Render the tree **once per run** — the immutability invariant
-      // (spec §4.2) forbids re-rendering during the run.
-      const contextTree = renderContextTree(contextRoot);
-
       const startedAt = Date.now();
       if (registry) {
         registry.register({
@@ -164,29 +230,22 @@ export function runRoutes(
         });
       }
 
-      // Detach: run the agent in the background. The HTTP request returns now.
-      executeRun({
+      executeHttpRun({
         runId,
         card: entry.card,
-        adapter,
-        adapterType: effective.adapter,
+        storyPath,
         client,
-        target: effective.target,
-        outDir,
-        logger,
+        effective,
+        projectRoot: config.projectRoot,
         broadcaster,
         registry,
         errorLog,
         startedAt,
-        contextTree,
-        maxTurns: effective.turns,
-        runConfig,
-        saveScreencast: effective.saveScreencast,
-        provider,
-        model: effective.model,
-      }).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        errorLog?.add("run", `${runId}: ${message}`);
+      }).catch(() => {
+        // executeHttpRun's onError hook already wrote to errorLog and
+        // broadcast the terminal error event before rethrowing. Swallow
+        // here to satisfy the unhandled-rejection rule without
+        // double-logging.
       });
 
       return c.json({
@@ -214,61 +273,19 @@ export function runRoutes(
           });
         }
 
-        const outDir = gauntletPath(config.projectRoot, "results", runId);
-        snapshotRunInputs({
-          runDir: outDir,
-          storyPath: join(gauntletPath(config.projectRoot, "stories"), entry.filename),
-          contextRoot: gauntletPath(config.projectRoot, "context"),
-        });
-        const contextRoot = join(outDir, "inputs", "context");
-        const logger = new EvidenceLogger(outDir);
-        const chromeProfileName = `gauntlet-run-${runId}`;
-        const adapter = createAdapter(effective.adapter, effective.chrome, contextRoot, logger, chromeProfileName, effective.viewport);
-        const runConfig: RunConfigSnapshot = {
-          target: effective.target,
-          model: effective.model,
-          adapter: effective.adapter,
-          chrome: effective.chrome ? `${effective.chrome.host}:${effective.chrome.port}` : undefined,
-          turns: effective.turns,
-          viewport: snapshotViewport(adapter),
-        };
-        const contextTree = renderContextTree(contextRoot);
-
-        await executeRun({
+        const { result, outDir } = await executeHttpRun({
           runId,
           card: entry.card,
-          adapter,
-          adapterType: effective.adapter,
+          storyPath,
           client,
-          target: effective.target,
-          outDir,
-          logger,
+          effective,
+          projectRoot: config.projectRoot,
           broadcaster,
           registry,
           errorLog,
-          // Omit startedAt so executeRun's internal unregister bypasses the
-          // startedAt guard (unregister(runId, undefined) always removes).
-          // The pre-registration startedAt and a fresh Date.now() would differ,
-          // causing the guarded unregister to silently no-op.
-          startedAt: undefined,
-          contextTree,
-          maxTurns: effective.turns,
-          runConfig,
-          saveScreencast: effective.saveScreencast,
-          provider,
-          model: effective.model,
+          // No startedAt — see solo-path comment in legacy code.
           runSetCtx,
         });
-
-        // executeRun writes result.json and unregisters from registry.
-        // Read the result back for orchestrator bookkeeping.
-        let result;
-        try {
-          result = JSON.parse(readFileSync(join(outDir, "result.json"), "utf8"));
-        } catch {
-          // If result.json is missing (errored run), construct a minimal error result.
-          result = { status: "fail" };
-        }
 
         if (setBroadcaster) {
           setBroadcaster.send(runSetCtx.runSetId, {
@@ -281,7 +298,6 @@ export function runRoutes(
       },
     });
 
-    // Pre-register all attempts as queued (before the loop starts).
     if (registry) {
       for (const r of handle.runs) {
         registry.register({
@@ -331,162 +347,4 @@ export function runRoutes(
   });
 
   return router;
-}
-
-export interface ExecuteRunOpts {
-  /**
-   * Primary identity for the run. Threads through the broadcaster
-   * channel, the registry key, and the runId field stamped into the
-   * written result. Optional only so legacy test fixtures can omit it;
-   * production routes always provide one via `makeRunId(card.id)`.
-   */
-  runId?: string;
-  card: StoryCard;
-  adapter: Adapter;
-  adapterType: string;
-  client: LLMClient;
-  target: string;
-  outDir: string;
-  logger: EvidenceLogger;
-  broadcaster?: RunBroadcaster;
-  registry?: ActiveRunRegistry;
-  errorLog?: ErrorLog;
-  /** Token used to guard against clobbering a freshly-registered entry
-   * with the same key. */
-  startedAt?: number;
-  /**
-   * Rendered context tree from `renderContextTree`. Built once per run
-   * by the route handler and threaded to `runAgent` so the system
-   * prompt's Context section can be assembled at turn 0. See spec §4.2.
-   */
-  contextTree?: string;
-  /** Per-run cap on agent turns. Omit for the agent default (50). */
-  maxTurns?: number;
-  /** Config snapshot stamped into result.json. */
-  runConfig?: RunConfigSnapshot;
-  /**
-   * When true, the screencast streamer also writes frames to
-   * `<outDir>/frames/`. When false, frames still fan out to the
-   * broadcaster/registry for live viewing, but nothing touches disk.
-   * Omit to inherit the legacy always-save behavior — production callers
-   * thread the merged flag through from the effective run config.
-   */
-  saveScreencast?: boolean;
-  /** LLM provider name (e.g. "anthropic", "openai"). Threaded to run_start. */
-  provider?: string;
-  /** LLM model name. Threaded to run_start. */
-  model?: string;
-  /** Run set context for multi-pass orchestration. */
-  runSetCtx?: RunSetCtx;
-}
-
-export async function executeRun(opts: ExecuteRunOpts): Promise<void> {
-  const { runId: optsRunId, card, adapter, adapterType, client, target, outDir, logger, broadcaster, registry, errorLog, startedAt, contextTree, maxTurns, runConfig, saveScreencast, provider, model, runSetCtx } = opts;
-  // Routing key for the broadcaster and registry. Defaults to cardId so
-  // ad-hoc test fixtures continue to work without supplying a runId.
-  const runId = optsRunId ?? card.id;
-
-  let unsubscribeObserver: (() => void) | undefined;
-  if (broadcaster || registry) {
-    unsubscribeObserver = logger.addObserver((action, params) => {
-      const message = `[${action}] ${JSON.stringify(params)}`;
-      broadcaster?.send(runId, {
-        type: "progress",
-        message,
-        status: "running",
-        card: card.id,
-      });
-      registry?.recordProgress(runId, message);
-    });
-  }
-
-  // Independent observer channel carrying the full structured jsonl
-  // entry for the transcript WS consumers (spec §6.3). Legacy progress
-  // path above is unchanged; these fire side-by-side.
-  let unsubscribeEventObserver: (() => void) | undefined;
-  if (broadcaster) {
-    unsubscribeEventObserver = logger.addEventObserver((event) => {
-      broadcaster.send(runId, { type: "event", event });
-    });
-  }
-
-  let streamer: ScreencastStreamerType | undefined;
-  let terminal: Record<string, unknown> | null = null;
-
-  try {
-    await adapter.start(target);
-
-    if (adapterType === "web" && (broadcaster || registry)) {
-      const { ScreencastStreamer } = await import("../../streaming/screencast");
-      // The live WS stream (broadcaster.send) is always on — the
-      // streamer writes to disk only when saveScreencast is true.
-      // Legacy callers that omit the flag retain the previous
-      // always-save behavior; the production route threads
-      // effective.saveScreencast (default false).
-      const framesDir = saveScreencast === false ? undefined : join(outDir, "frames");
-      // PRI-1436: share the WebAdapter's chrome-ws-lib session so the
-      // screencast talks to the same Chrome the adapter started (correct
-      // activePort, correct connection pool). Without this, the streamer
-      // would create its own session whose activePort was never set by
-      // startChrome.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const webAdapter = adapter as any;
-      // The branch above already gates on adapterType === "web", so the
-      // adapter is always a WebAdapter here and getChromeSession is defined.
-      const chromeSession = webAdapter.getChromeSession();
-      streamer = new ScreencastStreamer(0, (frame) => {
-        broadcaster?.send(runId, {
-          type: "frame",
-          data: frame.data,
-          width: frame.metadata.width,
-          height: frame.metadata.height,
-        });
-        registry?.recordFrame(runId, {
-          data: frame.data,
-          width: frame.metadata.width,
-          height: frame.metadata.height,
-        });
-      }, chromeSession, framesDir);
-      await streamer.start();
-    }
-
-    const result = await runAgent(card, adapter, client, logger, target, {
-      contextTree,
-      runId,
-      maxTurns,
-      provider,
-      model,
-      outDir,
-      viewport: adapterType === "web" ? viewportString(snapshotViewport(adapter)) : undefined,
-    });
-    if (runConfig) result.config = runConfig;
-    if (runSetCtx) result.runSet = runSetCtx;
-    writeResultFiles(outDir, result);
-
-    terminal = { type: "complete", result };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    errorLog?.add("run", `${runId}: ${message}`);
-    terminal = { type: "error", message };
-  } finally {
-    unsubscribeObserver?.();
-    unsubscribeEventObserver?.();
-    if (streamer) {
-      try {
-        await streamer.stop();
-      } catch {
-        /* ignore */
-      }
-    }
-    try {
-      await adapter.close();
-    } catch {
-      /* ignore */
-    }
-    registry?.unregister(runId, startedAt);
-    // Emit the terminal event AFTER unregister so a late-connecting
-    // WebSocket sees an empty registry (and receives `gone`) instead of a
-    // stale snapshot that would never get a follow-up event.
-    if (terminal) broadcaster?.send(runId, terminal);
-  }
 }

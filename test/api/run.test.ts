@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { runRoutes, executeRun } from "../../src/api/routes/run";
+import { runRoutes, executeHttpRun } from "../../src/api/routes/run";
 import { ActiveRunRegistry } from "../../src/api/active-runs";
 import { RunBroadcaster } from "../../src/api/ws";
-import { loadConfig } from "../../src/config";
+import { loadConfig, mergeRunConfig, validateRunBody } from "../../src/config";
 import { gauntletPath } from "../../src/paths";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -186,24 +186,34 @@ describe("Run API", () => {
     };
     broadcaster.addClient(runId, ws as any);
 
-    const { EvidenceLogger } = await import("../../src/evidence/logger");
-    const resultsDir = gauntletPath(projectRoot, "results", runId);
-    const logger = new EvidenceLogger(resultsDir);
+    // Write a minimal story file so snapshotRunInputs has something to copy.
+    const storyDir = gauntletPath(projectRoot, "stories");
+    mkdirSync(storyDir, { recursive: true });
+    const storyPath = join(storyDir, "story-001.md");
+    writeFileSync(storyPath, `---\nid: story-001\ntitle: Test\nstatus: draft\ntags: core\n---\n\nbody\n\n## Acceptance Criteria\n- works\n`);
 
-    await executeRun({
+    const cfg = loadConfig({ projectRoot }, { GAUNTLET_AGENT_MODEL: "claude-sonnet-4-6" } as NodeJS.ProcessEnv);
+    const effective = mergeRunConfig(cfg, validateRunBody({
+      target: "http://localhost:3000",
+      adapter: "cli",
+    }));
+
+    // executeHttpRun rethrows after running all cleanup hooks (onError →
+    // beforeClose → adapter.close → detachLogger → afterClose). Swallow
+    // the rethrow; the assertions below verify the hook ordering.
+    await executeHttpRun({
       runId,
       card,
-      adapter: stubAdapter,
-      adapterType: "cli",
+      storyPath,
       client: stubClient,
-      target: "http://localhost:3000",
-      outDir: resultsDir,
-      logger,
+      effective,
+      projectRoot,
       broadcaster,
       registry,
-    });
+      adapterFactory: () => stubAdapter,
+    }).catch(() => { /* expected: stub throws on start */ });
 
-    // After executeRun resolves, registry must be clean.
+    // After executeHttpRun resolves, registry must be clean.
     expect(registry.has(runId)).toBe(false);
     // And when the terminal event fired, the entry was already gone.
     expect(registryHadEntryAtTerminal).toBe(false);
@@ -326,26 +336,35 @@ describe("Run API", () => {
 
     const runId = `story-001_20260422T120000Z_${saveScreencast ? "save" : "drop"}`;
     const resultsDir = gauntletPath(projectRoot, "results", runId);
-    const { EvidenceLogger } = await import("../../src/evidence/logger");
-    const logger = new EvidenceLogger(resultsDir);
 
-    // executeRun catches the streamer.start() failure (chrome not
+    // Write a minimal story file so snapshotRunInputs has something to copy.
+    const storyDir = gauntletPath(projectRoot, "stories");
+    mkdirSync(storyDir, { recursive: true });
+    const storyPath = join(storyDir, "story-001.md");
+    writeFileSync(storyPath, `---\nid: story-001\ntitle: Test\nstatus: draft\ntags: core\n---\n\nbody\n\n## Acceptance Criteria\n- works\n`);
+
+    const cfg = loadConfig({ projectRoot }, { GAUNTLET_AGENT_MODEL: "claude-sonnet-4-6" } as NodeJS.ProcessEnv);
+    const effective = mergeRunConfig(cfg, validateRunBody({
+      target: "http://localhost:3000",
+      adapter: "web",
+      saveScreencast,
+    }));
+
+    // executeHttpRun catches the streamer.start() failure (chrome not
     // running) and falls through to cleanup — fine for our purposes,
     // the constructor's mkdir side-effect already happened synchronously.
-    await executeRun({
+    await executeHttpRun({
       runId,
       card,
-      adapter: stubAdapter,
-      adapterType: "web",
+      storyPath,
       client: stubClient,
-      target: "http://localhost:3000",
-      outDir: resultsDir,
-      logger,
+      effective,
+      projectRoot,
       registry,
-      saveScreencast,
-    });
+      adapterFactory: () => stubAdapter,
+    }).catch(() => { /* swallow expected streamer failure */ });
 
-    return { resultsDir, framesDir: join(resultsDir, "frames") };
+    return { resultsDir, framesDir: join(gauntletPath(projectRoot, "results", runId), "frames") };
   }
 
   test("screencast gate: saveScreencast=false does NOT create frames/ on disk", async () => {
