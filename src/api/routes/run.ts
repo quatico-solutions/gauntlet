@@ -2,7 +2,12 @@ import { Hono } from "hono";
 import { join } from "path";
 import { readFileSync } from "fs";
 import { findCard } from "../../cards/store";
-import { createClient, resolveProvider } from "../../models/resolve";
+import {
+  SUPPORTED_MODEL_PREFIXES_MESSAGE,
+  UnknownModelProviderError,
+  createClientForProvider,
+  resolveProvider,
+} from "../../models/resolve";
 import { EvidenceLogger } from "../../evidence/logger";
 import { writeResultFiles } from "../../evidence/writer";
 import { runAgent } from "../../agent/agent";
@@ -88,9 +93,22 @@ export function runRoutes(
       return c.json({ error: `model "${effective.model}" is not in GAUNTLET_MODELS allow-list` }, 400);
     }
 
+    let provider;
+    try {
+      provider = resolveProvider(effective.model);
+    } catch (err) {
+      if (err instanceof UnknownModelProviderError) {
+        return c.json({
+          error: "unknown_model",
+          message: `Model not supported. ${SUPPORTED_MODEL_PREFIXES_MESSAGE}`,
+        }, 400);
+      }
+      throw err;
+    }
+
     const client = clientFactory
       ? clientFactory(effective.model)
-      : createClient(effective.model);
+      : createClientForProvider(effective.model, provider);
 
     const passes = body.passes ?? 1;
 
@@ -164,7 +182,7 @@ export function runRoutes(
         maxTurns: effective.turns,
         runConfig,
         saveScreencast: effective.saveScreencast,
-        provider: resolveProvider(effective.model),
+        provider,
         model: effective.model,
       }).catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
@@ -237,7 +255,7 @@ export function runRoutes(
           maxTurns: effective.turns,
           runConfig,
           saveScreencast: effective.saveScreencast,
-          provider: resolveProvider(effective.model),
+          provider,
           model: effective.model,
           runSetCtx,
         });

@@ -70,6 +70,29 @@ describe("Run API", () => {
     expect(body.error).toContain("target");
   });
 
+  test("POST /api/run/:id returns JSON 400 for unknown model prefix before registering a run", async () => {
+    const config = loadConfig({ projectRoot }, { GAUNTLET_AGENT_MODEL: "claude-sonnet-4-6" } as NodeJS.ProcessEnv);
+    const registry = new ActiveRunRegistry();
+    const app = new Hono();
+    app.route("/api/run", runRoutes(config, undefined, undefined, registry));
+
+    const res = await app.request("/api/run/story-001", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: "http://localhost:3000", model: "unknown-model" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = await res.json();
+    expect(body.error).toBe("unknown_model");
+    expect(body.message).toContain("claude*");
+    expect(body.message).toContain("gpt*");
+    expect(body.message).toContain("o1*");
+    expect(body.message).toContain("o3*");
+    expect(registry.list()).toEqual([]);
+  });
+
   test("POST /api/run/:id returns 202 with uniform shape and registers by runId", async () => {
     // createClient reads ANTHROPIC_API_KEY from process.env directly.
     // Stub it just for this test so the createClient call doesn't throw
