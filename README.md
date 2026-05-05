@@ -110,6 +110,27 @@ they need, and what a successful run looks like.
 - Third thing that must be true
 ```
 
+### Context
+
+Cards describe outcomes. To get from *"Matt writes a journal entry"* to a real authenticated user clicking real buttons, the agent needs material the card itself doesn't carry: who Matt is, what his credentials are, how to get past the sign-in screen. That material lives in a folder at `.gauntlet/context/` — natural-language fixtures the agent reads as part of its system prompt.
+
+A typical layout:
+
+```
+.gauntlet/context/
+  HOW-TO-LOGIN.md         # plain English: where the sign-in form is, what to type
+  profiles/
+    matt/
+      profile.md          # name, credentials, a sentence of personality
+      cookies.yaml        # optional: pre-baked session for install_cookies
+```
+
+Filenames are not load-bearing. `HOW-TO-LOGIN.md`, `LOGIN-INSTRUCTIONS.md`, or `auth.md` all work — the agent infers what each file is for from its name and contents the same way a new teammate would skim a wiki. The card refers to the user by name in prose (*"Matt writes a post…"*); the agent picks the right profile by inference.
+
+What context buys you: every card doesn't have to repeat itself. Add a profile once, and any card that mentions that user can sign in as them. Change a password in `profile.md`, and the next run picks it up — no test plumbing to update. When a card fails for an avoidable reason, the fix is usually a sentence in a `.md` file, not a code change.
+
+For the auth specifics — `install_cookies`, password-based sign-in, the cookie-lifecycle quirk — see [`docs/credentials.md`](docs/credentials.md).
+
 ### The agent loop
 
 The core of Gauntlet is an agentic loop in `src/agent/agent.ts`:
