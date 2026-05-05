@@ -27,6 +27,13 @@ export function createApp(
   cancelTokens?: CancelTokenRegistry,
 ) {
   const app = new Hono();
+  app.onError((err, c) => {
+    return c.json({
+      error: "internal",
+      message: err instanceof Error ? err.message : String(err),
+    }, 500);
+  });
+
   const errorLog = new ErrorLog();
   const projectRoot = config.projectRoot;
 
