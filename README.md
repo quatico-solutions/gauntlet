@@ -350,10 +350,19 @@ The HTTP API (Hono) serves at `/api`:
 | `/api/results` | GET | List all results |
 | `/api/results/:runId` | GET | Get result metadata |
 | `/api/results/:runId/file/:path` | GET | Fetch a file from a run (must be listed in result.json) |
+| `/api/run-sets/:id` | GET | Get a run-set's metadata and per-attempt results |
+| `/api/run-sets/:id/summary` | GET | Aggregate summary (per-card buckets: `consistent_pass`, `mixed`, `errored`, …) |
+| `/api/run-sets/:id` | DELETE | Delete a run-set and all of its runs from disk |
+| `/api/runs/active` | GET | List runs currently executing in this server process |
+| `/api/runs/active/:runId/snapshot` | GET | Current snapshot of an in-flight run (latest events, last frame) |
 | `/api/fanout/:id` | POST | Generate test variations |
 | `/api/fanout/:id/observations` | POST | Generate cards from observations |
 | `/api/fanout/:id/failure` | POST | Generate cards from a failure |
+| `/api/config` | GET | Loaded server config |
+| `/api/config/effective` | GET | Effective config with per-field source attribution (env / flag / default) — same payload as `gauntlet config --json` |
+| `/api/errors` | GET | Tail of recent error envelopes captured by the unified error pipeline (debug aid) |
 | `/api/ws?run=<runId>` | WS | WebSocket for live run streaming, scoped to one run |
+| `/api/ws/run-sets/:id` | WS | WebSocket for run-set live streaming (per-attempt completions, manifest updates) |
 
 ## Docker
 
