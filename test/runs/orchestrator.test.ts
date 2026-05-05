@@ -316,3 +316,18 @@ describe("executeRunCore — error path", () => {
     expect(errorEvent.turn).toBe(-1); // pre-runAgent convention from runOne
   });
 });
+
+describe("executeRunCore — boundary", () => {
+  test("orchestrator source does not import HTTP-only types", () => {
+    const src = readFileSync(
+      join(__dirname, "..", "..", "src", "runs", "orchestrator.ts"),
+      "utf-8",
+    );
+    expect(src).not.toContain("RunBroadcaster");
+    expect(src).not.toContain("ActiveRunRegistry");
+    expect(src).not.toContain("ScreencastStreamer");
+    expect(src).not.toContain("RunSetBroadcaster");
+    expect(src).not.toContain("ErrorLog");
+    expect(src).not.toContain("from \"hono\"");
+  });
+});
