@@ -403,6 +403,7 @@ The web `POST /api/run/:id` body is validated against an explicit allow-list. Un
 | `run` | `--chrome host:port` | Chrome debugging endpoint |
 | `run` | `--adapter web\|cli\|tui` | Adapter type (default: web) |
 | `run` | `--turns <n>` | Max agent turns for this run (default: 50) |
+| `run` | `--passes <n>` | Number of attempts for this card; integer in `[1, 50]` (default: 1). Used to surface flaky behavior — repeated attempts roll up into a run-set. |
 | `run` | `--viewport WxH` | Browser viewport for web-adapter runs (default: 1440x900) |
 | `run` | `--save-screencast [bool]` | Persist screencast frames to disk (default: off; live UI stream is unchanged) |
 | `run` | `--out <dir>` | Evidence output directory |
@@ -412,6 +413,7 @@ The web `POST /api/run/:id` body is validated against an explicit allow-list. Un
 | `run` | `--no-color` | Disable ANSI color output; `NO_COLOR` is also respected |
 | `batch` | `<story.md> [more.md ...]` | Positional card paths (at least one required) |
 | `batch` | `--target <url>` | (required) Application under test |
+| `batch` | `--passes <n>` | Attempts per card; integer in `[1, 50]` (default: 1). The full execution becomes `cards × passes` runs, all rolled up into one run-set. |
 | `batch` | other per-card flags | Same as `run` minus `--out`. Applied uniformly to every card. |
 | `batch` | `--silent` | Suppress the table; print only the final summary on stderr |
 | `batch` | `--format pretty\|jsonl` | Output format (default: auto by TTY); jsonl injects `runId` per event |
