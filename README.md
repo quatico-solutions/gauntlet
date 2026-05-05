@@ -371,7 +371,7 @@ Run a story from the current directory against a target URL — the container mo
 ```bash
 docker run --rm \
   -e OPENAI_API_KEY=sk-... \
-  -e GAUNTLET_AGENT_MODEL=gpt-5.4-mini \
+  -e GAUNTLET_AGENT_MODEL=gpt-5-mini \
   -v "$PWD:/work" -w /work \
   gauntlet run story.md --target https://example.com
 ```
