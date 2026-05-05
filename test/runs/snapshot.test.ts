@@ -37,8 +37,8 @@ describe("snapshotRunInputs", () => {
       mkdirSync(join(contextRoot, "matt"), { recursive: true });
       writeFileSync(join(contextRoot, "matt", "identity.md"), "name: matt");
       writeFileSync(
-        join(contextRoot, "matt", "passkey.json"),
-        JSON.stringify({ credentialId: "abc" }),
+        join(contextRoot, "matt", "passkey.yaml"),
+        "credentialId: abc\n",
       );
       mkdirSync(join(contextRoot, "alice"), { recursive: true });
       writeFileSync(join(contextRoot, "alice", "identity.md"), "name: alice");
@@ -47,8 +47,8 @@ describe("snapshotRunInputs", () => {
 
       const snapCtx = join(runDir, "inputs", "context");
       expect(readFileSync(join(snapCtx, "matt", "identity.md"), "utf-8")).toBe("name: matt");
-      expect(JSON.parse(readFileSync(join(snapCtx, "matt", "passkey.json"), "utf-8")))
-        .toEqual({ credentialId: "abc" });
+      expect(readFileSync(join(snapCtx, "matt", "passkey.yaml"), "utf-8"))
+        .toBe("credentialId: abc\n");
       expect(readFileSync(join(snapCtx, "alice", "identity.md"), "utf-8")).toBe("name: alice");
     } finally {
       rmSync(tmp, { recursive: true, force: true });

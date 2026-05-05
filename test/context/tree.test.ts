@@ -48,7 +48,7 @@ describe("renderContextTree", () => {
       // Byte counts chosen to match the spec's example rendering.
       writeFileSync(join(tmp, "alice", "credentials.md"), "x".repeat(52));
       writeFileSync(join(tmp, "alice", "identity.md"), "x".repeat(188));
-      writeFileSync(join(tmp, "alice", "passkey.json"), "x".repeat(312));
+      writeFileSync(join(tmp, "alice", "passkey.yaml"), "x".repeat(312));
       writeFileSync(join(tmp, "bob", "credentials.md"), "x".repeat(52));
       writeFileSync(join(tmp, "bob", "identity.md"), "x".repeat(74));
 
@@ -57,7 +57,7 @@ describe("renderContextTree", () => {
         "  alice/",
         "    credentials.md  (52 bytes)",
         "    identity.md  (188 bytes)",
-        "    passkey.json  (312 bytes)",
+        "    passkey.yaml  (312 bytes)",
         "  bob/",
         "    credentials.md  (52 bytes)",
         "    identity.md  (74 bytes)",
