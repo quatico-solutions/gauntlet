@@ -41,6 +41,12 @@ export interface AppConfig {
    * CLI `--save-screencast`.
    */
   defaultSaveScreencast: boolean;
+  /**
+   * Maximum time (ms) `gauntlet serve` waits for in-flight runs to
+   * complete naturally after receiving SIGTERM/SIGINT/SIGHUP before
+   * forcing exit. PRI-1477.
+   */
+  shutdownGraceMs: number;
   models: {
     agent: string;
     fanout?: string;
@@ -58,6 +64,7 @@ export interface AppConfig {
     defaultTurns: "default" | "env" | "flag";
     defaultViewport: "default" | "env" | "flag";
     defaultSaveScreencast: "default" | "env" | "flag";
+    shutdownGraceMs: "default" | "env";
     "models.agent": "default" | "env" | "flag";
     "models.fanout": "default" | "env" | "flag" | "unset";
     "models.available": "default" | "env" | "flag";
@@ -223,6 +230,7 @@ export function mergeRunConfig(app: AppConfig, body: RunRequestBody): EffectiveR
 const DEFAULT_PROJECT_ROOT = ".";
 const DEFAULT_PORT = 4400;
 const DEFAULT_CHROME: ChromeEndpoint = { host: "127.0.0.1", port: 9222 };
+const DEFAULT_SHUTDOWN_GRACE_MS = 10000;
 const DEFAULT_AGENT_MODEL = "claude-sonnet-4-6";
 
 function parseChromeEndpoint(raw: string, label: string): ChromeEndpoint {
@@ -376,6 +384,21 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     turnsSource = "flag";
   }
 
+  // shutdownGraceMs — drain window for graceful shutdown (PRI-1477).
+  // No flag override; this is an operator-level knob (env only).
+  let shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
+  let shutdownGraceMsSource: "default" | "env" = "default";
+  if (env.GAUNTLET_SHUTDOWN_GRACE_MS) {
+    const parsed = parseInt(env.GAUNTLET_SHUTDOWN_GRACE_MS, 10);
+    if (Number.isNaN(parsed) || parsed < 0) {
+      throw new Error(
+        `Invalid GAUNTLET_SHUTDOWN_GRACE_MS "${env.GAUNTLET_SHUTDOWN_GRACE_MS}": expected a non-negative integer`,
+      );
+    }
+    shutdownGraceMs = parsed;
+    shutdownGraceMsSource = "env";
+  }
+
   // models.agent
   let agentModel = DEFAULT_AGENT_MODEL;
   let agentSource: "default" | "env" | "flag" = "default";
@@ -424,6 +447,7 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     defaultTurns,
     defaultViewport,
     defaultSaveScreencast,
+    shutdownGraceMs,
     models: {
       agent: agentModel,
       fanout: fanoutModel,
@@ -438,6 +462,7 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
       defaultTurns: turnsSource,
       defaultViewport: viewportSource,
       defaultSaveScreencast: saveScreencastSource,
+      shutdownGraceMs: shutdownGraceMsSource,
       "models.agent": agentSource,
       "models.fanout": fanoutSource,
       "models.available": availableSource,

@@ -97,6 +97,7 @@ async function main() {
       const { RunSetBroadcaster } = await import("./api/run-set-broadcaster");
       const { CancelTokenRegistry } = await import("./api/run-cancel");
       const { handleWsOpen, handleSetWsOpen } = await import("./api/ws-handlers");
+      const { ShutdownState, drainShutdown, installShutdownHandlers } = await import("./api/shutdown");
       const { join } = await import("path");
       const { gauntletPath } = await import("./paths");
 
@@ -110,10 +111,11 @@ async function main() {
       const registry = new ActiveRunRegistry();
       const setBroadcaster = new RunSetBroadcaster();
       const cancelTokens = new CancelTokenRegistry();
-      const app = createApp(config, uiDir, broadcaster, registry, setBroadcaster, cancelTokens);
+      const shutdownState = new ShutdownState();
+      const app = createApp(config, uiDir, broadcaster, registry, setBroadcaster, cancelTokens, shutdownState);
       const port = config.port;
       console.error(`gauntlet server listening on port ${port}`);
-      Bun.serve<{ runId?: string; runSetId?: string }>({
+      const server = Bun.serve<{ runId?: string; runSetId?: string }>({
         port,
         idleTimeout: 255, // seconds; LLM calls can take minutes
         fetch(req, server) {
@@ -154,6 +156,33 @@ async function main() {
           },
           message() {},
         },
+      });
+
+      // PRI-1477: graceful shutdown on SIGTERM/SIGINT/SIGHUP. The handler
+      // marks state as draining (middleware then refuses new POSTs),
+      // closes existing WS connections, waits up to shutdownGraceMs for
+      // in-flight runs to complete naturally, then stops the server and
+      // exits 0. Runs that exceed the grace window are abandoned —
+      // PRI-1507 closes that gap once the orchestrator can be cancelled.
+      let shuttingDown = false;
+      installShutdownHandlers(["SIGTERM", "SIGINT", "SIGHUP"], async (signal) => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        try {
+          await drainShutdown({
+            signal,
+            state: shutdownState,
+            broadcaster,
+            setBroadcaster,
+            registry,
+            graceMs: config.shutdownGraceMs,
+            pollMs: 100,
+            log: (msg) => process.stderr.write(`gauntlet: ${msg}\n`),
+          });
+        } finally {
+          server.stop();
+          process.exit(0);
+        }
       });
       break;
     }
