@@ -7,6 +7,7 @@ import type { RunSetBroadcaster } from "./run-set-broadcaster";
 interface WsLike {
   send(data: string): void;
   readyState: number;
+  close(code?: number, reason?: string): void;
 }
 
 /**
