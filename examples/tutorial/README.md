@@ -1,7 +1,7 @@
 # Gauntlet tutorial — runnable scaffolding
 
 This folder is the data side of [`docs/tutorial.md`](../../docs/tutorial.md).
-Read the tutorial doc first; it walks you through five stories
+Read the tutorial doc first; it walks you through six stories
 across the CLI, TUI, and Web adapters. The files here are what
 those stories read.
 
@@ -31,7 +31,7 @@ setup.ts                         vim story fixture (TypeScript content)
 vimrc                            vim story fixture (M-series Mac workaround)
 ```
 
-For Web tutorials 4 and 5, start the webapp first:
+For Web tutorials 4 through 6, start the webapp first:
 
 ```bash
 bun webapp/server.ts

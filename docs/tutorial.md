@@ -57,6 +57,7 @@ Before you start, you need:
   (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`).
 - Bun (the Web tutorials run a small local webapp — see
   tutorial 4).
+- `tmux` (the TUI adapter runs terminal apps inside tmux).
 - A copy of this folder. Run every command below from inside
   it:
 
@@ -64,8 +65,8 @@ Before you start, you need:
 cd examples/tutorial
 ```
 
-Each tutorial below tells you the one extra tool (`npm`,
-`bun`, `vim`, a browser) it expects you to have.
+Each tutorial below tells you which target tool (`npm`, `bun`,
+`vim`, or a browser) it expects you to have.
 
 ---
 
@@ -163,10 +164,12 @@ Same scratch-dir pattern as tutorial 1, for the same reason —
 `README.md`) and we don't want it stomping the tutorial's
 fixtures.
 
-The TUI adapter spawns the command inside a `tmux` session at
-120×40 and uses `tmux capture-pane -e` to read the rendered
-screen with ANSI escapes preserved. The agent's `read_screen`
-tool returns that raw ANSI; it parses the colors itself.
+For TUI runs, Gauntlet starts a detached `tmux` session at
+120×40 and runs the target command inside it. Keystrokes go to
+that session with `tmux send-keys`; `read_screen` uses
+`tmux capture-pane -p -e` to read the rendered screen with ANSI
+escapes preserved. The agent gets that raw ANSI and parses the
+colors itself.
 
 ### What to notice
 
