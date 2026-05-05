@@ -10,6 +10,7 @@ interface ConfigOutput {
     defaultTurns: number;
     defaultViewport: { width: number; height: number };
     defaultSaveScreencast: boolean;
+    shutdownGraceMs: number;
     models: {
       agent: string;
       fanout: string | null;
@@ -42,6 +43,7 @@ export function buildConfigOutput(config: AppConfig, env: NodeJS.ProcessEnv): Co
       defaultTurns: config.defaultTurns,
       defaultViewport: config.defaultViewport,
       defaultSaveScreencast: config.defaultSaveScreencast,
+      shutdownGraceMs: config.shutdownGraceMs,
       models: {
         agent: config.models.agent,
         fanout: config.models.fanout ?? null,
@@ -79,6 +81,7 @@ export function formatConfigText(output: ConfigOutput): string {
   lines.push(`  defaultTurns:   ${output.gauntlet.defaultTurns}  (${output.gauntlet.sources.defaultTurns})`);
   lines.push(`  defaultViewport: ${output.gauntlet.defaultViewport.width}x${output.gauntlet.defaultViewport.height}  (${output.gauntlet.sources.defaultViewport})`);
   lines.push(`  defaultSaveScreencast: ${output.gauntlet.defaultSaveScreencast}  (${output.gauntlet.sources.defaultSaveScreencast})`);
+  lines.push(`  shutdownGraceMs: ${output.gauntlet.shutdownGraceMs}  (${output.gauntlet.sources.shutdownGraceMs})`);
   lines.push(`  models.agent:   ${output.gauntlet.models.agent}  (${output.gauntlet.sources["models.agent"]})`);
   lines.push(`  models.fanout:  ${output.gauntlet.models.fanout ?? "(unset)"}  (${output.gauntlet.sources["models.fanout"]})`);
   lines.push(`  models.available: [${output.gauntlet.models.available.join(", ")}]  (${output.gauntlet.sources["models.available"]})`);

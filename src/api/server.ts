@@ -16,6 +16,7 @@ import type { RunBroadcaster } from "./ws";
 import type { ActiveRunRegistry } from "./active-runs";
 import type { RunSetBroadcaster } from "./run-set-broadcaster";
 import type { CancelTokenRegistry } from "./run-cancel";
+import type { ShutdownState } from "./shutdown";
 import type { AppConfig } from "../config";
 
 export function createApp(
@@ -25,6 +26,7 @@ export function createApp(
   registry?: ActiveRunRegistry,
   setBroadcaster?: RunSetBroadcaster,
   cancelTokens?: CancelTokenRegistry,
+  shutdownState?: ShutdownState,
 ) {
   const app = new Hono();
   app.onError((err, c) => {
@@ -33,6 +35,18 @@ export function createApp(
       message: err instanceof Error ? err.message : String(err),
     }, 500);
   });
+
+  // Graceful shutdown gate: while the daemon is draining, refuse new POSTs
+  // (any new run started here would be orphaned a few seconds later).
+  // GETs flow through so existing clients can keep polling status. PRI-1477.
+  if (shutdownState) {
+    app.use("*", async (c, next) => {
+      if (shutdownState.isDraining() && c.req.method !== "GET") {
+        return c.json({ error: "shutting_down" }, 503);
+      }
+      return next();
+    });
+  }
 
   const errorLog = new ErrorLog();
   const projectRoot = config.projectRoot;
