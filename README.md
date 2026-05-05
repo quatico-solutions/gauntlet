@@ -1,11 +1,11 @@
 # Gauntlet
 
-Gauntlet is an AI-powered QA testing framework. It uses large language models (Claude or GPT) to test web applications the way a human tester would: navigating pages, clicking buttons, filling forms, taking screenshots, and reporting bugs. You write **story cards** -- markdown files with a title, description, and acceptance criteria -- and Gauntlet's AI agent works through them in a real browser, delivering a verdict (pass/fail/investigate) with evidence.
+Gauntlet is an AI-powered QA testing framework. It uses large language models (Claude or GPT) to test software the way a human tester would: working through web apps in a real browser, CLI tools at a stdin/stdout prompt, and terminal/TUI programs in a live tmux session — clicking, typing, reading screens, and reporting bugs. You write **story cards** -- markdown files with a title, description, and acceptance criteria -- and Gauntlet's AI agent works through them via one of three adapters (`web`, `cli`, `tui`), delivering a verdict (pass/fail/investigate) with evidence.
 
 ## What it does
 
 1. **You describe what to test** in a story card -- a markdown file with a title, description, and acceptance criteria.
-2. **An AI agent opens a real browser**, navigates to your application, and interacts with it using Chrome DevTools Protocol.
+2. **An AI agent drives your target** through one of three adapters: a real Chrome browser (via CDP) for web apps, a stdin/stdout subprocess for CLI tools, or a tmux-hosted session for terminal/TUI programs.
 3. **The agent explores and evaluates** your acceptance criteria, but also reports anything else it notices: bugs, UX issues, typos, accessibility problems, performance issues, and suggestions.
 4. **You get a structured result** with a verdict, reasoning, observations, screenshots, and an action log.
 
@@ -26,14 +26,20 @@ Beyond single-story testing, Gauntlet can **generate variations** ("fanout") fro
         └────────┬───────┘
                  │
            ┌─────┴──────┐
-           │   Agent    │  (agentic loop: LLM + browser tools, up to 50 turns)
+           │   Agent    │  (agentic loop: LLM + adapter tools, up to 50 turns)
            └─────┬──────┘
                  │
         ┌────────┼────────┐
         │        │        │
-   LLM Client  Browser   Evidence Logger
-   (Claude or   Adapter   (screenshots,
-    OpenAI)    (CDP)      action log)
+   LLM Client  Adapter   Evidence Logger
+   (Claude or  (one of)  (screenshots,
+    OpenAI)              action log)
+                │
+                │   web → Chrome via CDP
+                │   cli → stdin/stdout subprocess
+                │   tui → tmux send-keys + ANSI capture
+                ▼
+           target under test
 ```
 
 ### Tech stack
@@ -41,7 +47,7 @@ Beyond single-story testing, Gauntlet can **generate variations** ("fanout") fro
 - **Runtime**: [Bun](https://bun.sh) (TypeScript)
 - **Server**: [Hono](https://hono.dev) (minimal web framework)
 - **Frontend**: React 19 + React Router 7 + Vite + Tailwind CSS
-- **Browser automation**: Chrome DevTools Protocol (custom CDP library)
+- **Automation surfaces**: Chrome DevTools Protocol for `web` (custom CDP library), stdin/stdout subprocess for `cli`, tmux send-keys + ANSI capture-pane for `tui`
 - **AI providers**: Anthropic SDK (Claude) and OpenAI SDK
 - **Deployment**: Docker (Debian + Chromium + Bun); a separate `Dockerfile.chrome` ships a Google Chrome sidecar for amd64 production use
 - **Storage**: File-based (no database) -- markdown for stories, JSON for results
@@ -136,7 +142,7 @@ For the auth specifics — `install_cookies`, password-based sign-in, the cookie
 The core of Gauntlet is an agentic loop in `src/agent/agent.ts`:
 
 1. The story card is loaded and a system prompt is built, instructing the LLM to act as a thorough QA tester.
-2. The LLM is given browser tools (mouse, keyboard, navigation, extraction, tab management — see [Browser adapter](#browser-adapter) for the full set) plus a special `report_result` tool.
+2. The LLM is given adapter tools — the set depends on which adapter the run picked. Web exposes a browser surface (mouse, keyboard, navigation, extraction, tab management); `cli` exposes `type` / `press` / `read_output`; `tui` exposes `type` / `press` / `read_screen`. See [Adapters](#adapters) for the full lists. A special `report_result` tool is always added.
 3. On each turn, the LLM decides what to do -- take a screenshot, click a button, type into a form, etc. Tool results (including screenshot images) are fed back into the conversation.
 4. The loop continues until the agent calls `report_result` with its verdict, or hits the 50-turn limit.
 5. Each tool call has a 30-second timeout to prevent hangs.
@@ -146,9 +152,19 @@ The agent reports:
 - **Summary and reasoning**: what happened and why
 - **Observations**: an array of `{kind, description}` where kind is one of: `bug`, `ux`, `typo`, `suggestion`, `a11y`, `performance`
 
-### Browser adapter
+### Adapters
 
-The web adapter (`src/adapters/web/adapter.ts`) drives Chrome via CDP. It exposes seventeen browser tools by default, plus three optional tools (`read`, `install_cookies`, `install_passkey`) that are mounted when the corresponding context files exist:
+Gauntlet ships three adapters. The agent loop is identical at every level — only the tools and the "vision" the agent gets back change. Pick one with `--adapter web|cli|tui`. The default is `web`. For a six-story walkthrough that exercises all three, see [`docs/tutorial.md`](docs/tutorial.md).
+
+| Adapter | What it drives | What `--target` is | Vision |
+|---------|----------------|--------------------|--------|
+| `web` | Real Chrome, via CDP | A URL | DOM text + pixel screenshots |
+| `cli` | A subprocess spawned with `sh -c "<target>"` | A shell command | Bytes on stdout/stderr |
+| `tui` | A target spawned inside a detached tmux session at 120×40 | A shell command | ANSI-rendered screen (colors, cursor, escapes preserved) |
+
+#### Web adapter
+
+`src/adapters/web/adapter.ts` drives Chrome via CDP. It exposes seventeen browser tools by default, plus three optional tools (`read`, `install_cookies`, `install_passkey`) that are mounted when the corresponding context files exist:
 
 | Tool | Description |
 |------|-------------|
@@ -174,6 +190,32 @@ The web adapter (`src/adapters/web/adapter.ts`) drives Chrome via CDP. It expose
 | `install_passkey` *(opt-in)* | Register a virtual WebAuthn credential from `passkey.yaml` — see [`docs/credentials.md`](docs/credentials.md) |
 
 Most tools support `return_screenshot` to automatically capture the page state after the action.
+
+#### CLI adapter
+
+`src/adapters/cli/adapter.ts` spawns the target with `sh -c "<target>"` and connects the agent to its stdin/stdout/stderr. No browser, no terminal emulator — the agent reads bytes and writes bytes.
+
+| Tool | Description |
+|------|-------------|
+| `type` | Write text to the subprocess's stdin |
+| `press` | Send a special key (Enter → `\n`, Tab → `\t`, Escape → `\x1b`, Ctrl+C/D/Z) |
+| `read_output` | Read whatever the subprocess has written to stdout/stderr since the last read |
+| `read` *(opt-in)* | Read a fixture file from `.gauntlet/context/` |
+
+Use this for `npm init`-style prompt-and-answer flows, REPLs, and any program whose UI is a stream of plain text.
+
+#### TUI adapter
+
+`src/adapters/tui/adapter.ts` runs the target inside a detached `tmux` session at 120×40. Keystrokes go in via `tmux send-keys`; the screen comes back via `tmux capture-pane -p -e` with ANSI escapes preserved, so the agent reads color, cursor position, and inverse video the way a human would. Requires `tmux` on the host.
+
+| Tool | Description |
+|------|-------------|
+| `type` | Send literal text to the tmux session |
+| `press` | Send a named key (`Enter`, `Tab`, `Escape`, arrow keys, `Backspace`, `Delete`, `Home`/`End`, `PageUp`/`PageDown`, `Ctrl+C/D/Z/X/O/S/W/K/G`) |
+| `read_screen` | Capture the current pane as ANSI-escaped text |
+| `read` *(opt-in)* | Read a fixture file from `.gauntlet/context/` |
+
+Use this for full-screen terminal UIs: `vim`, arrow-key selectors (`bun init`), `htop`, anything that uses cursor positioning or color as a UI signal.
 
 ### LLM providers
 
@@ -208,7 +250,8 @@ Gauntlet ships as a `gauntlet` command on your PATH. The package isn't published
 ### Prerequisites
 
 - [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
-- Google Chrome (or Chromium) — the browser adapter drives either via CDP
+- Google Chrome (or Chromium) — required for the `web` adapter; the CDP driver works against either
+- `tmux` — required for the `tui` adapter
 - An LLM API key — `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in your environment
 
 ### Install
