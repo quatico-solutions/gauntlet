@@ -8,12 +8,11 @@
   evidence  .gauntlet/results/r-ff01/
 ──────────────────────────────────────────────────────
 
-▎ Turn 1 · claude-sonnet-4-6 · turn 1 / 50
-  = assistant
-    Clicking login.
+─ 1 ────────────────────────────────────────────────
+  » Clicking login.
 
-  ▸ click {"selector":".nonexistent"}
-    ↳ ✗ 1180ms
+  ▸ click .nonexistent
+    ↳ ✗ 1.2s
       ╵ error  element not found: waited 1s for ".nonexistent"
       ╵ hint   closest match: ".login-button"
 

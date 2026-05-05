@@ -89,10 +89,13 @@ describe("PrettyRenderer", () => {
     r.handle({ eventId: 1, parentEventId: 0, ts: "t", type: "run_start", runId: "r", cardId: "c", target: "t", provider: "a", model: "m", adapter: "cli", maxTurns: 1, toolTimeoutMs: 1, contextTreeBytes: 0 } as any);
     r.handle({ eventId: 2, parentEventId: 1, ts: "t", type: "llm_response", turn: 1, stopReason: "end_turn", text: longText, thinking: [], toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, rawAssistantMessage: null } as any);
     r.close();
-    const assistantBlock = sink.out.split("= assistant\n")[1] ?? "";
-    const wrappedLines = assistantBlock.split("\n").filter((l) => l.startsWith("    ") && l.trim().length > 0);
-    expect(wrappedLines.length).toBeGreaterThan(1); // actually wrapped into multiple lines
-    for (const line of wrappedLines) {
+    // First line of the assistant block carries a `»` glyph; continuations
+    // indent to 4 spaces under it. Find the wrap-continuation lines.
+    const continuations = sink.out.split("\n").filter(
+      (l) => l.startsWith("    ") && l.trim().length > 0 && !l.includes("»"),
+    );
+    expect(continuations.length).toBeGreaterThan(1); // actually wrapped into multiple lines
+    for (const line of continuations) {
       const content = line.slice(4); // strip the "    " indent
       expect(content.length).toBeLessThanOrEqual(20);
     }
@@ -123,9 +126,6 @@ describe("PrettyRenderer", () => {
     r.close();
     // No blank line between the first tool_result's evidence arrow and the next tool_call.
     expect(sink.out).toContain("→ screenshots/001.png\n  ▸ read");
-    // A trailing blank is still deferred after the final tool_result; the next non-tool event would flush it.
-    const afterFinal = sink.out.split("↳ ✓ 0ms\n").at(-1) ?? "";
-    expect(afterFinal).toBe("");
   });
 
   test("renders text-only tool_result as a one-line snippet (last non-empty line)", () => {
@@ -149,12 +149,13 @@ describe("PrettyRenderer", () => {
     r.handle({ eventId: 5, parentEventId: 4, ts: "t", type: "tool_call", turn: 1, toolUseId: "t3", name: "press", arguments: { key: "Enter" } } as any);
     r.handle({ eventId: 6, parentEventId: 5, ts: "t", type: "tool_result", turn: 1, toolUseId: "t3", name: "press", durationMs: 0, text: "pressed", error: false } as any);
     r.close();
-    // Each call gets exactly one ↳ (the timing arrow); no body snippets.
-    const arrows = sink.out.match(/↳/g) ?? [];
-    expect(arrows.length).toBe(3);
+    // No body snippets — read's last bullet, type's "typed", press's "pressed"
+    // should all be suppressed (only `read_output` renders an inline snippet).
     expect(sink.out).not.toContain("last bullet");
     expect(sink.out).not.toContain("↳ typed");
     expect(sink.out).not.toContain("↳ pressed");
+    // Sub-50ms successful timings are suppressed entirely under the new rules.
+    expect(sink.out).not.toContain("↳ ✓");
   });
 
   test("truncates very long single-line read_output result text with ellipsis", () => {
@@ -170,14 +171,62 @@ describe("PrettyRenderer", () => {
     expect(snippetLine.length).toBeLessThanOrEqual(40);
   });
 
-  test("deferred blank flushes before a turn header following a tool_result", () => {
+  test("blank line separates a tool_result from the next content turn's wide rule", () => {
     const sink = collect();
     const r = new PrettyRenderer(sink, { color: false, columns: 100 });
     r.handle({ eventId: 1, parentEventId: 0, ts: "t", type: "tool_call", turn: 1, toolUseId: "t1", name: "screenshot", arguments: {} } as any);
     r.handle({ eventId: 2, parentEventId: 1, ts: "t", type: "tool_result", turn: 1, toolUseId: "t1", name: "screenshot", durationMs: 309, text: "", image: "screenshots/001.png", error: false } as any);
     r.handle({ eventId: 3, parentEventId: 2, ts: "t", type: "llm_response", turn: 2, stopReason: "end_turn", text: "ok", thinking: [], toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, rawAssistantMessage: null } as any);
     r.close();
-    // Blank line separates the tool_result from the next Turn header.
-    expect(sink.out).toContain("→ screenshots/001.png\n\n▎ Turn 2");
+    // Blank line between tool_result and the next turn's wide rule.
+    expect(sink.out).toMatch(/→ screenshots\/001\.png\n\n─ 2 ─+/);
+  });
+
+  test("tool-only turn inlines the short divider with the next tool call", () => {
+    const sink = collect();
+    const r = new PrettyRenderer(sink, { color: false, columns: 100 });
+    // Turn 1: empty llm_response (no thinking, no text) → tool-only turn
+    r.handle({ eventId: 1, parentEventId: 0, ts: "t", type: "llm_response", turn: 1, stopReason: "tool_use", text: "", thinking: [], toolCalls: [{ id: "t1", name: "press", arguments: { key: "Enter" } }], usage: { inputTokens: 0, outputTokens: 0 }, rawAssistantMessage: null } as any);
+    r.handle({ eventId: 2, parentEventId: 1, ts: "t", type: "tool_call", turn: 1, toolUseId: "t1", name: "press", arguments: { key: "Enter" } } as any);
+    r.handle({ eventId: 3, parentEventId: 2, ts: "t", type: "tool_result", turn: 1, toolUseId: "t1", name: "press", durationMs: 0, text: "pressed", error: false } as any);
+    r.close();
+    // Divider and call land on a single line.
+    expect(sink.out).toContain("─ 1 ─  ▸ press");
+    // No "Turn 1" or content header above it.
+    expect(sink.out).not.toContain("─ 1 ─\n");
+    expect(sink.out).not.toContain("Turn 1");
+  });
+
+  test("consecutive tool-only turns pack together without blank lines between them", () => {
+    const sink = collect();
+    const r = new PrettyRenderer(sink, { color: false, columns: 100 });
+    // Turn 1: tool-only
+    r.handle({ eventId: 1, parentEventId: 0, ts: "t", type: "llm_response", turn: 1, stopReason: "tool_use", text: "", thinking: [], toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, rawAssistantMessage: null } as any);
+    r.handle({ eventId: 2, parentEventId: 1, ts: "t", type: "tool_call", turn: 1, toolUseId: "t1", name: "press", arguments: { key: "Enter" } } as any);
+    r.handle({ eventId: 3, parentEventId: 2, ts: "t", type: "tool_result", turn: 1, toolUseId: "t1", name: "press", durationMs: 0, text: "pressed", error: false } as any);
+    // Turn 2: tool-only
+    r.handle({ eventId: 4, parentEventId: 3, ts: "t", type: "llm_response", turn: 2, stopReason: "tool_use", text: "", thinking: [], toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, rawAssistantMessage: null } as any);
+    r.handle({ eventId: 5, parentEventId: 4, ts: "t", type: "tool_call", turn: 2, toolUseId: "t2", name: "read_output", arguments: {} } as any);
+    r.handle({ eventId: 6, parentEventId: 5, ts: "t", type: "tool_result", turn: 2, toolUseId: "t2", name: "read_output", durationMs: 0, text: "version: (1.0.0) ", error: false } as any);
+    r.close();
+    // No blank between the two tool-only turns.
+    expect(sink.out).toMatch(/─ 1 ─  ▸ press[^\n]*\n─ 2 ─  ▸ read_output/);
+  });
+
+  test("anomaly event line uses compact summary for known event families", () => {
+    const sink = collect();
+    const r = new PrettyRenderer(sink, { color: false, columns: 100 });
+    r.handle({
+      eventId: 1, parentEventId: 0, ts: "t", type: "event", name: "install_cookies_ok",
+      path: "profiles/fred/cookies.yaml", accepted: 1, rejected: 0,
+      cookies: [{ name: "session", domain: null, valueLength: 4 }],
+    } as any);
+    r.close();
+    expect(sink.out).toContain("install_cookies_ok");
+    expect(sink.out).toContain("accepted 1");
+    expect(sink.out).toContain("session");
+    // The raw cookie object is NOT dumped inline.
+    expect(sink.out).not.toContain("valueLength");
+    expect(sink.out).not.toContain("[{");
   });
 });

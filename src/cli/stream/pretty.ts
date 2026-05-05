@@ -1,9 +1,13 @@
 import type { StreamEvent, StreamRenderer } from "./renderer";
 import type { WriteSink } from "./jsonl";
 import { makePaint, type Paint } from "./colors";
-import { softWrap, truncateArgs } from "./wrap";
+import { softWrap } from "./wrap";
+import { formatToolArgs } from "./format-args";
+import { formatTiming } from "./format-timing";
+import { formatAnomalyEvent } from "./format-event";
 
 const RULE = "──────────────────────────────────────────────────────";
+const TURN_RULE_WIDTH = 52;
 
 export interface PrettyOptions {
   color: boolean;
@@ -18,6 +22,14 @@ export class PrettyRenderer implements StreamRenderer {
   private outDir: string | undefined;
   private pendingRewrite: { base: string } | undefined;
   private pendingToolBlank = false;
+  /**
+   * Set when a turn opens with no thinking and no assistant text — i.e.
+   * the agent just emitted tool calls. The divider is deferred so the
+   * next `tool_call` can render inline as `─ N ─  ▸ ...` on a single
+   * line. If anything other than a tool_call arrives next we flush the
+   * divider on its own line.
+   */
+  private pendingTurnDivider: { num: number } | undefined;
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private spinnerStartMs = 0;
   private spinnerActive = false;
@@ -39,12 +51,22 @@ export class PrettyRenderer implements StreamRenderer {
     if (this.pendingRewrite && event.type !== "tool_result") {
       this.pendingRewrite = undefined;
     }
-    // Defer the trailing blank after tool_result: only emit it when the next
-    // event isn't another tool_call, so consecutive tool calls pack tightly
-    // but turn headers / meta / run_end still get breathing room.
-    if (this.pendingToolBlank) {
+    // Defer the trailing blank after tool_result. For most events we emit
+    // it before they print so the previous tools and the next section get
+    // breathing room. `llm_response` is special-cased: it owns its own
+    // leading blank decision (a content-bearing turn wants the blank; a
+    // tool-only turn does not, since the short divider is going to inline
+    // with the next tool call).
+    if (this.pendingToolBlank && event.type !== "llm_response") {
       if (event.type !== "tool_call") this.write("");
       this.pendingToolBlank = false;
+    }
+    // Same idea for the deferred turn divider: anything that isn't the
+    // tool_call we're trying to inline with forces the divider to flush
+    // on its own line first.
+    if (this.pendingTurnDivider && event.type !== "tool_call") {
+      this.write(this.turnRule(this.pendingTurnDivider.num, false));
+      this.pendingTurnDivider = undefined;
     }
     switch (event.type) {
       case "run_start":
@@ -80,6 +102,20 @@ export class PrettyRenderer implements StreamRenderer {
 
   private write(line: string): void {
     this.sink.write(line + "\n");
+  }
+
+  /**
+   * Build a turn divider. `wide` adds trailing dashes to fill out a
+   * roughly-banner-width rule (used when the turn opens with content);
+   * the short form is just `─ N ─` and is meant to inline with the
+   * following tool call.
+   */
+  private turnRule(turn: number, wide: boolean): string {
+    const p = this.paint;
+    const prefix = `─ ${turn} ─`;
+    if (!wide) return p.dim(prefix);
+    const filler = "─".repeat(Math.max(2, TURN_RULE_WIDTH - prefix.length));
+    return p.dim(prefix + filler);
   }
 
   private renderRunStart(e: StreamEvent): void {
@@ -159,17 +195,28 @@ export class PrettyRenderer implements StreamRenderer {
   private renderLlmResponse(e: StreamEvent): void {
     const p = this.paint;
     const turn = Number(e.turn ?? 0);
-    // Model is cached from run_start. No leading blank here — the preceding
-    // section (run_start or tool_result) emits its own trailing blank.
-    const modelLabel = this.model ?? "";
-    const maxTurnsStr = this.maxTurns ?? "?";
-    const header = `${p.cyan("▎")} ${p.bold(`Turn ${turn}`)} ${p.dim(`· ${modelLabel} · turn ${turn} / ${maxTurnsStr}`)}`;
-    this.write(header);
-
-    // First content block sits directly under the turn header (no leading
-    // blank); subsequent blocks get a separator blank.
-    let firstBlock = true;
     const thinking = (e.thinking ?? []) as Array<{ text: string }>;
+    const text = String(e.text ?? "").trim();
+    const hasContent = thinking.length > 0 || text.length > 0;
+
+    if (!hasContent) {
+      // Tool-only turn: defer the divider so the first tool_call inlines.
+      // Suppress any pending tool_result blank — there's no section break
+      // between consecutive tool-only turns; they should pack together.
+      this.pendingToolBlank = false;
+      this.pendingTurnDivider = { num: turn };
+      return;
+    }
+
+    // Content turn: flush the deferred blank so the wide divider sits
+    // separated from the previous turn's tools.
+    if (this.pendingToolBlank) {
+      this.write("");
+      this.pendingToolBlank = false;
+    }
+    this.write(this.turnRule(turn, true));
+
+    let firstBlock = true;
     for (const th of thinking) {
       if (!firstBlock) this.write("");
       firstBlock = false;
@@ -179,14 +226,15 @@ export class PrettyRenderer implements StreamRenderer {
       }
     }
 
-    const text = String(e.text ?? "");
     if (text.length > 0) {
       if (!firstBlock) this.write("");
       firstBlock = false;
-      this.write(`  ${p.yellow("= assistant")}`);
-      for (const line of softWrap(text, this.opts.columns - 4)) {
-        this.write(`    ${line}`);
-      }
+      // Drop the `= assistant` label — assistant is the default speaker.
+      // A leading `»` glyph on the first line announces the block; wrap
+      // continuations indent to sit under the first line's content.
+      const lines = softWrap(text, this.opts.columns - 4);
+      this.write(`  ${p.yellow("»")} ${lines[0] ?? ""}`);
+      for (let i = 1; i < lines.length; i++) this.write(`    ${lines[i]}`);
     }
     this.write("");
   }
@@ -194,8 +242,25 @@ export class PrettyRenderer implements StreamRenderer {
   private renderToolCall(e: StreamEvent): void {
     const p = this.paint;
     const name = String(e.name ?? "");
-    const args = truncateArgs(JSON.stringify(e.arguments ?? {}), 200);
-    const base = `  ${p.cyan("▸")} ${p.bold(name)} ${p.dim(args)}`;
+    const formatted = formatToolArgs(name, e.arguments as Record<string, unknown> | undefined);
+
+    // If a turn divider has been deferred because the turn was tool-only,
+    // inline it onto this call's line. Otherwise use the normal 2-space
+    // indent so the call sits under the wide rule it follows.
+    let head: string;
+    if (this.pendingTurnDivider) {
+      head = `${this.turnRule(this.pendingTurnDivider.num, false)}  `;
+      this.pendingTurnDivider = undefined;
+    } else {
+      head = "  ";
+    }
+
+    const bodyParts: string[] = [];
+    if (formatted.body) bodyParts.push(p.dim(formatted.body));
+    if (formatted.marker) bodyParts.push(p.dim(formatted.marker));
+    const bodyStr = bodyParts.length > 0 ? " " + bodyParts.join(" ") : "";
+    const base = `${head}${p.cyan("▸")} ${p.bold(name)}${bodyStr}`;
+
     if (this.opts.color) {
       // Inline-rewrite path: include a trailing pending marker so the user sees progress.
       this.write(`${base} ${p.dim("⋯")}`);
@@ -210,18 +275,22 @@ export class PrettyRenderer implements StreamRenderer {
     const p = this.paint;
     const ms = Number(e.durationMs ?? 0);
     const err = Boolean(e.error);
-    const timing = `${ms}ms`;
+    const timing = formatTiming(ms, err);
+    const timingText = timing ? (timing.slow && err ? p.red(timing.text) : timing.slow ? p.yellow(timing.text) : p.dim(timing.text)) : "";
 
     if (this.pendingRewrite && this.opts.color) {
       // Erase the previous line and rewrite with the final timing inline.
       const mark = err ? p.red("✗") : p.green("✓");
       this.sink.write("\x1b[1A\x1b[2K"); // cursor up, erase line
-      this.write(`${this.pendingRewrite.base}   ${mark} ${p.dim(timing)}`);
+      const tail = timing ? `   ${mark} ${timingText}` : (err ? `   ${mark}` : "");
+      this.write(`${this.pendingRewrite.base}${tail}`);
       this.pendingRewrite = undefined;
-    } else {
-      // Two-line fallback — same as the existing no-color path.
-      if (err) this.write(`    ${p.dim("↳")} ${p.red("✗")} ${p.dim(timing)}`);
-      else     this.write(`    ${p.dim("↳")} ${p.green("✓")} ${p.dim(timing)}`);
+    } else if (timing || err) {
+      // Two-line fallback — same as the existing no-color path. Skipped
+      // entirely when timing is suppressed AND the call succeeded; the
+      // call line stands on its own.
+      const mark = err ? p.red("✗") : p.green("✓");
+      this.write(`    ${p.dim("↳")} ${mark}${timing ? ` ${timingText}` : ""}`);
     }
 
     // Secondary lines always print as a separate indented line regardless of mode.
@@ -250,11 +319,9 @@ export class PrettyRenderer implements StreamRenderer {
 
   private renderEventMeta(e: StreamEvent): void {
     const p = this.paint;
-    const { type: _t, eventId: _id, parentEventId: _pid, ts: _ts, name, ...rest } = e;
-    const parts = Object.entries(rest)
-      .filter(([, v]) => v !== undefined && v !== null)
-      .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
-    this.write(`  ${p.dim(`· ${name} ${parts.join(" ")}`)}`);
+    const formatted = formatAnomalyEvent(e as Record<string, unknown>);
+    const body = formatted.body ? `  ${p.dim(formatted.body)}` : "";
+    this.write(`  ${p.dim(`· ${formatted.name}`)}${body}`);
   }
 
   private renderRunError(e: StreamEvent): void {
