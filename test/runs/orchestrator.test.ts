@@ -252,3 +252,67 @@ describe("executeRunCore — lifecycle hooks", () => {
     ]);
   });
 }, 15000);
+
+describe("executeRunCore — error path", () => {
+  test("logs run_error to run.jsonl, calls onError, runs cleanup, then rethrows", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "gauntlet-orch-err-"));
+    const storyPath = join(projectRoot, "card.md");
+    writeFileSync(storyPath, HAPPY_CARD);
+    const card = parseStoryCard(HAPPY_CARD);
+
+    // DI seam: a scripted client with zero scripts throws
+    // "No more scripted responses" on the first chat() call. This
+    // exercises the error path without mocking any module.
+    const client = makeScriptedClient([]);
+
+    const calls: string[] = [];
+
+    await expect(
+      executeRunCore({
+        card,
+        storyPath,
+        client,
+        runConfig: {
+          projectRoot,
+          model: "claude-sonnet-4-6",
+          adapter: "cli",
+          target: "true",
+          turns: 5,
+        },
+        hooks: {
+          onLogger: () => { calls.push("attach"); return () => calls.push("detach"); },
+          onError: () => { calls.push("onError"); },
+          beforeClose: () => { calls.push("beforeClose"); },
+          afterClose: () => { calls.push("afterClose"); },
+        },
+      }),
+    ).rejects.toThrow(/No more scripted responses/);
+
+    // Full error-path lifecycle. onError fires first (while logger is
+    // still attached so error annotations remain observable), then the
+    // streamer-stop slot (beforeClose), then adapter.close, then the
+    // detach, then afterClose. Locking the full sequence — adding a new
+    // hook here is supposed to surface as a test break.
+    expect(calls).toEqual([
+      "attach",
+      "onError",
+      "beforeClose",
+      "detach",
+      "afterClose",
+    ]);
+
+    // Find the orch-err output dir and read run.jsonl
+    const { readdirSync } = await import("fs");
+    const outDirs = readdirSync(join(projectRoot, ".gauntlet", "results"));
+    expect(outDirs.length).toBe(1);
+    const runJsonl = readFileSync(
+      join(projectRoot, ".gauntlet", "results", outDirs[0], "run.jsonl"),
+      "utf-8",
+    );
+    const lines = runJsonl.trim().split("\n").map((l) => JSON.parse(l));
+    const errorEvent = lines.find((l) => l.type === "run_error");
+    expect(errorEvent).toBeDefined();
+    expect(errorEvent.message).toMatch(/No more scripted responses/);
+    expect(errorEvent.turn).toBe(-1); // pre-runAgent convention from runOne
+  });
+});

@@ -239,6 +239,10 @@ export class EvidenceLogger {
     this.notifyObservers(name, data);
   }
 
+  logRunError(fields: { turn: number; message: string; stack?: string }): void {
+    this.writeEvent("run_error", { ...fields });
+  }
+
   logRunEnd(fields: RunEndFields): void {
     this.writeEvent("run_end", { ...fields });
   }

@@ -184,7 +184,13 @@ export async function executeRunCore(
 
     return { runId, outDir, result };
   } catch (err) {
+    logger.logRunError({
+      turn: -1,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     const ctx: RunCoreStarted = { ...prepared, contextRoot, adapter };
+    try { await hooks?.onError?.(err, ctx); } catch { /* swallow */ }
     try { await hooks?.beforeClose?.(ctx); } catch { /* swallow */ }
     try { await adapter.close(); } catch { /* swallow */ }
     detachLogger();
