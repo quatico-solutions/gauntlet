@@ -8,14 +8,11 @@
   evidence  .gauntlet/results/r-8f21/
 ──────────────────────────────────────────────────────
 
-▎ Turn 1 · claude-sonnet-4-6 · turn 1 / 50
   ~ thinking
     Let me see the page state.
 
-  = assistant
-    I'll take a screenshot first.
-
-  ▸ screenshot {}
+» I'll take a screenshot first. · t1
+  ▸ screenshot 📷
     ↳ ✓ 180ms
       → screenshots/001.png
 
