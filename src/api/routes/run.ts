@@ -15,7 +15,7 @@ import { renderContextTree } from "../../context/tree";
 import { makeRunId } from "../../util/id";
 import { gauntletPath } from "../../paths";
 import { snapshotRunInputs } from "../../runs/snapshot";
-import { mergeRunConfig, validateRunBody, type AppConfig, type ChromeEndpoint, type Viewport } from "../../config";
+import { mergeRunConfig, validateRunBody, TurnsTooHighError, type AppConfig, type ChromeEndpoint, type Viewport } from "../../config";
 import { snapshotViewport, type Adapter } from "../../adapters/adapter";
 import { runRunSet } from "../../runs/run-set";
 import type { RunBroadcaster } from "../ws";
@@ -77,8 +77,16 @@ export function runRoutes(
     const rawBody = await c.req.json().catch(() => ({}));
     let body;
     try {
-      body = validateRunBody(rawBody);
+      body = validateRunBody(rawBody, { maxTurnsCap: config.maxTurnsCap });
     } catch (err) {
+      if (err instanceof TurnsTooHighError) {
+        return c.json({
+          error: "turns_too_high",
+          message: err.message,
+          requested: err.requested,
+          cap: err.cap,
+        }, 400);
+      }
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
 
@@ -91,6 +99,17 @@ export function runRoutes(
 
     if (config.models.available.length > 0 && !config.models.available.includes(effective.model)) {
       return c.json({ error: `model "${effective.model}" is not in GAUNTLET_MODELS allow-list` }, 400);
+    }
+
+    // Concurrency cap (PRI-1478). Refuse new runs when at the operator-
+    // configured ceiling so a flood of POSTs can't pin the daemon.
+    if (registry && registry.list().length >= config.maxConcurrentRuns) {
+      c.header("Retry-After", "5");
+      return c.json({
+        error: "too_many_runs",
+        message: `at concurrency cap of ${config.maxConcurrentRuns} in-flight runs`,
+        cap: config.maxConcurrentRuns,
+      }, 429);
     }
 
     let provider;
