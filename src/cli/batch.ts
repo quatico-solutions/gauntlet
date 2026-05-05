@@ -1,6 +1,7 @@
 import { basename, extname } from "path";
 import type { AppConfig } from "../config";
 import type { EvidenceLogger, EventObserver } from "../evidence/logger";
+import type { LLMClient } from "../models/provider";
 import { gauntletPath } from "../paths";
 import { runOne, type RunOneOptions, type RunOneSummary } from "./run-one";
 import { runRunSet } from "../runs/run-set";
@@ -20,6 +21,9 @@ export interface BatchOptions {
   sink: WriteSink;
   isTTY: boolean;
   passes: number;
+  /** Test seam — see PRI-1505. Production callers leave this undefined; the
+   * runOne calls below thread it through so tests don't need mock.module. */
+  clientFactory?: (model: string) => LLMClient;
 }
 
 type RunOneFn = (opts: RunOneOptions) => Promise<RunOneSummary>;
@@ -136,6 +140,7 @@ export async function runBatch(
               onLogger,
               runSetCtx,
               runId,
+              clientFactory: opts.clientFactory,
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -212,6 +217,7 @@ export async function runBatch(
         adapterType: opts.adapterType,
         config: opts.config,
         onLogger,
+        clientFactory: opts.clientFactory,
       });
       const s = summary.result.status;
       switch (s) {

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { mkdtempSync, readdirSync, writeFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -39,20 +39,12 @@ describe("gauntlet batch — e2e against CLI adapter", () => {
     writeFileSync(pathB, STORY_B);
   });
 
-  afterEach(() => {
-    mock.restore();
-  });
-
   test("two cards: one pass, one fail; exit code 1; both evidence dirs created", async () => {
     const passClient = makeScriptedClient([report("pass", "ok", "")]);
     const failClient = makeScriptedClient([report("fail", "nope", "")]);
 
     let i = 0;
     const clients = [passClient, failClient];
-    mock.module("../../src/models/resolve", () => ({
-      createClient: () => clients[i++],
-      resolveProvider: () => "anthropic",
-    }));
 
     const sink = {
       out: "",
@@ -81,6 +73,7 @@ describe("gauntlet batch — e2e against CLI adapter", () => {
       sink,
       isTTY: false,
       passes: 1,
+      clientFactory: () => clients[i++],
     });
 
     expect(exitCode).toBe(1);
