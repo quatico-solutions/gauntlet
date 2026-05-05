@@ -912,7 +912,7 @@ describe("WebAdapter", () => {
         await adapter.start("https://example.com/");
         await adapter.executeTool("new_tab", { url: "https://side/" }, logger);
         // The passkey tool will likely error trying to read alice's
-        // missing passkey.json — that's fine; we only want to see the
+        // missing passkey.yaml — that's fine; we only want to see the
         // warning event was emitted on dispatch.
         try {
           // Passkey tool's schema requires `path`; pass a value that

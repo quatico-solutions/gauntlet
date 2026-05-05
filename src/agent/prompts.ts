@@ -21,7 +21,7 @@ const CONTEXT_SECTION_PROSE =
   "the tree below, `read` the relevant files, and use what you find to log\n" +
   "in via the regular browser tools. A profile directory typically contains\n" +
   "an identity file (prose describing the person) and a credentials file;\n" +
-  "some also contain `passkey.json` for WebAuthn sign-in via\n" +
+  "some also contain `passkey.yaml` for WebAuthn sign-in via\n" +
   "`install_passkey`.\n\n" +
   "Below is the complete tree of everything available under\n" +
   "`.gauntlet/context/` for this run. File sizes in bytes are shown after\n" +
