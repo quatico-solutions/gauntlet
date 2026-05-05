@@ -7,6 +7,13 @@ import { TuiCapture } from "./TuiCapture";
 interface Props {
   runId: string;
   pair: ToolPair;
+  /**
+   * For `type` / `press` tool calls, the prompt text the keystroke is
+   * answering — sourced from the immediately preceding `read_output`
+   * result in the same turn. Null when there's no paired prompt (e.g.
+   * the call isn't a prompt consumer, or no read_output preceded it).
+   */
+  respondingTo?: string | null;
   activeArtifact: string | null;
   onOpenArtifact: (path: string) => void;
 }
@@ -34,7 +41,7 @@ function isTuiCaptureResult(pair: ToolPair): string | null {
   return null;
 }
 
-export function ToolPairCard({ runId, pair, activeArtifact, onOpenArtifact }: Props) {
+export function ToolPairCard({ runId, pair, respondingTo, activeArtifact, onOpenArtifact }: Props) {
   const [expanded, setExpanded] = useState(false);
   const { call, result } = pair;
   const isError = result?.error === true;
@@ -65,6 +72,12 @@ export function ToolPairCard({ runId, pair, activeArtifact, onOpenArtifact }: Pr
         )}
       </div>
       <div className="tr-tool-body">
+        {respondingTo && (
+          <div className="tr-tool-prompt" title="Prompt captured by the preceding read_output">
+            <span className="tr-tool-prompt-label">↳ answering</span>
+            <span className="tr-tool-prompt-text">{respondingTo}</span>
+          </div>
+        )}
         {argsText && argsText !== "{}" && (
           <>
             <div className="tr-tool-result-label">args</div>

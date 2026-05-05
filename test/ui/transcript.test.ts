@@ -3,8 +3,11 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
   applyEvent,
+  computePromptPairings,
   emptyTranscript,
+  extractPromptLine,
   findSoftErrors,
+  isPromptConsumer,
   isSoftErrorResult,
   parseJsonl,
   reduceTranscript,
@@ -262,5 +265,131 @@ describe("parseJsonl", () => {
     } finally {
       console.warn = origWarn;
     }
+  });
+});
+
+describe("extractPromptLine", () => {
+  test("returns null for empty text", () => {
+    expect(extractPromptLine("")).toBeNull();
+  });
+
+  test("returns the only line, trimmed", () => {
+    expect(extractPromptLine("package name: (scratch-npm) ")).toBe(
+      "package name: (scratch-npm)",
+    );
+  });
+
+  test("returns the last non-empty line for multi-line buffers", () => {
+    const text = "leading banner\nsome notes\n\nversion: (1.0.0) ";
+    expect(extractPromptLine(text)).toBe("version: (1.0.0)");
+  });
+
+  test("skips trailing blank lines", () => {
+    expect(extractPromptLine("description: \n\n\n")).toBe("description:");
+  });
+});
+
+describe("isPromptConsumer", () => {
+  test("type and press are prompt consumers", () => {
+    expect(isPromptConsumer("type")).toBe(true);
+    expect(isPromptConsumer("press")).toBe(true);
+  });
+
+  test("non-input tools are not", () => {
+    expect(isPromptConsumer("read_output")).toBe(false);
+    expect(isPromptConsumer("read")).toBe(false);
+    expect(isPromptConsumer("click")).toBe(false);
+  });
+});
+
+describe("computePromptPairings", () => {
+  // Synthesize a tool_call + tool_result pair into the model so we can
+  // exercise pairing without driving real adapter events.
+  function pushToolPair(
+    model: ReturnType<typeof emptyTranscript>,
+    turn: number,
+    toolUseId: string,
+    name: string,
+    args: Record<string, unknown>,
+    resultText: string,
+    eventIdBase: number,
+  ): ReturnType<typeof emptyTranscript> {
+    const call: ToolCallEvent = {
+      eventId: eventIdBase,
+      parentEventId: eventIdBase - 1,
+      ts: "t",
+      type: "tool_call",
+      turn,
+      toolUseId,
+      name,
+      arguments: args,
+    };
+    const result: ToolResultEvent = {
+      eventId: eventIdBase + 1,
+      parentEventId: eventIdBase,
+      ts: "t",
+      type: "tool_result",
+      turn,
+      toolUseId,
+      name,
+      durationMs: 0,
+      text: resultText,
+      image: null,
+      artifact: null,
+      error: false,
+    };
+    let next = applyEvent(model, call as TranscriptEvent);
+    next = applyEvent(next, result as TranscriptEvent);
+    return next;
+  }
+
+  test("pairs a read_output in turn N with a type in turn N+1", () => {
+    let m = emptyTranscript();
+    m = pushToolPair(m, 1, "ro1", "read_output", {}, "package name: (scratch-npm) ", 10);
+    m = pushToolPair(m, 2, "ty1", "type", { text: "client-ledger" }, "typed", 20);
+    const pairings = computePromptPairings(m);
+    expect(pairings.get("ty1")).toBe("package name: (scratch-npm)");
+  });
+
+  test("a single read_output answers multiple consecutive keystrokes", () => {
+    // npm init's "Is this OK? (yes)" prompt is answered with a single Enter,
+    // but for fields with both a value and a confirming Enter the two
+    // keystrokes both pair with the same captured prompt.
+    let m = emptyTranscript();
+    m = pushToolPair(m, 1, "ro1", "read_output", {}, "description: ", 10);
+    m = pushToolPair(m, 2, "ty1", "type", { text: "Client ledger" }, "typed", 20);
+    m = pushToolPair(m, 3, "pr1", "press", { key: "Enter" }, "pressed", 30);
+    const pairings = computePromptPairings(m);
+    expect(pairings.get("ty1")).toBe("description:");
+    expect(pairings.get("pr1")).toBe("description:");
+  });
+
+  test("a non-consumer tool between read_output and keystroke clears the prompt", () => {
+    // If the agent reads a context file in between, the captured prompt no
+    // longer reliably describes what the next keystroke is answering.
+    let m = emptyTranscript();
+    m = pushToolPair(m, 1, "ro1", "read_output", {}, "author: ", 10);
+    m = pushToolPair(m, 2, "rd1", "read", { path: "x.md" }, "irrelevant", 20);
+    m = pushToolPair(m, 3, "ty1", "type", { text: "Fred" }, "typed", 30);
+    const pairings = computePromptPairings(m);
+    expect(pairings.has("ty1")).toBe(false);
+  });
+
+  test("does not pair a read_output that errored", () => {
+    let m = emptyTranscript();
+    const call: ToolCallEvent = {
+      eventId: 10, parentEventId: 9, ts: "t", type: "tool_call",
+      turn: 1, toolUseId: "ro1", name: "read_output", arguments: {},
+    };
+    const result: ToolResultEvent = {
+      eventId: 11, parentEventId: 10, ts: "t", type: "tool_result",
+      turn: 1, toolUseId: "ro1", name: "read_output", durationMs: 0,
+      text: "boom", image: null, artifact: null, error: true,
+    };
+    m = applyEvent(m, call as TranscriptEvent);
+    m = applyEvent(m, result as TranscriptEvent);
+    m = pushToolPair(m, 2, "ty1", "type", { text: "x" }, "typed", 20);
+    const pairings = computePromptPairings(m);
+    expect(pairings.has("ty1")).toBe(false);
   });
 });

@@ -128,6 +128,48 @@ describe("PrettyRenderer", () => {
     expect(afterFinal).toBe("");
   });
 
+  test("renders text-only tool_result as a one-line snippet (last non-empty line)", () => {
+    const sink = collect();
+    const r = new PrettyRenderer(sink, { color: false, columns: 100 });
+    r.handle({ eventId: 1, parentEventId: 0, ts: "t", type: "tool_call", turn: 1, toolUseId: "t1", name: "read_output", arguments: {} } as any);
+    r.handle({ eventId: 2, parentEventId: 1, ts: "t", type: "tool_result", turn: 1, toolUseId: "t1", name: "read_output", durationMs: 0, text: "leading banner\npackage name: (scratch-npm) ", error: false } as any);
+    r.close();
+    expect(sink.out).toContain("↳ package name: (scratch-npm)");
+    // Banner line above the prompt is not surfaced (only the active prompt is shown).
+    expect(sink.out).not.toContain("leading banner");
+  });
+
+  test("does not render snippet for non-read_output text tools (file read, type, press)", () => {
+    const sink = collect();
+    const r = new PrettyRenderer(sink, { color: false, columns: 100 });
+    r.handle({ eventId: 1, parentEventId: 0, ts: "t", type: "tool_call", turn: 1, toolUseId: "t1", name: "read", arguments: { path: "x.md" } } as any);
+    r.handle({ eventId: 2, parentEventId: 1, ts: "t", type: "tool_result", turn: 1, toolUseId: "t1", name: "read", durationMs: 2, text: "# Title\n\n- last bullet\n", error: false } as any);
+    r.handle({ eventId: 3, parentEventId: 2, ts: "t", type: "tool_call", turn: 1, toolUseId: "t2", name: "type", arguments: { text: "x" } } as any);
+    r.handle({ eventId: 4, parentEventId: 3, ts: "t", type: "tool_result", turn: 1, toolUseId: "t2", name: "type", durationMs: 0, text: "typed", error: false } as any);
+    r.handle({ eventId: 5, parentEventId: 4, ts: "t", type: "tool_call", turn: 1, toolUseId: "t3", name: "press", arguments: { key: "Enter" } } as any);
+    r.handle({ eventId: 6, parentEventId: 5, ts: "t", type: "tool_result", turn: 1, toolUseId: "t3", name: "press", durationMs: 0, text: "pressed", error: false } as any);
+    r.close();
+    // Each call gets exactly one ↳ (the timing arrow); no body snippets.
+    const arrows = sink.out.match(/↳/g) ?? [];
+    expect(arrows.length).toBe(3);
+    expect(sink.out).not.toContain("last bullet");
+    expect(sink.out).not.toContain("↳ typed");
+    expect(sink.out).not.toContain("↳ pressed");
+  });
+
+  test("truncates very long single-line read_output result text with ellipsis", () => {
+    const sink = collect();
+    const r = new PrettyRenderer(sink, { color: false, columns: 40 });
+    const long = "x".repeat(200);
+    r.handle({ eventId: 1, parentEventId: 0, ts: "t", type: "tool_call", turn: 1, toolUseId: "t1", name: "read_output", arguments: {} } as any);
+    r.handle({ eventId: 2, parentEventId: 1, ts: "t", type: "tool_result", turn: 1, toolUseId: "t1", name: "read_output", durationMs: 0, text: long, error: false } as any);
+    r.close();
+    expect(sink.out).toContain("…");
+    // Snippet line is bounded by columns (with margin for indent + glyph).
+    const snippetLine = sink.out.split("\n").find((l) => l.includes("↳ x")) ?? "";
+    expect(snippetLine.length).toBeLessThanOrEqual(40);
+  });
+
   test("deferred blank flushes before a turn header following a tool_result", () => {
     const sink = collect();
     const r = new PrettyRenderer(sink, { color: false, columns: 100 });
