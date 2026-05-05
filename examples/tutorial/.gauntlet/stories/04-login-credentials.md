@@ -10,6 +10,6 @@ When signed in the menu bar will indicate your username following an `@` sign, a
 have an option to log out.
 
 ## Acceptance Criteria
-- - Not signed in on initial load.
-- - Able to navigate the sign-in from.
-- - Able to sign-in as Deborah.
+- Not signed in on initial load.
+- Able to navigate the sign-in from.
+- Able to sign-in as Deborah.
