@@ -65,6 +65,11 @@ Before you start, you need:
 cd examples/tutorial
 ```
 
+Open `.gauntlet/context/` before you start. That's where Fred,
+Deborah, Quinn, and the sign-in instructions live. Every story
+below leans on these files, and the agent reads the tree the way
+a teammate would read a wiki.
+
 Each tutorial below tells you which target tool (`npm`, `bun`,
 `vim`, or a browser) it expects you to have.
 
@@ -103,8 +108,8 @@ gauntlet run .gauntlet/stories/01-npm-init.md \
 ```
 
 `--target` here is **a shell command**, not a URL. The CLI
-adapter spawns `sh -c "<target>"` and pipes the agent into its
-stdin/stdout. 
+adapter spawns `sh -c "<target>"` and connects the agent to its
+stdin/stdout.
 
 The scratch dir matters: `npm init` writes `package.json` into
 the current directory, and we don't want it landing on top of
@@ -136,7 +141,7 @@ options, each rendered in a different color. The currently-
 highlighted option is **yellow with an underline**; the others
 are cyan and blue.
 
-This is Visual emerging at its first level: *color is
+This is Vision emerging at its first level: *color is
 information*. The agent isn't supposed to figure out the
 selection by counting position. It's supposed to *see* the
 yellow underline.
@@ -159,10 +164,7 @@ gauntlet run .gauntlet/stories/02-bun-init.md \
   --turns 30
 ```
 
-Same scratch-dir pattern as tutorial 1, for the same reason —
-`bun init` writes a handful of files (including its own
-`README.md`) and we don't want it stomping the tutorial's
-fixtures.
+Same scratch-dir pattern as tutorial 1.
 
 For TUI runs, Gauntlet starts a detached `tmux` session at
 120×40 and runs the target command inside it. Keystrokes go to
@@ -184,7 +186,7 @@ A few variations worth trying:
 - Swap the card to say "You are Quinn." The agent should pick
   React, then navigate the *second* arrow-key selector that
   appears (Default / TailwindCSS / Shadcn) — a more demanding
-  Visual test that uses two highlights in a row.
+  Vision test that uses two highlights in a row.
 - Change Fred's preferred template in `profile.md` and re-run
   *without* touching the card. The choice should follow.
 - Delete one of the decoy profiles and re-run. The agent's
@@ -195,13 +197,13 @@ A few variations worth trying:
 
 ## Tutorial 3 · TUI · vim with splits and search
 
-The full-strength TUI showcase. Visual / Reasoning / Context
+The full-strength TUI showcase. Vision / Reasoning / Context
 all flexing at the same time, before Web complications enter
 the picture.
 
 What's new at this level:
 
-- **Visual at full TUI strength.** The agent verifies syntax
+- **Vision at full TUI strength.** The agent verifies syntax
   highlighting is working — that markdown headings show up
   styled against plain text in `notes.md`, and that TypeScript
   keywords (`import`, `export`, `interface`, `async`) get
@@ -238,11 +240,10 @@ gauntlet run .gauntlet/stories/03-vim-split.md \
   preference and re-run; the report changes.
 - The agent saved and quit cleanly with `:wqa`.
 
-If syntax highlighting *fails* — older vim, weird terminal,
-the M-series workaround missing — the agent should report
-that as a failed acceptance criterion, not silently pass.
-That's part of why we ship the workaround as a fixture: the
-test makes it visible when the environment is wrong.
+If syntax highlighting *fails* — older vim, weird terminal —
+the agent should report that as a failed acceptance criterion,
+not silently pass. The test makes a broken environment visible
+instead of letting it slide.
 
 ---
 
@@ -419,8 +420,16 @@ You now have:
 - Six working stories spanning all three adapters.
 - A small local webapp that demonstrates cookie-based auth,
   username+password auth, and friend-graph-driven visibility.
-- A felt sense for what Visual / Reasoning / Context look like
+- A felt sense for what Vision / Reasoning / Context look like
   at each level.
+
+Before any of that, open the most recent `result.json` under
+`.gauntlet/results/`. The agent reports observations alongside
+its verdict — `bug`, `ux`, `typo`, `a11y`, `suggestion`,
+`performance`. None of the cards above asked for those; the
+agent surfaces them anyway. Read them as starting points, not
+verdicts. Sometimes the agent is just filling space; sometimes
+it caught the thing your suite didn't think to check.
 
 Three good next moves:
 
