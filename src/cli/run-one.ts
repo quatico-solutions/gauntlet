@@ -1,47 +1,34 @@
 import { readFileSync } from "fs";
-import { join } from "path";
 import { parseStoryCard } from "../format/story-card";
-import { EvidenceLogger } from "../evidence/logger";
-import { writeResultFiles } from "../evidence/writer";
-import { runAgent } from "../agent/agent";
-import { createClient, resolveProvider } from "../models/resolve";
+import type { EvidenceLogger } from "../evidence/logger";
+import { createClient } from "../models/resolve";
+import { executeRunCore, type RunAdapterType } from "../runs/orchestrator";
+import type { AppConfig } from "../config";
 import type { LLMClient } from "../models/provider";
-import { CLIAdapter } from "../adapters/cli/adapter";
-import { snapshotViewport } from "../adapters/adapter";
-import { renderContextTree } from "../context/tree";
-import { makeRunId } from "../util/id";
-import { gauntletPath } from "../paths";
-import { snapshotRunInputs } from "../runs/snapshot";
-import type { AppConfig, Viewport } from "../config";
-import type { RunConfigSnapshot, VetResult } from "../types";
+import type { VetResult } from "../types";
 import type { RunSetCtx } from "../runs/run-set-types";
-
-function viewportString(v: Viewport | undefined): string | undefined {
-  return v ? `${v.width}x${v.height}` : undefined;
-}
 
 export interface RunOneOptions {
   scenarioPath: string;
   target: string;
   outDir?: string;
-  adapterType: "web" | "cli" | "tui";
+  adapterType: RunAdapterType;
   config: AppConfig;
   /** Invoked once with the freshly constructed EvidenceLogger, before
-   * `runAgent` starts. Returns a detach function that runOne calls in its
-   * `finally`. The single-card command uses this to attach the streaming
-   * renderer; batch.ts uses it to subscribe its per-card observer. */
+   * runAgent starts. Returns a detach function that runs after the
+   * adapter is closed. The single-card command uses this to attach the
+   * streaming renderer; batch.ts uses it to subscribe its per-card
+   * observer. */
   onLogger?: (logger: EvidenceLogger) => () => void;
   runSetCtx?: RunSetCtx;
-  /** Externally-supplied runId (from the orchestrator). When provided, this
-   * overrides the `makeRunId(card.id)` call so the run directory name
-   * matches what the RunSet manifest already recorded. */
+  /** Externally-supplied runId (from the orchestrator). When provided,
+   * this overrides the `makeRunId(card.id)` call so the run directory
+   * name matches what the RunSet manifest already recorded. */
   runId?: string;
   /** Test seam: substitute the LLM client construction. Production callers
-   * leave this undefined and runOne falls through to the default
-   * `createClient` from `models/resolve`. Tests inject a scripted client
-   * here instead of replacing the resolve module globally with
-   * `mock.module(...)` — Bun's `mock.restore()` does not undo module
-   * mocks, and a leaked mock breaks unrelated tests (PRI-1505). */
+   * leave this undefined and the shim falls through to `createClient`.
+   * Tests inject a scripted client here instead of `mock.module`-ing
+   * `models/resolve` (PRI-1505). */
   clientFactory?: (model: string) => LLMClient;
 }
 
@@ -56,87 +43,30 @@ export async function runOne(opts: RunOneOptions): Promise<RunOneSummary> {
 
   const content = readFileSync(scenarioPath, "utf-8");
   const card = parseStoryCard(content);
-  const runId = opts.runId ?? makeRunId(card.id);
-  const outDir = opts.outDir ?? gauntletPath(config.projectRoot, "results", runId);
-  snapshotRunInputs({
-    runDir: outDir,
-    storyPath: scenarioPath,
-    contextRoot: gauntletPath(config.projectRoot, "context"),
-  });
-  const logger = new EvidenceLogger(outDir);
-  const detach = opts.onLogger?.(logger) ?? (() => {});
 
   const client = (opts.clientFactory ?? createClient)(config.models.agent);
-  const contextRoot = join(outDir, "inputs", "context");
-  const contextTree = renderContextTree(contextRoot);
-
-  let adapter;
-  switch (adapterType) {
-    case "cli":
-      adapter = new CLIAdapter({ contextRoot });
-      await adapter.start(target);
-      break;
-    case "tui": {
-      const { TUIAdapter } = await import("../adapters/tui/adapter");
-      adapter = new TUIAdapter({ contextRoot });
-      await adapter.start(target);
-      break;
-    }
-    case "web": {
-      const { WebAdapter } = await import("../adapters/web/adapter");
-      const chromeOpt = config.sources.defaultChrome === "default"
-        ? undefined
-        : config.defaultChrome;
-      const chromeProfileName = `gauntlet-run-${runId}`;
-      adapter = new WebAdapter({
-        chrome: chromeOpt,
-        contextRoot,
-        logger,
-        chromeProfileName,
-        viewport: config.defaultViewport,
-      });
-      await adapter.start(target);
-      break;
-    }
-  }
-
-  const chromeOptForSnapshot = config.sources.defaultChrome === "default"
+  const chrome = config.sources.defaultChrome === "default"
     ? undefined
     : config.defaultChrome;
-  const runConfig: RunConfigSnapshot = {
-    target,
-    model: config.models.agent,
-    adapter: adapterType,
-    chrome: chromeOptForSnapshot ? `${chromeOptForSnapshot.host}:${chromeOptForSnapshot.port}` : undefined,
-    turns: config.defaultTurns,
-    viewport: snapshotViewport(adapter),
-  };
 
-  try {
-    const result = await runAgent(card, adapter, client, logger, target, {
-      contextTree,
-      runId,
-      maxTurns: config.defaultTurns,
-      provider: resolveProvider(config.models.agent),
+  return executeRunCore({
+    card,
+    storyPath: scenarioPath,
+    runId: opts.runId,
+    outDir: opts.outDir,
+    client,
+    runSetCtx: opts.runSetCtx,
+    runConfig: {
+      projectRoot: config.projectRoot,
       model: config.models.agent,
-      outDir,
-      viewport: adapterType === "web" ? viewportString(snapshotViewport(adapter)) : undefined,
-    });
-    result.config = runConfig;
-    if (opts.runSetCtx) {
-      result.runSet = opts.runSetCtx;
-    }
-    writeResultFiles(outDir, result);
-    return { runId, outDir, result };
-  } catch (err) {
-    logger.logEvent("run_error", {
-      turn: -1,
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    });
-    throw err;
-  } finally {
-    detach();
-    await adapter.close();
-  }
+      adapter: adapterType,
+      target,
+      turns: config.defaultTurns,
+      chrome,
+      viewport: config.defaultViewport,
+    },
+    hooks: opts.onLogger
+      ? { onLogger: (logger) => opts.onLogger!(logger) }
+      : undefined,
+  });
 }

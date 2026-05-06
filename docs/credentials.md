@@ -60,6 +60,46 @@ secrets handled specially. Treat them like any other fixture.
 The cookie and passkey YAML files below are different —
 they're the only files in this doc that should be gitignored.
 
+## Username and password
+
+The most common case. Most apps have a sign-in form; the agent
+already knows how to find a form and type into it. There is no
+`install_credentials` tool because there does not need to be
+one — the profile supplies the values and the regular browser
+tools do the rest.
+
+A typical profile:
+
+```markdown
+# Alice
+
+Marketing manager at Acme. Likes detailed UIs; hates modal dialogs.
+
+## Credentials
+- Username: alice@acme.test
+- Password: hunter2-test
+```
+
+The card refers to the user by name in prose (*"Sign in as
+Alice; create a draft post"*). The agent picks the profile by
+inference, reads the credentials block, and signs in by
+navigating to the sign-in page (or following a "Sign in" link
+from the home page), typing into the username and password
+fields, and submitting.
+
+If the form layout is unusual — one combined "email or
+username" field, a two-step flow with username first and
+password on a separate page, an MFA challenge to skip past, a
+"remember me" checkbox to leave alone — describe it in plain
+English in a `HOW-TO-LOGIN.md` (or any name) at the root of
+your context tree. The agent reads the whole tree as part of
+its system prompt; the file just needs to exist.
+
+Profile and `HOW-TO-LOGIN.md` files are routine context, not
+secrets handled specially. Treat them like any other fixture.
+The cookie and passkey YAML files below are different —
+they're the only files in this doc that should be gitignored.
+
 ## Where the files live
 
 Cookies and passkeys live alongside a persona in the context
