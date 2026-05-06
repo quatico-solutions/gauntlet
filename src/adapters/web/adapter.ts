@@ -48,11 +48,10 @@ const COOKIES_TAB = 0;
 // a guardrail against runaway tab creation, not a tuning knob.
 const MAX_TAB_DEPTH = 5;
 
-// PRI-1517: hard cap on how long a `return_screenshot` capture is allowed
-// to take. The pre-fix observed failure mode was a 30s hang when the
-// capture was issued mid-navigation; this cap turns that into a fast
-// skip-with-reason instead. Module-level so both `takeReturnScreenshot`
-// (per-skip warn) and `start()` (one-shot startup warn) can reference it.
+// Hard cap on how long a `return_screenshot` capture is allowed to take.
+// The pre-fix observed failure mode was a 30s hang when the capture was
+// issued mid-navigation; this cap turns that into a fast skip-with-reason
+// instead (see PRI-1517).
 const RETURN_SCREENSHOT_TIMEOUT_MS = 5000;
 
 // The default driver opens a dedicated CDP session (pinned WebSocket) for
@@ -334,13 +333,6 @@ export class WebAdapter implements Adapter {
         logger.logEvent("observer_session_failed", { reason });
       }
     }
-
-    // PRI-1517: one-shot discoverability log so the active cap is visible
-    // in any run that uses this code path. Pairs with the per-skip warn
-    // emitted from takeReturnScreenshot when the cap actually fires.
-    console.warn(
-      `[gauntlet] return_screenshot tightened timeout active: ${RETURN_SCREENSHOT_TIMEOUT_MS}ms (PRI-1517)`
-    );
   }
 
   describeTarget(target: string): string {
