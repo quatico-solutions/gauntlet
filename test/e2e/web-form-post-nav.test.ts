@@ -46,7 +46,7 @@ async function serveFormFixture() {
 
 describe("Web e2e — form-post + return_screenshot (PRI-1517 T2b)", () => {
   test(
-    "click(button, return_screenshot:true) returns a truthful result within 6s",
+    "click(button, return_screenshot:true) returns a truthful result well under the 30s regression",
     async () => {
       let WebAdapter: any;
       try {
@@ -108,13 +108,14 @@ describe("Web e2e — form-post + return_screenshot (PRI-1517 T2b)", () => {
         );
         expect(clickResult).toBeDefined();
         expect(clickResult.text).toMatch(/^clicked /);
-        // Acceptable post-fix outcomes: image present (race won) OR
-        // text includes the skip note (race lost). Both are correct
-        // because the underlying CDP race fires nondeterministically.
-        const acceptable =
-          clickResult.image !== undefined ||
-          /\(screenshot unavailable: /.test(clickResult.text);
-        expect(acceptable).toBe(true);
+        // Acceptable post-fix outcomes: image present (race won) XOR
+        // text includes the skip note (race lost). Exactly one must
+        // hold — both true would mean a stale skip-note appended even
+        // after imagery was captured (a real bug class), and both
+        // false would mean the truthful-result contract failed.
+        const hasImage = clickResult.image !== undefined;
+        const hasSkipNote = /\(screenshot unavailable: /.test(clickResult.text);
+        expect(hasImage !== hasSkipNote).toBe(true); // exactly one of the two
       } catch (err: any) {
         if (isChromeUnavailable(err)) {
           console.log(`Skipping web e2e: ${err.message}`);

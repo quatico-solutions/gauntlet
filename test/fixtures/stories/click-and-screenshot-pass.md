@@ -11,4 +11,4 @@ regardless of whether the post-navigation screenshot succeeds.
 ## Acceptance
 
 - Action result starts with "clicked"
-- Tool returns within 6 seconds
+- Tool returns quickly (well under the 30s regression)
