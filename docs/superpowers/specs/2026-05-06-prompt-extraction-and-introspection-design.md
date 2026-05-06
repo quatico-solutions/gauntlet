@@ -43,7 +43,11 @@ This design addresses all three: extract the static prose into `.md` files, add 
 | 5 | Project | caller-supplied path or `.gauntlet/project.md` | optional include |
 | 6 | Context | `src/agent/prompts/context.md` (wrapper) + rendered `.gauntlet/context/` tree | template + data |
 
-The order is deliberate. Persona establishes identity. Scenario gives the task. Evaluation tells the agent how to think about the task. Adapter describes the available affordances. Project layers app-specific guidance on top — placed before Context so that subsequent reading of the context tree happens through that lens. Context comes last because it is the largest and most concrete, and serves as ground truth.
+### Block hygiene and joiner
+
+Each `.md` file is a clean block: **no leading blank lines, no trailing blank lines, no trailing whitespace.** The loader trims trailing whitespace defensively. The joiner (`parts.join("\n\n")`) is the *only* source of inter-block separation. Today's `src/agent/prompts.ts` mixes per-push leading `\n` characters with a `\n` joiner; the refactor must scrub those leading newlines as the prose moves into files. Without this, the joiner switch produces triple-newlines in some places and a snapshot test will quietly accept the byte-changed output.
+
+If the Project block is omitted (no flag, no default file), it contributes nothing to the join — adjacent blocks (Adapter and Context) are separated by a single blank line, not two.
 
 ### Block 3: Evaluation & Reporting
 
@@ -53,7 +57,7 @@ Today's `src/agent/prompts.ts` has two adjacent static blocks: acceptance-criter
 
 Each registered adapter has a corresponding `adapter-{name}.md` file (`adapter-web.md`, `adapter-tui.md`, `adapter-cli.md`). At composition time, the file matching the active adapter's name is included.
 
-Currently only the web adapter has prompt-level guidance (`WEB_SIDE_TRIP_GUIDANCE`); `adapter-cli.md` and `adapter-tui.md` are created with empty or minimal content as honest placeholders. We expect TUI to grow content soon (tmux skills) — having the file already exist removes friction.
+Currently only the web adapter has prompt-level guidance (`WEB_SIDE_TRIP_GUIDANCE`); `adapter-cli.md` and `adapter-tui.md` are created with empty or minimal content as honest placeholders. We expect TUI to grow content soon (tmux skills) — having the file already exist removes friction. A zero-byte adapter file is valid and produces an empty Adapter block (header still printed in introspect, body empty); the loader must not throw on empty contents.
 
 ### Block 5: Project
 
@@ -97,13 +101,14 @@ Files are read with `fs.readFileSync(path.join(import.meta.dir, "prompts", "<nam
 
 ## CLI surface
 
-Two new flags on the `run` subcommand (parsed in `src/cli/args.ts:175` `parseRunArgs`, allow-listed at `src/cli/args.ts:47`):
+Two new flags on the `run` subcommand. Both must be added to the `RUN_ALLOWED` allowlist at `src/cli/args.ts:47` (add `"project-prompt"` and `"show-prompt-and-exit"`) and parsed in `parseRunArgs` at `src/cli/args.ts:175`.
 
 ### `--project-prompt <path>`
 
 - Value: filesystem path to a `.md` file (any extension accepted, but `.md` is the convention).
 - If the file does not exist or is unreadable, `gauntlet run` exits non-zero with a clear message naming the path.
 - Threaded through `RunCommandOptions` → `runOne` → `executeRunCore` → `buildSystemPrompt(..., projectPrompt)`.
+- Two-token form: confirm the existing `extractPositional` correctly skips `--project-prompt`'s value when locating the positional card argument. The current parser handles flag-then-value-then-positional ordering; verify with a parser unit test.
 
 ### `--show-prompt-and-exit`
 
@@ -120,7 +125,9 @@ The flag is intentionally verbose (`--show-prompt-and-exit`, not `--introspect`)
 
 ## Introspect output format
 
-Stdout, one block per composition step, in composition order:
+The introspect output covers everything that materially shapes agent behavior on the *first* turn: the system prompt blocks, the tool surface the agent has access to, and the kickoff user message. Provider-level wrapping (Anthropic `cache_control` blocks, OpenAI system-role envelope) is structural, not behavioral, and is omitted to keep the output pipe-friendly; if reviewers want byte-exact provider payloads later, that's a separate `--dump-provider-payload` flag.
+
+Stdout, in order:
 
 ```
 ─── Persona ──────────────  src/agent/prompts/persona.md
@@ -144,13 +151,26 @@ Story: Matt signs in
 [wrapper prose]
 
 [rendered context tree]
+
+─── Tools ────────────────  (from adapter: web)
+- click(selector): click an element matching a CSS selector
+- type(selector, text): type text into an input
+- screenshot(): capture the current viewport
+- new_tab(url): open a URL in a new tab
+- close_tab(): close the active tab
+- report(verdict, observations): submit final verdict
+[one line per tool: name(signature) — first line of description]
+
+─── Initial user message ──  (from adapter.describeTarget)
+Begin testing http://localhost:3000 in a Chromium browser at 1280x800.
+[exact string the runtime sends as the first user turn]
 ```
 
 Rules:
 
-- Every block in the composition table appears, in order, every time. Skipped blocks (e.g., no Project) print the header with `(none)` and no body. This makes diffs between two runs structurally comparable.
-- Each header carries provenance: the file path for static includes, the data source for templated blocks, or `(caller-supplied)` for Project.
-- The body is the literal text that would be sent to the model — no truncation, no summary.
+- Every block in this layout appears, in order, every time. Skipped blocks (e.g., no Project) print the header with `(none)` and no body. This makes diffs between two runs structurally comparable.
+- Each header carries provenance: the file path for static includes, the data source for templated blocks, `(caller-supplied)` for Project, `(from adapter: <name>)` for Tools, `(from adapter.describeTarget)` for the initial user message.
+- The body for `Persona`, `Evaluation`, `Adapter`, `Project`, and `Context` is the literal text that would be sent to the model — no truncation, no summary. The `Tools` body is a generated summary, not the literal JSON Schema.
 - Output is plain text, no ANSI color, no escape sequences. Pipe-friendly.
 - Headers use `─` (U+2500) box-drawing by default. Downgrade to ASCII `---` when `NO_COLOR` is set in the environment or `process.stdout.isTTY` is false (i.e., output is piped or redirected). Same convention as the existing `PrettyRenderer`.
 
@@ -167,13 +187,18 @@ Rules:
 
 ## Test surface
 
-- Unit: `buildSystemPrompt` produces the same final string as today's implementation when given equivalent inputs and no Project. (Snapshot test against current output as a refactor safety net.)
-- Unit: `buildSystemPrompt` with a Project string inserts it in position 5 between Adapter and Context.
-- Unit: Loader throws a clear error when a required file is missing.
-- Integration: `gauntlet run --show-prompt-and-exit ./test-card.md` exits 0 and prints all six section headers.
+**Snapshot ordering — hard sequencing requirement.** Before any prose moves out of `src/agent/prompts.ts`, the implementation plan's first task captures the byte output of `buildSystemPrompt` from `main` against a fixed card + adapter + context tree, commits the captured string as `test/agent/__snapshots__/prompt-baseline.txt`, and adds a test that asserts byte-equality. Every subsequent refactor task runs against this baseline. Without this ordering, the snapshot tests whatever the refactor wrote, not what was there.
+
+- Unit: `buildSystemPrompt` with no Project produces byte-identical output to the pre-refactor baseline snapshot.
+- Unit: `buildSystemPrompt` with a Project string inserts it in position 5 between Adapter and Context, separated by exactly `\n\n`.
+- Unit: Loader throws a clear error when a required file (`persona.md`, `evaluation.md`, `context.md`, or `adapter-{name}.md` for the active adapter) is missing.
+- Unit: Loader accepts a zero-byte adapter file without throwing; produces an empty body.
+- Unit: Argument parser correctly extracts the positional card path when `--project-prompt <path>` precedes it.
+- Evidence-log preservation: `logSystemPrompt` (`src/agent/agent.ts:126`) writes to the run's evidence log. The refactor must preserve the on-disk format; either the existing `test/evidence/logger.test.ts` keeps passing unchanged, or it is updated as a deliberate format change that's noted in the implementation plan.
+- Integration: `gauntlet run --show-prompt-and-exit ./test-card.md` exits 0 and prints all section headers (Persona, Scenario, Evaluation, Adapter, Project, Context, Tools, Initial user message).
 - Integration: `gauntlet run --show-prompt-and-exit ./test-card.md --project-prompt ./extra.md` includes the Project block contents.
 - Integration: `gauntlet run --show-prompt-and-exit` without a card exits non-zero with a usage error.
-- Bun-binary smoke: the compiled binary loads `.md` files from its bundle (verifies `import.meta.dir` packaging).
+- Bun-binary smoke: build the binary with `bun build --compile`, copy it to a directory *outside* the build tree, run `--show-prompt-and-exit ./test-card.md` from that directory, assert exit 0 and a non-empty Persona block. This verifies `import.meta.dir` resolves correctly when the binary runs detached from its source tree.
 
 ## Out of scope / future
 
