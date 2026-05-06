@@ -115,6 +115,33 @@ export interface WebAdapterOptions {
   chromeSession?: ChromeSession;
 }
 
+export interface ScreenshotResult {
+  image?: ToolResult["image"];
+  imagePath?: string;
+  screenshotSkipped?: string;
+}
+
+export function composeResult(
+  text: string,
+  screenshot: ScreenshotResult
+): ToolResult {
+  if (screenshot.screenshotSkipped) {
+    return {
+      text: `${text} (screenshot unavailable: ${screenshot.screenshotSkipped})`,
+    };
+  }
+  // Always pass image + imagePath together — takeReturnScreenshot sets
+  // them as a unit. If imagePath is set without image, that would be a
+  // bug worth surfacing rather than silently dropping.
+  return {
+    text,
+    ...(screenshot.image !== undefined && {
+      image: screenshot.image,
+      imagePath: screenshot.imagePath,
+    }),
+  };
+}
+
 export class WebAdapter implements Adapter {
   readonly name = "web";
   private remote: boolean;

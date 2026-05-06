@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { WebAdapter } from "../../../src/adapters/web/adapter";
+import { WebAdapter, composeResult } from "../../../src/adapters/web/adapter";
 import { EvidenceLogger } from "../../../src/evidence/logger";
 
 describe("WebAdapter", () => {
@@ -975,5 +975,42 @@ describe("WebAdapter", () => {
       expect(adapter.getChromeSession().getActivePort()).toBe(reference.getActivePort());
       expect(adapter2.getChromeSession().getActivePort()).toBe(reference.getActivePort());
     });
+  });
+});
+
+describe("composeResult", () => {
+  test("success: returns text + image + imagePath", () => {
+    const screenshot = {
+      image: { data: "base64data", mediaType: "image/png" as const },
+      imagePath: "/tmp/foo.png",
+    };
+    const result = composeResult("clicked button", screenshot);
+    expect(result.text).toBe("clicked button");
+    expect(result.image).toEqual(screenshot.image);
+    expect(result.imagePath).toBe("/tmp/foo.png");
+  });
+
+  test("skipped: appends '(screenshot unavailable: <reason>)' to text, no image", () => {
+    const result = composeResult("clicked button", {
+      screenshotSkipped: "CDP command timeout: Page.captureScreenshot",
+    });
+    expect(result.text).toBe(
+      "clicked button (screenshot unavailable: CDP command timeout: Page.captureScreenshot)"
+    );
+    expect(result.image).toBeUndefined();
+    expect(result.imagePath).toBeUndefined();
+  });
+
+  test("no screenshot requested: returns text only", () => {
+    const result = composeResult("clicked button", {});
+    expect(result.text).toBe("clicked button");
+    expect(result.image).toBeUndefined();
+    expect(result.imagePath).toBeUndefined();
+  });
+
+  test("preserves action text verbatim regardless of screenshot outcome", () => {
+    const text = "Error: element not found (button:contains('Foo'))";
+    const result = composeResult(text, { screenshotSkipped: "boom" });
+    expect(result.text).toBe(`${text} (screenshot unavailable: boom)`);
   });
 });
