@@ -24,7 +24,7 @@ Gauntlet-native and not synced from upstream.
 |---|---|
 | Upstream repo | `https://github.com/obra/superpowers-chrome` |
 | Fork point | `70b2c6c` (v1.8.0) — 2026-02-25 |
-| Last synced upstream HEAD | `81bc7b0` (v1.12.0) — 2026-04-14 |
+| Last synced upstream HEAD | `a9e2d0c` (v2.0.0) — 2026-05-06 |
 
 > Bump "last synced upstream HEAD" each time a sync cycle completes.
 
@@ -44,7 +44,10 @@ Grep `chrome-ws-lib.js` for `GAUNTLET DIVERGENCE` to find these in-line.
    (`CHROME_DEBUG_HOST`, `CHROME_DEBUG_PORT`, `CHROME_DEBUG_BASE`,
    `WS_OVERRIDE_ENABLED`) are re-exported as module-load snapshots for
    compat, so unmodified upstream code that destructures them keeps
-   working.
+   working. As of upstream `51d0d68` (post-PR-#33) upstream itself
+   removed those legacy exports; Gauntlet preserves them deliberately —
+   that removal is the one upstream commit explicitly NOT ported by
+   the 2026-05-06 sync.
 
 3. **`pickFreePort`** replaces upstream's `findAvailablePort` range-scan
    (9222..12111). The scan raced with co-tenants on 9222. See the
@@ -69,49 +72,44 @@ Grep `chrome-ws-lib.js` for `GAUNTLET DIVERGENCE` to find these in-line.
    - `onCdpEvent(tabIndex, handler)` / `offCdpEvent(tabIndex)` — raw CDP
      event subscription used by screencast streaming.
 
-6. **`createSession()` factory wrap** (PRI-1436). Upstream's
-   `chrome-ws-lib.js` is a CommonJS singleton — the `let activePort`,
-   `let chromeProcess`, `chromeProfileName`, `connectionPool` Map, and
-   `consoleMessages` Map all live at module scope. Under
-   `gauntlet serve` this meant two concurrent web runs shared one
-   activePort and one Chrome process and stomped each other. We wrap
-   the entire file body in
-   `function createSession({ host, port } = {}) { … return { … } }` and
-   change the only top-level export to `{ createSession }`. Each
-   WebAdapter calls `createSession()` from its constructor to get a
-   private state-bag. `host-override.js` got the matching
-   `createOverride({ host, port })` factory — the legacy module-level
-   getters and load-time snapshot constants (CHROME_DEBUG_HOST etc.)
-   are kept verbatim for upstream-compat.
-
-   **Sync recipe note:** paste upstream changes inside the closure.
-   The closure body is intentionally NOT reindented — the `{` and `}`
-   sit at column 0 and the body keeps upstream's column-0 indentation,
-   so a hand-port from upstream is still a near-line-by-line
-   correspondence. The only structural change is the `return { … }`
-   at the bottom (replacing `module.exports = { … }`) and the closing
-   `}` on the line after.
-
-   **What stayed outside the closure** (stateless helpers/classes):
-   the `require(...)` block at the top, the `WebSocketClient` class,
-   `pickFreePort`/`CHROME_VERBOSE` constants. KEY_DEFINITIONS,
-   SHIFT_SYMBOLS, parseContains, charToKeyDef, and chromeHttpAt are
-   inside the closure even though they're stateless — moving them out
-   would have churned line numbers across the rest of the file with
-   no behavioral benefit. Each session gets a fresh closure-bound copy;
-   the cost is negligible.
-
-   **Regression gate:**
-   `test/adapters/web/chrome-ws-lib-isolation.test.ts` exercises this
-   invariant. If it ever fails, we've reintroduced the PRI-1436 bug.
-
-7. **`screenshot()` accepts an optional 5th parameter `opts = {}`** (PRI-1517).
+6. **`screenshot()` accepts an optional 5th parameter `opts = {}`** (PRI-1517).
    `opts.timeoutMs` threads through to the `Page.captureScreenshot`
    `sendCdpCommand` call's timeout argument. When `undefined`, the
    underlying `sendCdpCommand` 30s default applies — so all upstream
    callers stay green. Marked with a `// PRI-1517` comment above the
    function. Used by Gauntlet's adapter `takeReturnScreenshot` to cap
    bundled-screenshot wall-time at 5s instead of 30s.
+
+> **Historical: former Divergence #6 (`createSession()` / `createOverride()`
+> factory wrap, PRI-1512).** Upstreamed as
+> [PR #33](https://github.com/obra/superpowers-chrome/pull/33) and merged
+> 2026-05-05; as of `a9e2d0c` it's the upstream baseline. The marker
+> comments in `chrome-ws-lib.js` and `host-override.js` are kept (with
+> reworded rationale) so future syncers still see the
+> "paste upstream changes inside this closure" recipe note — the closure
+> body is intentionally column-0 unindented for diff readability. Note
+> upstream's `51d0d68` removed the legacy `CHROME_DEBUG_HOST` /
+> `CHROME_DEBUG_PORT` / `CHROME_DEBUG_BASE` / `WS_OVERRIDE_ENABLED` /
+> top-level `rewriteWsUrl` exports; Gauntlet preserves them as part of
+> Divergence #2 above and did NOT port that removal.
+
+## Deferred: incremental extraction to `lib/*.js`
+
+Between `81bc7b0` (prior sync) and `a9e2d0c` (this sync), upstream moved its
+monolithic `chrome-ws-lib.js` from ~3500 lines into a 234-line orchestrator
+plus ~25 sibling files under `skills/browsing/lib/`. That's effectively the
+flatten-mode migration the team has discussed: once Gauntlet adopts the same
+shape, future upstream syncs get materially smaller per-file deltas (most of
+upstream's ongoing work is now per-extracted-file bugfixes, not whole-file
+rewrites).
+
+The 2026-05-06 sync deliberately did NOT do that migration — the goal was to
+stay scoped to ride-along bugfixes. The decision on flattening is for the
+team to make separately. The 22 `Extract X into lib/Y` commits, the 2 page-
+script extractions, the biome/lint cleanups that ride on top, and
+`51d0d68` (which is incompatible with Divergence #2) are all unported as a
+group. When the flatten lands, those upstream commits become mechanical
+follow-ups and the divergence list in this file should shrink.
 
 ## Sync recipe
 

@@ -23,7 +23,8 @@
 
 // PRI-1436: per-session imports moved inside `createSession()` below.
 // `hostOverride` and `activePort` are now per-instance — see the
-// `GAUNTLET DIVERGENCE: createSession() factory` block.
+// `createSession() factory wrap` block. (PR #33 made this the upstream
+// baseline; see docs/upstream-sync.md for context.)
 const { createOverride } = require('./host-override');
 
 // ===== GAUNTLET DIVERGENCE START: pickFreePort import =====
@@ -142,21 +143,18 @@ function ensureProcessHandlersRegistered() {
   process.on('SIGTERM', () => { runAll(); process.exit(0); });
 }
 
-// ===== GAUNTLET DIVERGENCE START: createSession() factory =====
-// PRI-1436: Wraps the entire file body in a factory so each WebAdapter gets
-// a private state-bag — fixes concurrent web runs in `gauntlet serve` that
-// were sharing module-level globals (activePort, chromeProcess, profile
-// name, connection pool, console messages, hostOverride). Future upstream
-// syncs: paste upstream changes inside this closure. The internal API
-// shape is unchanged from upstream — `module.exports` at the bottom is now
-// `return { ... }` with the same flat shape, and the factory itself is the
-// sole top-level export.
+// ===== createSession() factory wrap =====
+// PRI-1436 origin, since contributed upstream as PR #33 and merged
+// 2026-05-05. As of upstream a9e2d0c (the sync state recorded in
+// docs/upstream-sync.md), this factory is the upstream baseline, not a
+// Gauntlet-specific divergence — see the "Historical" note in
+// docs/upstream-sync.md where Divergence #6 used to live.
 //
-// Indentation: the closure body is intentionally NOT reindented. Diff
-// readability against upstream matters more than indentation cosmetics —
-// the closure's `{` and `}` sit at column 0 and the body keeps its
-// original indentation. When syncing, paste upstream changes inside this
-// closure exactly as they appear upstream.
+// Why the marker is still here: the closure-body indentation is
+// intentionally NOT reindented (closure `{` and `}` at column 0, body
+// keeps upstream's indentation) so that future hand-ports from upstream
+// stay near-line-by-line. When syncing, paste upstream changes inside
+// this closure exactly as they appear upstream.
 function createSession({ host, port } = {}) {
 const hostOverride = createOverride({ host, port });
 const { rewriteWsUrl } = hostOverride;
@@ -3669,6 +3667,6 @@ return {
   offCdpEvent,
 };
 }
-// ===== GAUNTLET DIVERGENCE END (createSession factory) =====
+// ===== createSession() factory wrap END =====
 
 module.exports = { createSession };

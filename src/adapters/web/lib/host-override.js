@@ -61,16 +61,17 @@ function rewriteWsUrl(originalUrl, host, port) {
   }
 }
 
-// ===== GAUNTLET DIVERGENCE START: createOverride() factory =====
-// PRI-1436: WebAdapter instances each call createOverride() to get a private
-// state-bag (host/port/overrideEnabled). Without this, two concurrent web
-// runs in `gauntlet serve` shared the module-level `debugHost`/`debugPort`
-// and stomped each other's endpoint. The legacy mutable getters above and
-// the load-time snapshot constants below are kept for upstream-compat:
-// unmodified upstream code that destructures `CHROME_DEBUG_HOST` etc. or
-// calls the top-level `getHost()` keeps working. New Gauntlet callers
-// should use `createOverride({ host, port })` and operate on the returned
-// instance.
+// createOverride() factory: WebAdapter instances each call this to get a
+// private state-bag (host/port/overrideEnabled). PRI-1436 origin, since
+// contributed upstream as PR #33 and merged 2026-05-05. As of upstream
+// a9e2d0c (the sync state recorded in docs/upstream-sync.md), this
+// factory is the upstream baseline, not a Gauntlet-specific divergence.
+//
+// The legacy mutable getters above and the load-time snapshot constants
+// below are kept as Gauntlet-specific divergence #2 — upstream's
+// 51d0d68 removed them and we deliberately did not port that removal,
+// since callers that destructure CHROME_DEBUG_HOST/PORT/BASE/
+// WS_OVERRIDE_ENABLED keep working across syncs.
 //
 // Defaults: if neither `host` nor `port` is supplied, the instance seeds
 // from process.env.CHROME_WS_HOST / CHROME_WS_PORT (matching the legacy
@@ -145,7 +146,7 @@ function createOverride({ host, port } = {}) {
     rewriteWsUrl,
   };
 }
-// ===== GAUNTLET DIVERGENCE END =====
+// ===== createOverride() factory END =====
 
 module.exports = {
   // Gauntlet API — runtime-mutable endpoint (legacy module-level singleton).
