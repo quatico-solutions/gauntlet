@@ -1609,6 +1609,21 @@ async function selectOption(tabIndexOrWsUrl, selector, value, index = 0) {
 // =============================================================================
 
 /**
+ * Inspect a CDP `Runtime.evaluate` reply and throw if the page-side JS threw
+ * or a Promise rejected. Without this, callers silently see `undefined`
+ * instead of the actual error — which has caused real bugs (waitForElement
+ * timeouts swallowed, evaluate returning {} for thrown errors). Use after
+ * every `sendCdpCommand(...,'Runtime.evaluate',...)`.
+ */
+function throwIfExceptionDetails(result) {
+  if (!result || !result.exceptionDetails) return;
+  const desc = result.exceptionDetails.exception?.description
+    || result.exceptionDetails.text
+    || 'unknown evaluation error';
+  throw new Error(`evaluate failed: ${desc}`);
+}
+
+/**
  * Legacy evaluate - may return undefined for complex objects.
  * Awaits promises so async expressions (fetch, async IIFEs) resolve before
  * returning — matches evaluateJson()'s behavior.
@@ -1620,6 +1635,7 @@ async function evaluate(tabIndexOrWsUrl, expression) {
     awaitPromise: true,
     returnByValue: true
   });
+  throwIfExceptionDetails(result);
   return result.result.value;
 }
 
@@ -1661,7 +1677,7 @@ async function evaluateJson(tabIndexOrWsUrl, expression) {
     returnByValue: true,
     awaitPromise: true
   });
-
+  throwIfExceptionDetails(result);
   return result.result.value;
 }
 
@@ -1674,6 +1690,7 @@ async function evaluateRaw(tabIndexOrWsUrl, expression) {
     expression,
     returnByValue: false
   });
+  throwIfExceptionDetails(result);
   return result.result;
 }
 
