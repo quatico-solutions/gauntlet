@@ -48,10 +48,16 @@ const RUN_ALLOWED = new Set([
   "target", "out", "adapter", "model", "chrome", "project-dir",
   "turns", "viewport", "save-screencast",
   "silent", "format", "no-color", "passes",
+  "project-prompt",
+  "show-prompt-and-exit",
 ]);
 // Everything `run` accepts, minus `--out` — batch doesn't invent a
 // batch-level results dir; each card writes to its default per-run dir.
-const BATCH_ALLOWED = new Set([...RUN_ALLOWED].filter((f) => f !== "out"));
+// `--project-prompt` and `--show-prompt-and-exit` are excluded; batch
+// may get them in a future task.
+const BATCH_ALLOWED = new Set([...RUN_ALLOWED].filter(
+  (f) => f !== "out" && f !== "project-prompt" && f !== "show-prompt-and-exit",
+));
 const VALIDATE_ALLOWED = new Set<string>([]);
 const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
 const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "turns", "viewport", "save-screencast"]);
@@ -80,6 +86,8 @@ export interface RunArgs {
   format: "pretty" | "jsonl" | undefined;
   noColor: boolean;
   passes: number;
+  projectPromptPath?: string;
+  showPromptAndExit: boolean;
   cli: CliArgsInput;
 }
 
@@ -211,6 +219,8 @@ function parseRunArgs(args: string[]): RunArgs {
     format,
     noColor: flags["no-color"] === "true",
     passes: parsePasses(flags.passes),
+    projectPromptPath: flags["project-prompt"],
+    showPromptAndExit: flags["show-prompt-and-exit"] === "true",
     cli: {
       projectRoot: flags["project-dir"],
       chrome: flags.chrome,
@@ -416,6 +426,8 @@ Commands:
     --silent             Suppress the streaming transcript (default: stream)
     --format <mode>      Stream format: pretty | jsonl (default: auto by TTY)
     --no-color           Disable ANSI color (also respects NO_COLOR env var)
+    --project-prompt <path> Caller-supplied augmentation prompt (overrides .gauntlet/project.md)
+    --show-prompt-and-exit  Print the composed system prompt with provenance and exit (no Chrome, no LLM call)
 
   batch <story.md> [more.md ...]  Run multiple cards serially
     --target <url>       (required) Application under test

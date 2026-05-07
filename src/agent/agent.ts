@@ -5,6 +5,7 @@ import type { StoryCard } from "../format/story-card";
 import type { VetResult, VetStatus } from "../types";
 import { RESULT_SCHEMA_VERSION } from "../types";
 import { buildSystemPrompt } from "./prompts";
+import { buildInitialUserMessage } from "./initial-message";
 import { parseReportResult } from "./validators";
 
 const DEFAULT_MAX_TURNS = 50;
@@ -48,6 +49,10 @@ export interface AgentOptions {
    * Undefined for non-web adapters. Surfaced on the run_start `adapter`
    * line in the CLI stream. */
   viewport?: string;
+  /** Optional Project augmentation block, threaded into the system prompt
+   * between the Adapter and Context blocks. Resolved upstream by
+   * `resolveProjectPrompt` in `src/runs/orchestrator.ts`. */
+  projectPrompt?: string;
 }
 
 const REPORT_TOOL: ToolDefinition = {
@@ -107,7 +112,12 @@ export async function runAgent(
 ): Promise<VetResult> {
   const startTime = Date.now();
   const { runId } = options;
-  const systemPrompt = buildSystemPrompt(card, options.contextTree, adapter.name);
+  const systemPrompt = buildSystemPrompt(
+    card,
+    options.contextTree,
+    adapter.name,
+    options.projectPrompt,
+  );
   const tools = [...adapter.toolDefinitions(), REPORT_TOOL];
 
   logger.logRunStart({
@@ -125,10 +135,7 @@ export async function runAgent(
   });
   logger.logSystemPrompt(systemPrompt);
 
-  let initialMessage = "Begin testing. Use the available tools to interact with the application.";
-  if (target) {
-    initialMessage += `\n\n${adapter.describeTarget(target)}`;
-  }
+  const initialMessage = buildInitialUserMessage(adapter, target);
 
   logger.logUserMessage(0, initialMessage);
 
