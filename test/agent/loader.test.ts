@@ -1,42 +1,45 @@
 import { describe, test, expect } from "bun:test";
-import { writeFileSync, unlinkSync } from "fs";
-import { join } from "path";
-import { loadPromptFile } from "../../src/agent/prompts/loader";
-
-const PROMPTS_DIR = join(import.meta.dir, "..", "..", "src", "agent", "prompts");
+import { loadPromptFile, BUNDLED_PROMPT_NAMES } from "../../src/agent/prompts/loader";
 
 describe("loadPromptFile", () => {
-  test("reads an existing file and trims trailing whitespace", () => {
-    const path = join(PROMPTS_DIR, "_test-trim.md");
-    writeFileSync(path, "hello world\n\n  \n", "utf-8");
-    try {
-      expect(loadPromptFile("_test-trim")).toBe("hello world");
-    } finally {
-      unlinkSync(path);
+  test("loads each bundled prompt file by name", () => {
+    for (const name of BUNDLED_PROMPT_NAMES) {
+      const text = loadPromptFile(name);
+      // Two valid outcomes: a non-empty string with no trailing whitespace,
+      // or "" for the placeholder adapter files (cli, tui).
+      expect(typeof text).toBe("string");
+      expect(text).toBe(text.replace(/\s+$/, ""));
     }
   });
 
-  test("returns empty string for a zero-byte file (no throw)", () => {
-    const path = join(PROMPTS_DIR, "_test-empty.md");
-    writeFileSync(path, "", "utf-8");
-    try {
-      expect(loadPromptFile("_test-empty")).toBe("");
-    } finally {
-      unlinkSync(path);
-    }
+  test("persona file has the QA-tester opener", () => {
+    expect(loadPromptFile("persona")).toMatch(/^You are a thorough QA tester\./);
+  });
+
+  test("evaluation file has the Reporting header", () => {
+    expect(loadPromptFile("evaluation")).toMatch(/## Reporting/);
+  });
+
+  test("context file preserves the {{TREE_LISTING}} placeholder", () => {
+    expect(loadPromptFile("context")).toContain("{{TREE_LISTING}}");
+  });
+
+  test("adapter-web file has the side-trip guidance", () => {
+    expect(loadPromptFile("adapter-web")).toMatch(/Side trips for sign-in flows/);
+  });
+
+  test("adapter-cli and adapter-tui are empty placeholders", () => {
+    expect(loadPromptFile("adapter-cli")).toBe("");
+    expect(loadPromptFile("adapter-tui")).toBe("");
   });
 
   test("throws a clear error naming the missing file", () => {
-    expect(() => loadPromptFile("_does-not-exist")).toThrow(/_does-not-exist\.md/);
+    expect(() => loadPromptFile("does-not-exist")).toThrow(/does-not-exist\.md/);
   });
 
-  test("does not strip leading whitespace inside content (only trailing)", () => {
-    const path = join(PROMPTS_DIR, "_test-leading.md");
-    writeFileSync(path, "  preserved\n", "utf-8");
-    try {
-      expect(loadPromptFile("_test-leading")).toBe("  preserved");
-    } finally {
-      unlinkSync(path);
-    }
+  test("BUNDLED_PROMPT_NAMES exposes all six known names", () => {
+    expect(new Set(BUNDLED_PROMPT_NAMES)).toEqual(
+      new Set(["persona", "evaluation", "context", "adapter-web", "adapter-cli", "adapter-tui"]),
+    );
   });
 });

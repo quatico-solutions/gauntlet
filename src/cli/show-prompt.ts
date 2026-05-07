@@ -97,7 +97,10 @@ export function showPromptAndExit(opts: ShowPromptOptions): void {
   out.push("");
 
   if (contextTree.length > 0) {
-    out.push(h("Context", `src/agent/prompts/context.md + ${contextRoot}`));
+    // At runtime, executeRunCore reads from a snapshotted copy under
+    // <outDir>/inputs/context — contents identical by construction. The
+    // path shown here is the project-root source of truth.
+    out.push(h("Context", `src/agent/prompts/context.md + ${contextRoot} (snapshotted at run time)`));
     out.push(loadPromptFile("context").replace("{{TREE_LISTING}}", contextTree));
   } else {
     out.push(h("Context", "(none)"));

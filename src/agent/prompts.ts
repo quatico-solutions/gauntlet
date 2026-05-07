@@ -2,12 +2,6 @@ import type { StoryCard } from "../format/story-card";
 import { loadPromptFile } from "./prompts/loader";
 import { isAdapterType } from "../adapters/adapter";
 
-// Exported for tests that want to diff the prose against the spec.
-export function getContextSectionTemplate(): string {
-  return loadPromptFile("context");
-}
-export const CONTEXT_SECTION_TEMPLATE = getContextSectionTemplate();
-
 /**
  * Build the Scenario blocks (Story Card + Acceptance Criteria) for a card.
  * Returned as an ordered array of strings where each entry is a `\n\n`-

@@ -5,9 +5,12 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const REPO_ROOT = join(import.meta.dir, "..", "..");
-const SHOULD_RUN = process.env.RUN_BINARY_SMOKE === "1";
 
-describe.if(SHOULD_RUN)("compiled binary --show-prompt-and-exit", () => {
+// This test compiles a real binary and runs it from a foreign cwd. It catches
+// asset-bundling regressions (e.g., import.meta.dir vs. text-imports for the
+// .md prompt files) that bun run alone cannot. ~1s warm, ~5s cold — cheap
+// enough to be ungated. If CI ever has a reason to skip, gate it there.
+describe("compiled binary --show-prompt-and-exit", () => {
   test("works from a directory outside the build tree", () => {
     const buildDir = mkdtempSync(join(tmpdir(), "gauntlet-bin-build-"));
     const runDir = mkdtempSync(join(tmpdir(), "gauntlet-bin-run-"));
