@@ -1,5 +1,6 @@
 import type { StoryCard } from "../format/story-card";
 import { loadPromptFile } from "./prompts/loader";
+import { isAdapterType } from "../adapters/adapter";
 
 // Exported for tests that want to diff the prose against the spec.
 export function getContextSectionTemplate(): string {
@@ -38,20 +39,14 @@ export function buildSystemPrompt(
 
   parts.push(loadPromptFile("evaluation"));
 
-  // PRI-1439: per-adapter overlay (e.g. web side-trip guidance). Other
-  // first-party adapters (cli, tui) have empty .md files. Unknown adapter
-  // names (e.g. test fakes) have no overlay file and contribute nothing —
-  // matches the pre-extraction behavior where only "web" was special-cased.
-  if (adapterName) {
-    try {
-      const adapterPrompt = loadPromptFile(`adapter-${adapterName}`);
-      if (adapterPrompt.length > 0) {
-        parts.push(adapterPrompt);
-      }
-    } catch (err) {
-      if (!(err instanceof Error) || !err.message.startsWith("Required prompt file not found:")) {
-        throw err;
-      }
+  // Per-adapter overlay (e.g. web side-trip guidance). Whitelisted to
+  // the known adapter types so a missing adapter-{name}.md for a real
+  // adapter is a hard error (per spec), while test-fake adapter names
+  // (e.g. "test" in event-stream tests) silently contribute nothing.
+  if (adapterName && isAdapterType(adapterName)) {
+    const adapterPrompt = loadPromptFile(`adapter-${adapterName}`);
+    if (adapterPrompt.length > 0) {
+      parts.push(adapterPrompt);
     }
   }
 
