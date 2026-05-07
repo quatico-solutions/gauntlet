@@ -1805,13 +1805,12 @@ async function getAttribute(tabIndexOrWsUrl, selector, attrName) {
 }
 
 async function waitForElement(tabIndexOrWsUrl, selector, timeout = 5000) {
-  const wsUrl = await resolveWsUrl(tabIndexOrWsUrl);
   const js = `
     new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Timeout')), ${timeout});
+      const t = setTimeout(() => reject(new Error('waitForElement timeout: ' + ${JSON.stringify(selector)})), ${timeout});
       const check = () => {
         if (${getElementSelector(selector)}) {
-          clearTimeout(timeout);
+          clearTimeout(t);
           resolve(true);
         } else {
           setTimeout(check, 100);
@@ -1820,20 +1819,16 @@ async function waitForElement(tabIndexOrWsUrl, selector, timeout = 5000) {
       check();
     })
   `;
-  await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
-    expression: js,
-    awaitPromise: true
-  });
+  await evaluate(tabIndexOrWsUrl, js);
 }
 
 async function waitForText(tabIndexOrWsUrl, text, timeout = 5000) {
-  const wsUrl = await resolveWsUrl(tabIndexOrWsUrl);
   const js = `
     new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Timeout')), ${timeout});
+      const t = setTimeout(() => reject(new Error('waitForText timeout: ' + ${JSON.stringify(text)})), ${timeout});
       const check = () => {
         if (document.body.textContent.includes(${JSON.stringify(text)})) {
-          clearTimeout(timeout);
+          clearTimeout(t);
           resolve(true);
         } else {
           setTimeout(check, 100);
@@ -1842,10 +1837,7 @@ async function waitForText(tabIndexOrWsUrl, text, timeout = 5000) {
       check();
     })
   `;
-  await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
-    expression: js,
-    awaitPromise: true
-  });
+  await evaluate(tabIndexOrWsUrl, js);
 }
 
 // GAUNTLET DIVERGENCE (PRI-1517): optional opts.timeoutMs threads to
