@@ -7,20 +7,6 @@ export function getContextSectionTemplate(): string {
 }
 export const CONTEXT_SECTION_TEMPLATE = getContextSectionTemplate();
 
-// PRI-1439: side-trip tab guidance for the web adapter. Surfaces the
-// new_tab/close_tab tool pair as the right answer for the OTP /
-// password-manager / 2FA-portal case, and explicitly steers off
-// `navigate`, which would trash the original page's state.
-const WEB_SIDE_TRIP_GUIDANCE =
-  "\n## Side trips for sign-in flows\n\n" +
-  "If a sign-in asks you to fetch a code from email, retrieve a password " +
-  "from a password manager, or visit another site for a verification " +
-  "step, use `new_tab(url)` to open that site in a side tab. Work there " +
-  "as you normally would. When done, call `close_tab` to return to the " +
-  "original page — its form values, cookies, and scroll position will " +
-  "be intact. Do NOT use `navigate` for side trips: it resets the " +
-  "original page state and you will have to start the sign-in over.";
-
 export function buildSystemPrompt(
   card: StoryCard,
   contextTree?: string,
@@ -63,8 +49,11 @@ Include ALL observations, not just those related to the acceptance criteria.`);
 
   // PRI-1439: web-only side-trip guidance. Other adapters (cli, tui)
   // don't have new_tab/close_tab and should not be told to use them.
-  if (adapterName === "web") {
-    parts.push(WEB_SIDE_TRIP_GUIDANCE);
+  if (adapterName) {
+    const adapterPrompt = loadPromptFile(`adapter-${adapterName}`);
+    if (adapterPrompt.length > 0) {
+      parts.push(adapterPrompt);
+    }
   }
 
   // Context section — last block, only when populated. Spec §4.4.
