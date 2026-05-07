@@ -12,6 +12,7 @@ export function buildSystemPrompt(
   card: StoryCard,
   contextTree?: string,
   adapterName?: string,
+  projectPrompt?: string,
 ): string {
   const parts: string[] = [];
 
@@ -52,6 +53,12 @@ export function buildSystemPrompt(
     if (adapterPrompt.length > 0) {
       parts.push(adapterPrompt);
     }
+  }
+
+  // Project — caller-supplied augmentation. See spec
+  // 2026-05-06-prompt-extraction-and-introspection-design.md.
+  if (projectPrompt && projectPrompt.length > 0) {
+    parts.push(projectPrompt);
   }
 
   // Context section — last block, only when populated. Spec §4.4.
