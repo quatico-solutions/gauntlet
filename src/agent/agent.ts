@@ -5,6 +5,7 @@ import type { StoryCard } from "../format/story-card";
 import type { VetResult, VetStatus } from "../types";
 import { RESULT_SCHEMA_VERSION } from "../types";
 import { buildSystemPrompt } from "./prompts";
+import { buildInitialUserMessage } from "./initial-message";
 import { parseReportResult } from "./validators";
 
 const DEFAULT_MAX_TURNS = 50;
@@ -134,10 +135,7 @@ export async function runAgent(
   });
   logger.logSystemPrompt(systemPrompt);
 
-  let initialMessage = "Begin testing. Use the available tools to interact with the application.";
-  if (target) {
-    initialMessage += `\n\n${adapter.describeTarget(target)}`;
-  }
+  const initialMessage = buildInitialUserMessage(adapter, target);
 
   logger.logUserMessage(0, initialMessage);
 
