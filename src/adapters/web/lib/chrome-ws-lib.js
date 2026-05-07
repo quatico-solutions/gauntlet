@@ -118,6 +118,30 @@ class WebSocketClient {
 }
 // ===== GAUNTLET DIVERGENCE END =====
 
+// Module-level registry of active session-cleanup callbacks.
+// Per-session initializeSession adds its bound cleanup to the set;
+// cleanupSession removes itself when it runs.
+//
+// Process exit handlers are registered exactly once for the whole module
+// (not per session), so multiple ChromeSession instances in one process
+// don't accumulate N×3 handlers. Hand-ported from upstream 2f28325 — the
+// per-session createSession() factory turned each session's
+// initializeSession() into a fresh process-handler registration; with
+// `gauntlet serve` running multiple stories that's N×3 handlers per
+// run. Now the handlers are registered once at module scope and iterate
+// the set.
+const activeCleanups = new Set();
+let processHandlersRegistered = false;
+
+function ensureProcessHandlersRegistered() {
+  if (processHandlersRegistered) return;
+  processHandlersRegistered = true;
+  const runAll = () => { for (const fn of activeCleanups) fn(); };
+  process.on('exit', runAll);
+  process.on('SIGINT', () => { runAll(); process.exit(0); });
+  process.on('SIGTERM', () => { runAll(); process.exit(0); });
+}
+
 // ===== GAUNTLET DIVERGENCE START: createSession() factory =====
 // PRI-1436: Wraps the entire file body in a factory so each WebAdapter gets
 // a private state-bag — fixes concurrent web runs in `gauntlet serve` that
@@ -2563,16 +2587,11 @@ function initializeSession() {
 
     if (CHROME_VERBOSE) console.error(`Browser session directory: ${sessionDir}`);
 
-    // Register cleanup on process exit
-    process.on('exit', cleanupSession);
-    process.on('SIGINT', () => {
-      cleanupSession();
-      process.exit(0);
-    });
-    process.on('SIGTERM', () => {
-      cleanupSession();
-      process.exit(0);
-    });
+    // Register cleanup with the module-level handler set. Process handlers
+    // are installed at most once for the whole module — see
+    // ensureProcessHandlersRegistered() at module scope.
+    ensureProcessHandlersRegistered();
+    activeCleanups.add(cleanupSession);
   }
   return sessionDir;
 }
@@ -2588,6 +2607,7 @@ function cleanupSession() {
     }
     sessionDir = null;
   }
+  activeCleanups.delete(cleanupSession);
 }
 
 function createCapturePrefix(actionType = 'navigate') {
