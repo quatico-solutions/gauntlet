@@ -28,9 +28,12 @@ describe("loadPromptFile", () => {
     expect(loadPromptFile("adapter-web")).toMatch(/Side trips for sign-in flows/);
   });
 
-  test("adapter-cli and adapter-tui are empty placeholders", () => {
+  test("adapter-cli is still an empty placeholder", () => {
     expect(loadPromptFile("adapter-cli")).toBe("");
-    expect(loadPromptFile("adapter-tui")).toBe("");
+  });
+
+  test("adapter-tui file has the TUI environment overlay", () => {
+    expect(loadPromptFile("adapter-tui")).toMatch(/## TUI environment/);
   });
 
   test("throws a clear error naming the missing file", () => {
