@@ -30,6 +30,10 @@ export interface RunOneOptions {
    * Tests inject a scripted client here instead of `mock.module`-ing
    * `models/resolve` (PRI-1505). */
   clientFactory?: (model: string) => LLMClient;
+  /** Optional explicit Project prompt path. Forwarded to `executeRunCore`
+   * which resolves it via `resolveProjectPrompt`. Undefined means "fall
+   * through to .gauntlet/project.md auto-load". */
+  projectPromptPath?: string;
 }
 
 export interface RunOneSummary {
@@ -56,6 +60,7 @@ export async function runOne(opts: RunOneOptions): Promise<RunOneSummary> {
     outDir: opts.outDir,
     client,
     runSetCtx: opts.runSetCtx,
+    projectPromptPath: opts.projectPromptPath,
     runConfig: {
       projectRoot: config.projectRoot,
       model: config.models.agent,

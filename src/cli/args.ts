@@ -48,10 +48,12 @@ const RUN_ALLOWED = new Set([
   "target", "out", "adapter", "model", "chrome", "project-dir",
   "turns", "viewport", "save-screencast",
   "silent", "format", "no-color", "passes",
+  "project-prompt",
 ]);
 // Everything `run` accepts, minus `--out` — batch doesn't invent a
 // batch-level results dir; each card writes to its default per-run dir.
-const BATCH_ALLOWED = new Set([...RUN_ALLOWED].filter((f) => f !== "out"));
+// `--project-prompt` is excluded for now; batch will get it in a future task.
+const BATCH_ALLOWED = new Set([...RUN_ALLOWED].filter((f) => f !== "out" && f !== "project-prompt"));
 const VALIDATE_ALLOWED = new Set<string>([]);
 const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
 const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "turns", "viewport", "save-screencast"]);
@@ -80,6 +82,7 @@ export interface RunArgs {
   format: "pretty" | "jsonl" | undefined;
   noColor: boolean;
   passes: number;
+  projectPromptPath?: string;
   cli: CliArgsInput;
 }
 
@@ -211,6 +214,7 @@ function parseRunArgs(args: string[]): RunArgs {
     format,
     noColor: flags["no-color"] === "true",
     passes: parsePasses(flags.passes),
+    projectPromptPath: flags["project-prompt"],
     cli: {
       projectRoot: flags["project-dir"],
       chrome: flags.chrome,

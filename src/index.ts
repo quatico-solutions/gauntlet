@@ -39,6 +39,7 @@ async function main() {
         format: args.format,
         noColor: args.noColor,
         passes: args.passes,
+        projectPromptPath: args.projectPromptPath,
       });
       break;
     }

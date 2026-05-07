@@ -26,6 +26,9 @@ export interface RunCommandOptions {
   /** Test seam — see PRI-1505. Production callers leave this undefined; the
    * runOne calls below thread it through so tests don't need mock.module. */
   clientFactory?: (model: string) => LLMClient;
+  /** Optional path to a Project prompt augmentation file. Forwarded to
+   * `runOne`; resolution lives in the orchestrator. */
+  projectPromptPath?: string;
 }
 
 function makeRunObserver(
@@ -92,6 +95,7 @@ export async function run(opts: RunCommandOptions): Promise<void> {
       config: opts.config,
       onLogger: (logger) => attachRenderer(logger, streamOpts, sink),
       clientFactory: opts.clientFactory,
+      projectPromptPath: opts.projectPromptPath,
     });
 
     if (streamOpts.silent) {
@@ -160,6 +164,7 @@ export async function run(opts: RunCommandOptions): Promise<void> {
             runSetCtx,
             runId,
             clientFactory: opts.clientFactory,
+            projectPromptPath: opts.projectPromptPath,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
