@@ -336,9 +336,6 @@ async function resolveWsUrl(wsUrlOrIndex) {
   throw new Error(`Invalid tab specifier: ${wsUrlOrIndex}`);
 }
 
-// Message ID counter for legacy single-use connections
-let messageIdCounter = 1;
-
 // ===== GAUNTLET DIVERGENCE START: parseContains + :contains() support =====
 // Upstream has no :contains() helper. We added one because LLM agents reach
 // for jQuery-style `button:contains('Log in')` anyway, and a silent CSS
@@ -497,7 +494,10 @@ async function sendCdpCommandSingle(wsUrl, method, params = {}, timeout = 30000)
   const ws = new WebSocketClient(wsUrl);
 
   return new Promise((resolve, reject) => {
-    const id = messageIdCounter++;
+    // Single-use ws sends exactly one request — id=1 is fine because the
+    // connection is fresh and there's nothing to collide with. (Hand-ported
+    // from upstream ae546b3.)
+    const id = 1;
     let resolved = false;
 
     ws.on('message', (msg) => {
