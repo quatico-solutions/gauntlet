@@ -34,3 +34,27 @@ describe("--project-prompt flag", () => {
     ).toThrow(/Unknown flag/);
   });
 });
+
+describe("--show-prompt-and-exit flag", () => {
+  test("bareword flag sets showPromptAndExit=true", () => {
+    const args = parseArgs(["bun", "gauntlet", "run", "./card.md", "--target", "http://x", "--show-prompt-and-exit"]);
+    expect(args.command).toBe("run");
+    if (args.command === "run") {
+      expect(args.showPromptAndExit).toBe(true);
+    }
+  });
+
+  test("absent flag yields false", () => {
+    const args = parseArgs(["bun", "gauntlet", "run", "./card.md", "--target", "http://x"]);
+    expect(args.command).toBe("run");
+    if (args.command === "run") {
+      expect(args.showPromptAndExit).toBe(false);
+    }
+  });
+
+  test("rejected for batch", () => {
+    expect(() =>
+      parseArgs(["bun", "gauntlet", "batch", "./card.md", "--target", "http://x", "--show-prompt-and-exit"])
+    ).toThrow(/Unknown flag/);
+  });
+});

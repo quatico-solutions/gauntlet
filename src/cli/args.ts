@@ -49,11 +49,15 @@ const RUN_ALLOWED = new Set([
   "turns", "viewport", "save-screencast",
   "silent", "format", "no-color", "passes",
   "project-prompt",
+  "show-prompt-and-exit",
 ]);
 // Everything `run` accepts, minus `--out` — batch doesn't invent a
 // batch-level results dir; each card writes to its default per-run dir.
-// `--project-prompt` is excluded for now; batch will get it in a future task.
-const BATCH_ALLOWED = new Set([...RUN_ALLOWED].filter((f) => f !== "out" && f !== "project-prompt"));
+// `--project-prompt` and `--show-prompt-and-exit` are excluded; batch
+// may get them in a future task.
+const BATCH_ALLOWED = new Set([...RUN_ALLOWED].filter(
+  (f) => f !== "out" && f !== "project-prompt" && f !== "show-prompt-and-exit",
+));
 const VALIDATE_ALLOWED = new Set<string>([]);
 const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
 const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "turns", "viewport", "save-screencast"]);
@@ -83,6 +87,7 @@ export interface RunArgs {
   noColor: boolean;
   passes: number;
   projectPromptPath?: string;
+  showPromptAndExit: boolean;
   cli: CliArgsInput;
 }
 
@@ -215,6 +220,7 @@ function parseRunArgs(args: string[]): RunArgs {
     noColor: flags["no-color"] === "true",
     passes: parsePasses(flags.passes),
     projectPromptPath: flags["project-prompt"],
+    showPromptAndExit: flags["show-prompt-and-exit"] === "true",
     cli: {
       projectRoot: flags["project-dir"],
       chrome: flags.chrome,
