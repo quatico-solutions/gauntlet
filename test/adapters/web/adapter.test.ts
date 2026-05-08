@@ -208,6 +208,34 @@ describe("WebAdapter", () => {
       for (const k of keys) {
         session[k] = record(k);
       }
+      // PRI-1535: WebAdapter.start() now creates a BrowserContext and
+      // calls createPage(url) instead of navigate(0, url). Stub with the
+      // tab-shape the real factory returns; the createPage call replaces
+      // navigate as the "page is reachable" signal these tests still rely
+      // on for ordering checks.
+      session.createBrowserContext = (...args: unknown[]) => {
+        calls.push(["createBrowserContext", args]);
+        const ctx = {
+          browserContextId: "stub-ctx",
+          createPage: (url?: string) => {
+            calls.push(["createPage", [url]]);
+            return Promise.resolve({
+              id: "stub-target-0",
+              targetId: "stub-target-0",
+              webSocketDebuggerUrl: "ws://stub/0",
+              type: "page",
+              url: url ?? "",
+              browserContextId: "stub-ctx",
+            });
+          },
+          dispose: () => {
+            calls.push(["disposeBrowserContext", []]);
+            return Promise.resolve();
+          },
+        };
+        const o = overrides.createBrowserContext;
+        return o ? o(...args) : Promise.resolve(ctx);
+      };
       return { session, calls };
     }
 
@@ -285,12 +313,12 @@ describe("WebAdapter", () => {
       expect(true).toBe(true);
     });
 
-    test("remote mode: clearBrowserData is invoked on start() after navigate", async () => {
-      const order: string[] = [];
-      const { session, calls } = makeStubSession({
-        navigate: () => { order.push("navigate"); },
-        clearBrowserData: () => { order.push("clearBrowserData"); },
-      });
+    test("remote mode: start() creates a BrowserContext+page instead of navigating+clearBrowserData", async () => {
+      // PRI-1535: remote-mode cleanup used to be navigate(0,url) + clearBrowserData(0)
+      // because we couldn't delete the remote's --user-data-dir. Now both calls
+      // are gone — a fresh BrowserContext starts clean by construction, and
+      // createPage(url) navigates atomically. Lock that in.
+      const { session, calls } = makeStubSession();
       const adapter = new WebAdapter({
         chrome: { host: "remote-host", port: 9333 },
         chromeProfileName: "gauntlet-run-remote-card",
@@ -298,16 +326,16 @@ describe("WebAdapter", () => {
       });
       await adapter.start("http://localhost:3000/");
       // startChrome must NOT be called in remote mode.
-      const startCall = calls.find((c) => c[0] === "startChrome");
-      expect(startCall).toBeUndefined();
-      // navigate -> clearBrowserData ordering
-      const navIdx = order.indexOf("navigate");
-      const clearIdx = order.indexOf("clearBrowserData");
-      expect(navIdx).toBeGreaterThanOrEqual(0);
-      expect(clearIdx).toBeGreaterThan(navIdx);
-      // clearBrowserData's argument is the tab index (0)
-      const clearCall = calls.find((c) => c[0] === "clearBrowserData");
-      expect(clearCall![1][0]).toBe(0);
+      expect(calls.find((c) => c[0] === "startChrome")).toBeUndefined();
+      // PRI-1535: clearBrowserData and navigate are NOT called from start()
+      // anymore — the BrowserContext + createPage flow replaces them.
+      expect(calls.find((c) => c[0] === "clearBrowserData")).toBeUndefined();
+      expect(calls.find((c) => c[0] === "navigate")).toBeUndefined();
+      // createBrowserContext is called, and createPage is called with the url.
+      expect(calls.find((c) => c[0] === "createBrowserContext")).toBeDefined();
+      const createPage = calls.find((c) => c[0] === "createPage");
+      expect(createPage).toBeDefined();
+      expect(createPage![1][0]).toBe("http://localhost:3000/");
     });
 
     test("remote mode: close() does not kill Chrome or clean up any profile dir", async () => {
@@ -387,6 +415,31 @@ describe("WebAdapter", () => {
         killChrome: record("killChrome"),
         openObserverSession: record("openObserverSession"),
         getChromeProfileDir: record("getChromeProfileDir"),
+        // PRI-1535: BrowserContext stub. createPage(url) returns a page
+        // whose webSocketDebuggerUrl matches the original-tab fixture
+        // (`ws://stub/0`) — that's the URL the existing assertions check
+        // against.
+        createBrowserContext: (...args: unknown[]) => {
+          calls.push(["createBrowserContext", args]);
+          return Promise.resolve({
+            browserContextId: "stub-ctx",
+            createPage: (url?: string) => {
+              calls.push(["createPage", [url]]);
+              return Promise.resolve({
+                id: "stub-target-0",
+                targetId: "stub-target-0",
+                webSocketDebuggerUrl: "ws://stub/0",
+                type: "page",
+                url: url ?? "",
+                browserContextId: "stub-ctx",
+              });
+            },
+            dispose: () => {
+              calls.push(["disposeBrowserContext", []]);
+              return Promise.resolve();
+            },
+          });
+        },
         // Tab management.
         getTabs: (...args: unknown[]) => {
           calls.push(["getTabs", args]);
@@ -864,25 +917,26 @@ describe("WebAdapter", () => {
       }
     });
 
-    test("seed failure (getTabs throws) is logged as tab_seed_failed", async () => {
+    test("seed failure (createPage throws) propagates from start()", async () => {
+      // PRI-1535: under the BrowserContext flow, the previous "log
+      // tab_seed_failed and degrade to numeric tab 0" soft path is gone.
+      // createPage either returns a valid page handle or throws — there's
+      // no partial-failure shape to log around. Lock that in: a thrown
+      // createPage propagates out of start() and the adapter does NOT
+      // get into a half-initialized state.
       const stub = makeSideTripStub();
-      stub.session.getTabs = (...args: unknown[]) => {
-        stub.calls.push(["getTabs", args]);
-        return Promise.reject(new Error("network blip"));
-      };
+      stub.session.createBrowserContext = () => Promise.resolve({
+        browserContextId: "stub-ctx",
+        createPage: () => Promise.reject(new Error("network blip")),
+        dispose: () => Promise.resolve(),
+      });
       const { logger, dir } = tmpLogger();
       try {
-        const events: Array<{ name: string; data: Record<string, unknown> }> = [];
-        const orig = logger.logEvent.bind(logger);
-        logger.logEvent = (name, data) => { events.push({ name, data }); return orig(name, data); };
         const adapter = new WebAdapter({
           chromeSession: stub.session as never,
           logger,
         });
-        await adapter.start("https://example.com/");
-        const seedFailed = events.find((e) => e.name === "tab_seed_failed");
-        expect(seedFailed).toBeDefined();
-        expect(String(seedFailed!.data.reason)).toContain("network blip");
+        await expect(adapter.start("https://example.com/")).rejects.toThrow(/network blip/);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

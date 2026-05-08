@@ -183,6 +183,20 @@ export class WebAdapter implements Adapter {
    */
   private tabStack: Array<{ wsUrl: string; url: string }> = [];
 
+  /**
+   * PRI-1535: BrowserContext for this adapter. Created in start(), disposed
+   * in close(). Replaces the per-launch --user-data-dir as the per-test
+   * isolation primitive. null until start() runs (and after close()).
+   */
+  private context: { browserContextId: string; createPage(url?: string): Promise<{
+    id: string;
+    targetId: string;
+    webSocketDebuggerUrl: string;
+    type: string;
+    url: string;
+    browserContextId: string;
+  }>; dispose(): Promise<void> } | null = null;
+
   constructor(options?: WebAdapterOptions) {
     this.remote = false;
     // PRI-1436: each WebAdapter owns its own chrome-ws-lib session. The
@@ -247,6 +261,48 @@ export class WebAdapter implements Adapter {
       : 0;
   }
 
+  /**
+   * PRI-1535 (closes PRI-1439's structural blind spot): addressable wait
+   * for a page-spawned popup. Register before the action that triggers
+   * `window.open`; resolves on `Target.targetCreated` (event fires in
+   * a few ms in headless Chromium 137).
+   *
+   * Currently a private helper — there's no public call-site that needs
+   * it yet (the agent-initiated `new_tab` path uses `chrome.newTab`).
+   * The side-trip-popup regression test drives the underlying
+   * session.targets.waitForNew capability directly. This helper exists so
+   * a future "click that may spawn a popup" path can adopt it without
+   * re-deriving the listener-registration shape.
+   */
+  private async waitForPopupAfter<T>(
+    parentTargetId: string,
+    action: () => Promise<T>,
+    { timeoutMs = 5000 }: { timeoutMs?: number } = {}
+  ): Promise<{ result: T; popup: { targetId: string; openerId?: string; type: string; url: string } | null }> {
+    const popupP = (this.chrome as unknown as {
+      targets: {
+        waitForNew(
+          predicate: (t: { targetId: string; openerId?: string; type: string; url: string }) => boolean,
+          opts?: { timeoutMs?: number },
+        ): Promise<{ targetId: string; openerId?: string; type: string; url: string }>;
+      };
+    }).targets.waitForNew(
+      (t) => t.openerId === parentTargetId && t.type === "page",
+      { timeoutMs }
+    );
+    let result: T;
+    try {
+      result = await action();
+    } catch (e) {
+      // even if the action threw, drain the wait so we don't leak a listener
+      popupP.catch(() => {});
+      throw e;
+    }
+    let popup: { targetId: string; openerId?: string; type: string; url: string } | null = null;
+    try { popup = await popupP; } catch { /* no popup is fine */ }
+    return { result, popup };
+  }
+
   async start(url: string): Promise<void> {
     if (!this.remote) {
       // Pass the per-run profile name (spec §5.1) so each run gets its
@@ -254,41 +310,28 @@ export class WebAdapter implements Adapter {
       // the runner did not provide one (kept for test backwards-compat).
       await this.chrome.startChrome(true, this.chromeProfileName ?? null); // headless
     }
-    await this.chrome.navigate(0, url);
 
-    // PRI-1439: seed the focus stack with the original tab's stable WS
-    // URL. Numeric tab indices are not stable when tabs close, so all
-    // subsequent dispatches address tabs by WS URL.
-    try {
-      const tabs = await this.chrome.getTabs();
-      const seed = Array.isArray(tabs) ? tabs[0] : null;
-      if (seed?.webSocketDebuggerUrl) {
-        this.tabStack.push({
-          wsUrl: seed.webSocketDebuggerUrl as string,
-          url: (seed.url as string | undefined) ?? url,
-        });
-      } else {
-        // Surface the unexpected shape: dispatches will degrade to
-        // numeric index 0 and the agent will likely route to whichever
-        // tab Chrome lists first. Visibility > silent fallback.
-        this.logger?.logEvent("tab_seed_failed", {
-          reason: "getTabs returned no usable tab",
-          shape: Array.isArray(tabs) ? `array(len=${tabs.length})` : typeof tabs,
-        });
-      }
-    } catch (err) {
-      this.logger?.logEvent("tab_seed_failed", {
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    }
+    // PRI-1535: one BrowserContext per WebAdapter — atomic isolation primitive
+    // replacing the per-launch --user-data-dir for cleanup. createBrowserContext
+    // lazy-opens the browser-WS under the hood. createPage navigates the new
+    // page to the target URL, so no separate navigate(0, url) is needed.
+    const ctx = await this.chrome.createBrowserContext();
+    this.context = ctx;
+    const page = await ctx.createPage(url);
 
-    // Pin the viewport before the observer opens so any downstream
-    // layout/resize events are captured as initial state. Best-effort:
-    // a failing viewport override should not fail the run, since the
-    // window-size flag already gives us a reasonable default.
+    // Seed the focus stack with the page's WS URL (PRI-1439).
+    this.tabStack.push({
+      wsUrl: page.webSocketDebuggerUrl,
+      url: page.url ?? url,
+    });
+
+    // Pin the viewport against this specific page's WS URL — under
+    // BrowserContext-per-adapter, getTabs()[0] is no longer guaranteed to
+    // be our page. Best-effort: a failed viewport override does not fail
+    // the run, since --window-size already gives a reasonable default.
     if (this.viewport) {
       try {
-        await this.chrome.setViewport(0, {
+        await this.chrome.setViewport(page.webSocketDebuggerUrl, {
           width: this.viewport.width,
           height: this.viewport.height,
           deviceScaleFactor: 1,
@@ -302,23 +345,17 @@ export class WebAdapter implements Adapter {
       }
     }
 
-    // Remote-Chrome state reset (spec §5.1): we cannot delete the
-    // remote's --user-data-dir ourselves, so we fall back to a
-    // best-effort CDP-level clear. Happens after the initial navigate
-    // (so `location.origin` is populated) and BEFORE the observer
-    // session opens (so the clear is not itself streamed as a noisy
-    // first event).
-    if (this.remote) {
-      await this.chrome.clearBrowserData(0);
-    }
+    // PRI-1535: the previous remote-only `clearBrowserData(0)` call is gone —
+    // a fresh BrowserContext starts clean by construction.
 
-    // Open the observer session *after* navigation so the initial page
-    // load and LiveSocket handshake are captured as the first events we see.
+    // Open the observer session against the page's WS URL (not numeric 0).
+    // Runs *after* the page is created so the initial load and LiveSocket
+    // handshake are captured as the first events we see.
     if (this.logger) {
       const logger = this.logger;
       try {
         this.observerSession = await this.chrome.openObserverSession(
-          0,
+          page.webSocketDebuggerUrl,
           (category: BrowserEventCategory, payload: Record<string, unknown>) => {
             try {
               logger.logBrowserEvent(category, payload);
@@ -386,6 +423,22 @@ export class WebAdapter implements Adapter {
     // start clean. Reuse isn't a current code path, but the inconsistent
     // post-close state is an easy footgun.
     this.tabStack = [];
+
+    // PRI-1535: dispose the BrowserContext atomically. Runs AFTER the
+    // side-trip pop loop (which relies on per-page WS being usable for
+    // closeTab) and BEFORE killChrome / passkey teardown. Chrome tears
+    // down cookies/storage/IDB/SW for the context in one call, replacing
+    // the inline clearBrowserData sweep that used to live in start().
+    if (this.context) {
+      try {
+        await this.context.dispose();
+      } catch (err) {
+        this.logger?.logEvent("browser_context_dispose_failed", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.context = null;
+    }
     // Tear the virtual authenticator down before killing Chrome so that
     // remote Chrome sessions (where we didn't start the process) don't
     // leak state across runs. For locally-spawned Chrome, killChrome

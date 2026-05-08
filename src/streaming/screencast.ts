@@ -40,6 +40,12 @@ export class ScreencastStreamer {
     }
   }
 
+  // Page-session frame delivery: subscribed via pageSession.onEvent over
+  // the browser-WS. No per-page WS to drop independently.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private pageSession: any = null;
+  private unsubFrame: (() => void) | null = null;
+
   async start(options?: {
     quality?: number;
     maxWidth?: number;
@@ -49,9 +55,12 @@ export class ScreencastStreamer {
 
     const tabs = await this.chrome.getTabs();
     if (!tabs[this.tabIndex]) throw new Error(`Tab ${this.tabIndex} not found`);
-    const wsUrl = tabs[this.tabIndex].webSocketDebuggerUrl;
 
-    await this.chrome.onCdpEvent(this.tabIndex, async (event: any) => {
+    // Subscribe to Page.screencastFrame via the tab's page session.
+    this.pageSession = await tabs[this.tabIndex].getPageSession();
+    const ps = this.pageSession;
+
+    this.unsubFrame = ps.onEvent(async (event: { method: string; params: { data: string; sessionId: number; metadata?: { deviceWidth?: number; deviceHeight?: number } } }) => {
       if (!this.running) return;
       if (event.method !== "Page.screencastFrame") return;
 
@@ -70,8 +79,8 @@ export class ScreencastStreamer {
         this.frameCount++;
       }
 
-      // Acknowledge frame so Chrome sends the next one
-      await this.chrome.sendCdpCommand(wsUrl, "Page.screencastFrameAck", {
+      // Acknowledge frame so Chrome sends the next one.
+      await ps.send("Page.screencastFrameAck", {
         sessionId: params.sessionId,
       });
     });
@@ -82,9 +91,7 @@ export class ScreencastStreamer {
     // setting) produced visible compression artifacts and downscaling
     // blur in the LiveRun pane; 92 at 1920×1200 is effectively lossless
     // and accommodates the 1440×900 default viewport without scaling.
-    // Revisit if Gauntlet ever runs against a remote Chrome where
-    // bandwidth matters.
-    await this.chrome.sendCdpCommand(wsUrl, "Page.startScreencast", {
+    await ps.send("Page.startScreencast", {
       format: "jpeg",
       quality: options?.quality ?? 92,
       maxWidth: options?.maxWidth ?? 1920,
@@ -96,12 +103,17 @@ export class ScreencastStreamer {
   async stop() {
     this.running = false;
     try {
-      const tabs = await this.chrome.getTabs();
-      if (tabs[this.tabIndex]) {
-        const wsUrl = tabs[this.tabIndex].webSocketDebuggerUrl;
-        await this.chrome.sendCdpCommand(wsUrl, "Page.stopScreencast");
+      if (this.pageSession) {
+        try { await this.pageSession.send("Page.stopScreencast"); } catch { /* best-effort */ }
       }
-      await this.chrome.offCdpEvent(this.tabIndex);
+      if (this.unsubFrame) {
+        try { this.unsubFrame(); } catch { /* best-effort */ }
+        this.unsubFrame = null;
+      }
+      // Don't detach the page session — the tab cache holds it; closing the
+      // tab will detach. Detaching here would surprise other callers that
+      // share the cached session.
+      this.pageSession = null;
     } catch {
       // Ignore errors during cleanup
     }

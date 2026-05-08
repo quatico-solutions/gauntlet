@@ -8,15 +8,28 @@ not a clean merge. This doc is the protocol.
 
 ## Files in scope
 
-Two files are forked copies of upstream code:
+The `src/adapters/web/lib/` directory is a forked copy of upstream's
+modular layout:
 
 - `src/adapters/web/lib/chrome-ws-lib.js` ←
-  `skills/browsing/chrome-ws-lib.js`
+  `skills/browsing/chrome-ws-lib.js` (the orchestrator)
 - `src/adapters/web/lib/host-override.js` ←
   `skills/browsing/host-override.js`
+- `src/adapters/web/lib/<module>.js` ←
+  `skills/browsing/lib/<module>.js` (23 sibling modules)
+- `src/adapters/web/lib/page-scripts/` ←
+  `skills/browsing/lib/page-scripts/`
 
-Everything else under `src/adapters/web/` (adapter.ts, passkey.ts, etc.) is
-Gauntlet-native and not synced from upstream.
+Phase A.5 also adds the following Gauntlet-only files (no upstream
+counterpart) under `src/adapters/web/lib/`:
+
+- `browser-session.js`, `browser-bridge.js` (PRI-1535 Phase A:
+  browser-WS bridge + targets API + BrowserContext)
+- `page-session.js`, `cdp-router.js` (PRI-1535 Phase A.5: page sessions
+  on the browser-WS, sessionId-based router)
+
+Everything else under `src/adapters/web/` (adapter.ts, passkey.ts, etc.)
+is Gauntlet-native and not synced from upstream.
 
 ## Sync state
 
@@ -24,7 +37,7 @@ Gauntlet-native and not synced from upstream.
 |---|---|
 | Upstream repo | `https://github.com/obra/superpowers-chrome` |
 | Fork point | `70b2c6c` (v1.8.0) — 2026-02-25 |
-| Last synced upstream HEAD | `a9e2d0c` (v2.0.0) — 2026-05-06 |
+| Last synced upstream HEAD | `a9e2d0c` (v2.0.0) — 2026-05-06; modular layout adopted 2026-05-08 (PRI-1535 Phase A.5) |
 
 > Bump "last synced upstream HEAD" each time a sync cycle completes.
 

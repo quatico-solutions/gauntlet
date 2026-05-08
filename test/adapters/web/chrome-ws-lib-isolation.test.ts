@@ -59,20 +59,19 @@ describe("chrome-ws-lib createSession() isolation (PRI-1436)", () => {
     expect(b.getProfileName()).toBe("gauntlet");
   });
 
-  test("connection pool is not shared (closeAllConnections on one is a no-op for the other)", () => {
-    // We can't directly observe the pool without standing up Chrome, but
-    // closeAllConnections() should be safely idempotent and per-session.
-    // The cheaper assertion: the function itself is bound to a distinct
-    // closure per session.
+  test("bridge surface (targets / createBrowserContext) is per-session — distinct closures", () => {
+    // The PRI-1436 invariant: nothing on the public session surface is
+    // shared module-level state. session.targets, session.createBrowserContext,
+    // and session.attachPageSession are constructed inside createSession()'s
+    // closure (via the bridge's lazy-init), so they must differ across
+    // sessions.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { createSession } = require("../../../src/adapters/web/lib/chrome-ws-lib");
     const a = createSession();
     const b = createSession();
-    expect(a.closeAllConnections).not.toBe(b.closeAllConnections);
-    expect(a.closePooledConnection).not.toBe(b.closePooledConnection);
-    // These should be no-ops on an unused session and not throw.
-    expect(() => a.closeAllConnections()).not.toThrow();
-    expect(() => b.closeAllConnections()).not.toThrow();
+    expect(a.targets).not.toBe(b.targets);
+    expect(a.createBrowserContext).not.toBe(b.createBrowserContext);
+    expect(a.attachPageSession).not.toBe(b.attachPageSession);
   });
 
   test("consoleMessages storage is per-session", () => {
