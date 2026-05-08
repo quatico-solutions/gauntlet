@@ -1,0 +1,358 @@
+const {
+  readProfileMeta,
+  writeProfileMeta,
+  clearProfileMeta,
+  isPortAlive,
+  findPidOnPort,
+  buildChromeArgs,
+  getChromeProfileDir,
+} = require('./chrome-launcher-helpers');
+// GAUNTLET DIVERGENCE #3: pickFreePort instead of findAvailablePort.
+// Free-port picker used in launch mode. When no endpoint is configured
+// via CHROME_WS_PORT or createSession({host, port}), we let the OS
+// assign an ephemeral port for --remote-debugging-port so multiple
+// Gauntlet instances (and co-tenants on 9222) don't collide. Upstream
+// uses findAvailablePort() scanning 9222..12111 instead.
+const { pickFreePort } = require('../../../util/pick-free-port');
+const { spawn } = require('child_process');
+const { existsSync, mkdirSync } = require('fs');
+const os = require('os');
+
+// GAUNTLET DIVERGENCE: silence per-run lifecycle banners
+// Upstream prints "Chrome started in <mode> mode (PID: ..., port: ...,
+// profile: ...)" and similar per-run banners on stderr. In Gauntlet those
+// fire once per card during a `gauntlet batch` run and clutter the output
+// without buying anything actionable. Silenced by default; set
+// GAUNTLET_CHROME_VERBOSE=1 to restore the banners for debugging chrome
+// startup.
+const CHROME_VERBOSE = !!process.env.GAUNTLET_CHROME_VERBOSE;
+
+/**
+ * Chrome process lifecycle + profile management. Reads and writes session
+ * state heavily, so it gets the state bag directly (not just helpers like
+ * the action modules do). Also takes the few cross-section helpers it
+ * needs — chromeHttp for graceful shutdown, getTabs/newTab for the
+ * show/hide tab-restoration flow.
+ *
+ * `attachChromeProcess({ state, chromeHttp, getTabs, newTab, closeBridge })`
+ * returns the bound methods. `closeBridge` (PRI-1535) lets `killChrome`
+ * close the browser-WS bridge before tearing down Chrome.
+ */
+function attachChromeProcess({ state, chromeHttp, getTabs, newTab, closeBridge }) {
+  // Read-once derived constants from the per-session host-override.
+  const CHROME_DEBUG_HOST = state.hostOverride.getHost();
+  const CHROME_DEBUG_PORT = state.hostOverride.getPort();
+
+  // Try to spawn Chrome on a specific port. Returns the proc handle if Chrome
+  // is alive on that port within the poll deadline, otherwise null. Used by
+  // the GAUNTLET DIVERGENCE port-selection block below to retry on TOCTOU.
+  async function trySpawnOn(chosenPort, chromePath) {
+    const args = buildChromeArgs({
+      chosenPort,
+      chromeUserDataDir: state.chromeUserDataDir,
+      chromeHeadless: state.chromeHeadless,
+    });
+
+    const proc = spawn(chromePath, args, {
+      detached: true,
+      stdio: 'ignore'
+    });
+
+    proc.unref();
+
+    const POLL_INTERVAL_MS = 200;
+    const POLL_TIMEOUT_MS = 15000;
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (await isPortAlive(CHROME_DEBUG_HOST, chosenPort)) return proc;
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+
+    // Chrome didn't come up. Most likely cause: another process bound the
+    // port (TOCTOU window, or CHROME_WS_PORT pointed at an occupied port).
+    try { process.kill(proc.pid, 'SIGTERM'); } catch { /* already gone */ }
+    return null;
+  }
+
+  async function startChrome(headless = null, profileName = null, port = null) {
+    if (headless !== null) {
+      state.chromeHeadless = headless;
+    }
+    if (profileName !== null) {
+      state.chromeProfileName = profileName;
+    }
+
+    // --- Step 1: Reuse an already-running Chrome on this profile ---
+    // Enables reconnection after MCP restart while Chrome is still alive.
+    if (!port) {
+      const meta = readProfileMeta(state.chromeProfileName);
+      if (meta && meta.port) {
+        if (await isPortAlive(CHROME_DEBUG_HOST, meta.port, meta.pid)) {
+          state.activePort = meta.port;
+          if (CHROME_VERBOSE) console.error(`Reconnected to existing Chrome (port: ${meta.port}, PID: ${meta.pid}, profile: ${state.chromeProfileName})`);
+          return;
+        }
+        // Stale meta.json — Chrome died without cleanup
+        clearProfileMeta(state.chromeProfileName);
+      }
+    }
+
+    // --- Step 2: Find Chrome binary ---
+    const chromePaths = {
+      darwin: [
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/Applications/Chromium.app/Contents/MacOS/Chromium'
+      ],
+      linux: [
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium'
+      ],
+      win32: [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+      ]
+    };
+
+    const platform = os.platform();
+    const paths = chromePaths[platform] || [];
+
+    let chromePath = null;
+    for (const p of paths) {
+      if (existsSync(p)) {
+        chromePath = p;
+        break;
+      }
+    }
+
+    if (!chromePath) {
+      throw new Error(`Chrome not found. Searched: ${paths.join(', ')}`);
+    }
+
+    // Persistent profile directory (re-used across sessions).
+    if (!state.chromeUserDataDir) {
+      state.chromeUserDataDir = getChromeProfileDir(state.chromeProfileName);
+      mkdirSync(state.chromeUserDataDir, { recursive: true });
+    }
+
+    // ===== GAUNTLET DIVERGENCE START: port strategy via pickFreePort =====
+    // Upstream scans findAvailablePort(PORT_RANGE_START..END). We use
+    // pickFreePort() (OS-assigned ephemeral) because fixed-range scanning
+    // raced with co-tenants on 9222.
+    // - Explicit port arg (e.g. from showBrowser()/hideBrowser() which
+    //   preserve the in-use port across restarts) → use it as-is.
+    // - CHROME_WS_PORT env → attach/launch on that port as configured.
+    // - Otherwise: let the OS assign a free ephemeral port via
+    //   pickFreePort(). If the TOCTOU window loses, retry once with a
+    //   fresh pick before giving up.
+    const HAS_ENV_PORT = process.env.CHROME_WS_PORT !== undefined;
+    let proc = null;
+    let chosenPort;
+    if (port) {
+      chosenPort = port;
+      proc = await trySpawnOn(chosenPort, chromePath);
+      if (!proc) {
+        throw new Error(`Chrome failed to start on port ${chosenPort} (port in use?)`);
+      }
+    } else if (HAS_ENV_PORT) {
+      chosenPort = CHROME_DEBUG_PORT;
+      proc = await trySpawnOn(chosenPort, chromePath);
+      if (!proc) {
+        throw new Error(`Chrome failed to start on CHROME_WS_PORT=${chosenPort} (port in use?)`);
+      }
+    } else {
+      chosenPort = await pickFreePort();
+      proc = await trySpawnOn(chosenPort, chromePath);
+      if (!proc) {
+        // TOCTOU — another process grabbed the port between close() and
+        // spawn(). Pick a new one and retry once.
+        chosenPort = await pickFreePort();
+        proc = await trySpawnOn(chosenPort, chromePath);
+        if (!proc) {
+          throw new Error(`Chrome failed to start on dynamically-picked port ${chosenPort} after retry`);
+        }
+      }
+    }
+    // ===== GAUNTLET DIVERGENCE END =====
+
+    state.chromeProcess = proc;
+    state.activePort = chosenPort;
+
+    // --- Step 3: Persist port assignment in meta.json ---
+    writeProfileMeta(state.chromeProfileName, {
+      port: chosenPort,
+      pid: proc.pid,
+      headless: state.chromeHeadless,
+      profileName: state.chromeProfileName,
+      userDataDir: state.chromeUserDataDir,
+      startedAt: new Date().toISOString()
+    });
+
+    const mode = state.chromeHeadless ? 'headless' : 'headed';
+    if (CHROME_VERBOSE) console.error(`Chrome started in ${mode} mode (PID: ${proc.pid}, port: ${chosenPort}, profile: ${state.chromeProfileName})`);
+  }
+
+  async function killChrome() {
+    // PRI-1535: close the browser-level WS bridge before tearing down per-page
+    // WSes / killing Chrome. Best-effort — if the bridge never opened, this
+    // is a no-op.
+    if (closeBridge) {
+      try { await closeBridge(); } catch { /* best-effort */ }
+    }
+
+    let pidToKill = null;
+
+    if (state.chromeProcess && state.chromeProcess.pid) {
+      pidToKill = state.chromeProcess.pid;
+    } else if (state.activePort) {
+      // We didn't launch this Chrome (or already dropped the handle), but we
+      // know the port. Kill whoever holds it so showBrowser/hideBrowser can
+      // restart cleanly in the target mode.
+      pidToKill = findPidOnPort(state.activePort);
+    }
+
+    if (pidToKill === null) {
+      // Nothing to kill. Still clear meta.json so other sessions don't
+      // think there's a Chrome here, and reset the user-data-dir cache
+      // (PRI-1280) so the next startChrome recomputes it.
+      clearProfileMeta(state.chromeProfileName);
+      state.chromeProcess = null;
+      state.activePort = CHROME_DEBUG_PORT;
+      state.chromeUserDataDir = null;
+      return;
+    }
+
+    try {
+      // Try graceful shutdown via CDP first.
+      try {
+        await chromeHttp('/json/close', 'GET');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (_e) {
+        // Ignore — Chrome might already be dead.
+      }
+
+      try {
+        process.kill(pidToKill, 'SIGTERM');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (_e) {
+        // Process might already be dead.
+      }
+    } catch (e) {
+      console.error(`Error killing Chrome: ${e.message}`);
+    }
+
+    clearProfileMeta(state.chromeProfileName);
+    state.chromeProcess = null;
+    state.activePort = CHROME_DEBUG_PORT;
+    // GAUNTLET DIVERGENCE (PRI-1280): reset user-data-dir so the next
+    // startChrome() with a fresh profile name recomputes it. Without this,
+    // a long-lived process (e.g. `gauntlet serve`) reuses the first run's
+    // profile dir forever and cookies leak across runs.
+    state.chromeUserDataDir = null;
+  }
+
+  // Switch headless/headed by killing and restarting Chrome on the same port,
+  // then reopening any non-blank tabs that were open. Pages re-request via GET,
+  // so POST-based state is lost — this is a deliberate trade-off documented in
+  // the showBrowser/hideBrowser return strings.
+  async function restartInMode({ targetHeadless, alreadyMessage, doneMessage }) {
+    if (state.chromeHeadless === targetHeadless) {
+      return alreadyMessage;
+    }
+
+    const transition = targetHeadless ? 'headless mode (hiding browser window)' : 'headed mode (browser window will be visible)';
+    console.error(`Switching to ${transition}...`);
+    console.error('WARNING: This will restart Chrome and lose any POST-based page state');
+
+    let currentTabs = [];
+    try {
+      const tabs = await getTabs();
+      currentTabs = tabs.map(t => t.url).filter(url => url && url !== 'about:blank');
+    } catch (_e) {
+      // Chrome not running — nothing to capture.
+    }
+
+    const savedPort = state.activePort;
+    await killChrome();
+    await startChrome(targetHeadless, null, savedPort);
+
+    if (currentTabs.length > 0) {
+      console.error(`Reopening ${currentTabs.length} tab(s)...`);
+      for (const url of currentTabs) {
+        try {
+          await newTab(url);
+        } catch (e) {
+          console.error(`Failed to reopen ${url}: ${e.message}`);
+        }
+      }
+    }
+
+    return doneMessage;
+  }
+
+  async function showBrowser() {
+    return restartInMode({
+      targetHeadless: false,
+      alreadyMessage: 'Browser is already visible',
+      doneMessage: 'Browser window is now visible. Note: Pages were reloaded via GET requests.',
+    });
+  }
+
+  async function hideBrowser() {
+    return restartInMode({
+      targetHeadless: true,
+      alreadyMessage: 'Browser is already in headless mode',
+      doneMessage: 'Browser is now in headless mode. Note: Pages were reloaded via GET requests.',
+    });
+  }
+
+  async function getBrowserMode() {
+    return {
+      headless: state.chromeHeadless,
+      mode: state.chromeHeadless ? 'headless' : 'headed',
+      running: state.chromeProcess !== null,
+      pid: state.chromeProcess ? state.chromeProcess.pid : null,
+      port: state.activePort,
+      profile: state.chromeProfileName,
+      profileDir: state.chromeUserDataDir
+    };
+  }
+
+  function getChromePid() {
+    return state.chromeProcess ? state.chromeProcess.pid : null;
+  }
+
+  function getActivePort() {
+    return state.activePort;
+  }
+
+  function getProfileName() {
+    return state.chromeProfileName;
+  }
+
+  function setProfileName(profileName) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(profileName)) {
+      throw new Error('Invalid profile name. Only alphanumeric characters, hyphens, and underscores are allowed.');
+    }
+    if (state.chromeProcess) {
+      throw new Error('Cannot change profile while Chrome is running. Kill Chrome first.');
+    }
+    state.chromeProfileName = profileName;
+    state.chromeUserDataDir = null; // Reset so next startChrome() uses new profile
+    return `Profile set to: ${profileName}`;
+  }
+
+  return {
+    startChrome,
+    killChrome,
+    showBrowser,
+    hideBrowser,
+    getBrowserMode,
+    getChromePid,
+    getActivePort,
+    getProfileName,
+    setProfileName,
+  };
+}
+
+module.exports = { attachChromeProcess };
