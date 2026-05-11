@@ -384,9 +384,11 @@ export async function runAgent(
   // report_result with a best-effort summary of where it got stuck and why.
   // This extra LLM call does not count against `usage.turns` — the caller
   // contract is preserved; the grace turn is overhead.
-  logger.logEvent("deadline_reminder", { budgetMs, elapsedMs: Date.now() - startTime });
+  const nowAtGrace = Date.now();
+  const elapsedMsAtGrace = nowAtGrace - startTime;
+  logger.logEvent("deadline_reminder", { budgetMs, elapsedMs: elapsedMsAtGrace });
 
-  const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+  const elapsedSec = Math.round(elapsedMsAtGrace / 1000);
   const reminderText =
     `<SYSTEM-REMINDER>\n` +
     `You have used your time budget (${elapsedSec}s of ${Math.round(budgetMs/1000)}s) without calling report_result. ` +
