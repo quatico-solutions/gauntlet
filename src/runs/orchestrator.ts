@@ -188,6 +188,7 @@ export async function executeRunCore(
       adapter: runConfig.adapter,
       chrome: runConfig.chrome ? `${runConfig.chrome.host}:${runConfig.chrome.port}` : undefined,
       budgetMs: runConfig.budgetMs,
+      maxStuckRetries: runConfig.maxStuckRetries,
       viewport: snapshotViewport(adapter),
     };
 

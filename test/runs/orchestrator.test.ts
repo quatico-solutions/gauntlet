@@ -84,6 +84,7 @@ describe("executeRunCore — result metadata", () => {
       model: "claude-sonnet-4-6",
       adapter: "cli",
       budgetMs: 600_000,
+      maxStuckRetries: 5,
     });
   });
 
