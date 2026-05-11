@@ -59,6 +59,18 @@ describe("loadConfig: GAUNTLET_MAX_TIME and GAUNTLET_MAX_STUCK_RETRIES", () => {
     expect(c.defaultMaxStuckRetries).toBe(3);
   });
 
+  test("rejects GAUNTLET_MAX_STUCK_RETRIES with trailing garbage like '3abc'", () => {
+    expect(() =>
+      loadConfig({ args: {} } as any, { GAUNTLET_MAX_STUCK_RETRIES: "3abc" } as NodeJS.ProcessEnv),
+    ).toThrow(/GAUNTLET_MAX_STUCK_RETRIES.*3abc/);
+  });
+
+  test("rejects fractional GAUNTLET_MAX_STUCK_RETRIES", () => {
+    expect(() =>
+      loadConfig({ args: {} } as any, { GAUNTLET_MAX_STUCK_RETRIES: "3.5" } as NodeJS.ProcessEnv),
+    ).toThrow(/GAUNTLET_MAX_STUCK_RETRIES.*3.5/);
+  });
+
   test("CLI --max-time overrides env", () => {
     const c = loadConfig(
       { maxTime: "10s" } as any,

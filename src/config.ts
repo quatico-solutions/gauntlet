@@ -448,9 +448,13 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   let defaultMaxStuckRetries = DEFAULT_MAX_STUCK_RETRIES;
   let stuckSource: "default" | "env" | "flag" = "default";
   if (env.GAUNTLET_MAX_STUCK_RETRIES) {
-    const parsed = parseInt(env.GAUNTLET_MAX_STUCK_RETRIES, 10);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      throw new Error(`Invalid GAUNTLET_MAX_STUCK_RETRIES "${env.GAUNTLET_MAX_STUCK_RETRIES}": expected positive integer`);
+    const raw = env.GAUNTLET_MAX_STUCK_RETRIES;
+    if (!/^\d+$/.test(raw)) {
+      throw new Error(`Invalid GAUNTLET_MAX_STUCK_RETRIES "${raw}": expected positive integer`);
+    }
+    const parsed = parseInt(raw, 10);
+    if (parsed < 1) {
+      throw new Error(`Invalid GAUNTLET_MAX_STUCK_RETRIES "${raw}": expected positive integer`);
     }
     defaultMaxStuckRetries = parsed;
     stuckSource = "env";
