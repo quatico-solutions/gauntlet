@@ -57,6 +57,7 @@ function makeMockAdapter(
     close: async () => {},
     describeTarget: (target: string) => `The application is available at: ${target}`,
     defaultViewport: () => null,
+    isMutatingTool: () => false,
   };
 }
 

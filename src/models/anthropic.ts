@@ -58,37 +58,40 @@ export function createAnthropicClient(model: string): LLMClient {
   };
 }
 
-export function anthropicToolResultMessages(calls: ToolCall[], results: ToolResult[]): unknown[] {
-  return [
-    {
-      role: "user",
-      content: calls.map((call, i) => {
-        const result = results[i];
-        if (result.image) {
-          return {
-            type: "tool_result",
-            tool_use_id: call.id,
-            content: [
-              {
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: result.image.mediaType,
-                  data: result.image.data,
-                },
-              },
-              { type: "text", text: result.text ?? "" },
-            ],
-          };
-        }
-        return {
-          type: "tool_result",
-          tool_use_id: call.id,
-          content: result.text ?? "",
-        };
-      }),
-    },
-  ];
+export function anthropicToolResultMessages(
+  calls: ToolCall[],
+  results: ToolResult[],
+  extraUserText?: string,
+): unknown[] {
+  const content: unknown[] = calls.map((call, i) => {
+    const result = results[i];
+    if (result.image) {
+      return {
+        type: "tool_result",
+        tool_use_id: call.id,
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: result.image.mediaType,
+              data: result.image.data,
+            },
+          },
+          { type: "text", text: result.text ?? "" },
+        ],
+      };
+    }
+    return {
+      type: "tool_result",
+      tool_use_id: call.id,
+      content: result.text ?? "",
+    };
+  });
+  if (extraUserText) {
+    content.push({ type: "text", text: extraUserText });
+  }
+  return [{ role: "user", content }];
 }
 
 function convertTool(tool: ToolDefinition): Anthropic.Tool {

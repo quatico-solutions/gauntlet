@@ -47,6 +47,8 @@ export interface RunCoreConfig {
   target: string;
   budgetMs: number;
   maxStuckRetries: number;
+  /** Turns between reflection-checkpoint injections; 0 disables. */
+  reflectionInterval: number;
   /** Already-resolved Chrome endpoint, or undefined to let WebAdapter
    * auto-launch. Surfaces collapse "default" → undefined themselves. */
   chrome?: ChromeEndpoint;
@@ -198,6 +200,7 @@ export async function executeRunCore(
       runId,
       budgetMs: runConfig.budgetMs,
       maxStuckRetries: runConfig.maxStuckRetries,
+      reflectionInterval: runConfig.reflectionInterval,
       provider: resolveProvider(runConfig.model),
       model: runConfig.model,
       outDir,

@@ -99,6 +99,10 @@ export class CLIAdapter implements Adapter {
     this.proc = null;
   }
 
+  isMutatingTool(name: string): boolean {
+    return name === "type" || name === "press";
+  }
+
   toolDefinitions(): ToolDefinition[] {
     const tools: ToolDefinition[] = [
       {

@@ -7,6 +7,16 @@ import { RESULT_SCHEMA_VERSION } from "../types";
 import { buildSystemPrompt } from "./prompts";
 import { buildInitialUserMessage } from "./initial-message";
 import { parseReportResult } from "./validators";
+import {
+  buildReflectionReminder,
+  renderTrace,
+  type ReflectableToolCall,
+} from "./reflection";
+
+// How many mutating tool calls to retain for the reflection trace. Set
+// to roughly twice MAX_TRACE_ENTRIES (8) so the rendered window has
+// recent context even when the agent does several mutations per turn.
+const RECENT_MUTATING_CAP = 16;
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30000;
 
@@ -24,6 +34,13 @@ export interface AgentOptions {
    * action before the model should give up. Not enforced in code.
    */
   maxStuckRetries: number;
+  /**
+   * Number of LLM turns between mid-loop reflection checkpoints. Each
+   * checkpoint appends a `<SYSTEM-REMINDER>` block (recent mutating-call
+   * trace + give-up framing) to the user message carrying tool results.
+   * 0 disables. See `docs/reflection-checkpoints-spec.md`.
+   */
+  reflectionInterval: number;
   /**
    * Rendered tree listing for the system prompt's Context section,
    * produced by `renderContextTree` in `src/context/tree.ts`. May be
@@ -142,6 +159,7 @@ export async function runAgent(
     adapter: adapter.name ?? "unknown",
     budgetMs,
     maxStuckRetries,
+    reflectionInterval: options.reflectionInterval,
     toolTimeoutMs: options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS,
     contextTreeBytes: options.contextTree ? Buffer.byteLength(options.contextTree, "utf8") : 0,
     outDir: options.outDir,
@@ -163,6 +181,10 @@ export async function runAgent(
   let totalCacheRead = 0;
   let turns = 0;
   const deadline = startTime + budgetMs;
+  // Bounded buffer of state-changing tool calls, classified by the
+  // adapter via isMutatingTool. Drives the reflection-checkpoint trace.
+  const recentMutatingCalls: ReflectableToolCall[] = [];
+  const reflectionInterval = options.reflectionInterval ?? 0;
 
   /**
    * Build a terminal VetResult with shared scaffolding (schema, evidence,
@@ -355,7 +377,37 @@ export async function runAgent(
         });
       }
 
-      messages.push(...client.toolResultMessages(response.toolCalls, results));
+      // Reflection checkpoint bookkeeping. Skipped entirely when
+      // reflection is disabled so older callers (and adapter mocks) that
+      // don't implement isMutatingTool aren't dragged in. Informational
+      // tools (screenshot, extract, read, wait_for, ...) are excluded
+      // per the adapter's classification — see
+      // docs/reflection-checkpoints-spec.md.
+      let extraUserText: string | undefined;
+      if (reflectionInterval > 0) {
+        for (const tc of response.toolCalls) {
+          if (adapter.isMutatingTool(tc.name)) {
+            recentMutatingCalls.push({ name: tc.name, arguments: tc.arguments });
+            if (recentMutatingCalls.length > RECENT_MUTATING_CAP) {
+              recentMutatingCalls.shift();
+            }
+          }
+        }
+        if (turns % reflectionInterval === 0) {
+          // Identical reminder text every firing; the trace varies and
+          // does the persuading (see spec §"Reminder text").
+          const traceText = renderTrace(recentMutatingCalls);
+          extraUserText = buildReflectionReminder(traceText);
+          logger.logEvent("reflection_checkpoint", {
+            turn: turns,
+            ordinal: Math.floor(turns / reflectionInterval),
+            traceLength: recentMutatingCalls.length,
+          });
+          logger.logUserMessage(turns, extraUserText);
+        }
+      }
+
+      messages.push(...client.toolResultMessages(response.toolCalls, results, extraUserText));
     } else if (response.text) {
       messages.push(response.rawAssistantMessage);
       messages.push(

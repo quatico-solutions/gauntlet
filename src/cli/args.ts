@@ -46,7 +46,7 @@ function parsePasses(raw: string | undefined): number {
 
 const RUN_ALLOWED = new Set([
   "target", "out", "adapter", "model", "chrome", "project-dir",
-  "max-time", "max-stuck-retries", "viewport", "save-screencast",
+  "max-time", "max-stuck-retries", "reflection-interval", "viewport", "save-screencast",
   "silent", "format", "no-color", "passes",
   "project-prompt",
   "show-prompt-and-exit",
@@ -60,8 +60,8 @@ const BATCH_ALLOWED = new Set([...RUN_ALLOWED].filter(
 ));
 const VALIDATE_ALLOWED = new Set<string>([]);
 const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
-const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "max-time", "max-stuck-retries", "viewport", "save-screencast"]);
-const CONFIG_ALLOWED = new Set(["json", "project-dir", "port", "chrome", "target", "model", "max-time", "max-stuck-retries", "viewport", "save-screencast"]);
+const SERVE_ALLOWED = new Set(["port", "project-dir", "chrome", "target", "model", "max-time", "max-stuck-retries", "reflection-interval", "viewport", "save-screencast"]);
+const CONFIG_ALLOWED = new Set(["json", "project-dir", "port", "chrome", "target", "model", "max-time", "max-stuck-retries", "reflection-interval", "viewport", "save-screencast"]);
 
 function rejectUnknownFlags(
   flags: Record<string, unknown>,
@@ -177,6 +177,7 @@ function parseConfigArgs(args: string[]): ConfigArgs {
       models: parseModelFlagArray(flags.model),
       maxTime: typeof flags["max-time"] === "string" ? flags["max-time"] : undefined,
       maxStuckRetries: parseIntFlag(flags["max-stuck-retries"], "--max-stuck-retries"),
+      reflectionInterval: parseIntFlag(flags["reflection-interval"], "--reflection-interval"),
     },
   };
 }
@@ -231,6 +232,7 @@ function parseRunArgs(args: string[]): RunArgs {
       models: parseModelFlagArray(flags.model),
       maxTime: typeof flags["max-time"] === "string" ? flags["max-time"] : undefined,
       maxStuckRetries: parseIntFlag(flags["max-stuck-retries"], "--max-stuck-retries"),
+      reflectionInterval: parseIntFlag(flags["reflection-interval"], "--reflection-interval"),
     },
   };
 }
@@ -289,6 +291,7 @@ function parseBatchArgs(args: string[]): BatchArgs {
       models: parseModelFlagArray(flags.model),
       maxTime: typeof flags["max-time"] === "string" ? flags["max-time"] : undefined,
       maxStuckRetries: parseIntFlag(flags["max-stuck-retries"], "--max-stuck-retries"),
+      reflectionInterval: parseIntFlag(flags["reflection-interval"], "--reflection-interval"),
     },
   };
 }
@@ -345,6 +348,7 @@ function parseServeArgs(args: string[]): ServeArgs {
       models: parseModelFlagArray(flags.model),
       maxTime: typeof flags["max-time"] === "string" ? flags["max-time"] : undefined,
       maxStuckRetries: parseIntFlag(flags["max-stuck-retries"], "--max-stuck-retries"),
+      reflectionInterval: parseIntFlag(flags["reflection-interval"], "--reflection-interval"),
     },
   };
 }
@@ -424,6 +428,7 @@ Commands:
     --adapter <type>     web | cli | tui (default: web)
     --max-time <duration>   Max wall-clock time per run (default: 5m). Accepts ms/s/m/h suffixes or bare seconds.
     --max-stuck-retries <n> Hint to model: give up after N unproductive retries (default: 5)
+    --reflection-interval <n>  Inject a reflection-checkpoint reminder every N turns (default: 10; 0 disables)
     --viewport WxH       Browser viewport (default: 1440x900)
     --save-screencast    Persist screencast frames to disk (default: off; live WS stream is always on)
     --out <dir>          Evidence output directory (default: <project>/.gauntlet/results/<runId>)
@@ -441,6 +446,7 @@ Commands:
     --adapter <type>     web | cli | tui (default: web)
     --max-time <duration>   Max wall-clock time per run (default: 5m). Accepts ms/s/m/h suffixes or bare seconds.
     --max-stuck-retries <n> Hint to model: give up after N unproductive retries (default: 5)
+    --reflection-interval <n>  Inject a reflection-checkpoint reminder every N turns (default: 10; 0 disables)
     --viewport WxH       Browser viewport
     --save-screencast    Persist screencast frames to disk
     --project-dir <dir>  Project root
@@ -462,6 +468,7 @@ Commands:
     --target <url>           Default target (prefilled in the UI; request body still overrides)
     --max-time <duration>    Default time budget per run (default: 5m). Accepts ms/s/m/h suffixes or bare seconds.
     --max-stuck-retries <n>  Default stuck-retries hint (default: 5)
+    --reflection-interval <n>  Default reflection-checkpoint interval (default: 10; 0 disables)
     --viewport WxH           Default browser viewport (default: 1440x900)
     --save-screencast        Default: persist screencast frames to disk (default: off)
     --model agent=<name>     Default agent model
@@ -477,6 +484,7 @@ Environment:
   GAUNTLET_TARGET            Default target URL (UI prefill)
   GAUNTLET_MAX_TIME          Default time budget (duration string, e.g. 5m)
   GAUNTLET_MAX_STUCK_RETRIES Default stuck-retries hint
+  GAUNTLET_REFLECTION_INTERVAL Default reflection-checkpoint interval (turns; 0 disables)
   GAUNTLET_VIEWPORT          Default browser viewport (WxH, e.g. 1440x900)
   GAUNTLET_SAVE_SCREENCAST   Persist screencast frames to disk (1/0, default: 0)
   GAUNTLET_AGENT_MODEL       Default agent model

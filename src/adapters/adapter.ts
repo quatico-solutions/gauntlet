@@ -38,6 +38,18 @@ export interface Adapter {
    * Units are adapter-dependent; read alongside `adapter` to interpret.
    */
   defaultViewport(): Viewport | null;
+  /**
+   * True when a tool call changes application state, false when it only
+   * observes (screenshots, extracts, reads, waits). Drives which calls
+   * appear in the reflection-checkpoint trace — informational tools are
+   * frequent, non-decisional, and would dilute the trace. The agent
+   * loop has no business hardcoding tool names, so each adapter owns
+   * its own classification. Unknown names default to false: a noisy
+   * trace from a missed classification is bounded, an over-broad
+   * default would let new informational tools pollute the trace by
+   * accident.
+   */
+  isMutatingTool(name: string): boolean;
 }
 
 /**

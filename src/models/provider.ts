@@ -79,5 +79,19 @@ export interface LLMClient {
 
   userMessage(content: string): unknown;
 
-  toolResultMessages(calls: ToolCall[], results: ToolResult[]): unknown[];
+  /**
+   * Build the user-side messages that carry tool_result blocks for the
+   * next request. When `extraUserText` is set (reflection checkpoints,
+   * forthcoming deadline reminders), each provider weaves that text into
+   * the same user turn — Anthropic appends a `text` block to the user
+   * message containing the tool_result blocks; OpenAI appends a separate
+   * `user` message after the per-call `tool` messages. The reflection
+   * stays attached to the same logical turn instead of inventing a
+   * standalone user turn (which Anthropic forbids).
+   */
+  toolResultMessages(
+    calls: ToolCall[],
+    results: ToolResult[],
+    extraUserText?: string,
+  ): unknown[];
 }

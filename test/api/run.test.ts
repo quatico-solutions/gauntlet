@@ -160,6 +160,7 @@ describe("Run API", () => {
       readOutput: () => "",
       describeTarget: (t: string) => `running: ${t}`,
       defaultViewport: () => null,
+      isMutatingTool: () => false,
     } as unknown as Adapter;
 
     const stubClient: LLMClient = {} as unknown as LLMClient;
@@ -333,6 +334,7 @@ describe("Run API", () => {
       readOutput: () => "",
       describeTarget: (t: string) => `running: ${t}`,
       defaultViewport: () => null,
+      isMutatingTool: () => false,
       // PRI-1436: executeRun reads getChromeSession() to thread the
       // session into the streamer. Stub returns an empty session — the
       // streamer's constructor mkdirs synchronously before the session

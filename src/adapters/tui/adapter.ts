@@ -166,6 +166,10 @@ export class TUIAdapter implements Adapter {
     this._sessionName = null;
   }
 
+  isMutatingTool(name: string): boolean {
+    return name === "type" || name === "press";
+  }
+
   toolDefinitions(): ToolDefinition[] {
     const tools: ToolDefinition[] = [
       {
