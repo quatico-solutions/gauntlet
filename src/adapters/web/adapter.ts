@@ -48,6 +48,18 @@ const COOKIES_TAB = 0;
 // a guardrail against runaway tab creation, not a tuning knob.
 const MAX_TAB_DEPTH = 5;
 
+// Tools whose successful invocation changes browser/application state.
+// Used by isMutatingTool() to decide which calls land in the reflection
+// trace. read / screenshot / extract / wait_for / install_passkey /
+// install_cookies are observational or out-of-band setup; they are
+// excluded so the trace surfaces the agent's actual attempts to drive
+// the page.
+const WEB_MUTATING_TOOLS = new Set([
+  "click", "type", "press", "hover", "double_click", "right_click",
+  "drag", "mouse_move", "scroll", "file_upload", "navigate", "eval",
+  "new_tab", "close_tab",
+]);
+
 // Hard cap on how long a `return_screenshot` capture is allowed to take.
 // The pre-fix observed failure mode was a 30s hang when the capture was
 // issued mid-navigation; this cap turns that into a fast skip-with-reason
@@ -465,6 +477,10 @@ export class WebAdapter implements Adapter {
         }
       }
     }
+  }
+
+  isMutatingTool(name: string): boolean {
+    return WEB_MUTATING_TOOLS.has(name);
   }
 
   toolDefinitions(): ToolDefinition[] {

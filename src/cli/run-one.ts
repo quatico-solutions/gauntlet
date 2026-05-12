@@ -68,6 +68,7 @@ export async function runOne(opts: RunOneOptions): Promise<RunOneSummary> {
       target,
       budgetMs: config.defaultBudgetMs,
       maxStuckRetries: config.defaultMaxStuckRetries,
+      reflectionInterval: config.defaultReflectionInterval,
       chrome,
       viewport: config.defaultViewport,
     },

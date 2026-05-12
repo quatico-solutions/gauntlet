@@ -35,7 +35,11 @@ export function createOpenAIClient(model: string): LLMClient {
   };
 }
 
-export function openaiToolResultMessages(calls: ToolCall[], results: ToolResult[]): unknown[] {
+export function openaiToolResultMessages(
+  calls: ToolCall[],
+  results: ToolResult[],
+  extraUserText?: string,
+): unknown[] {
   const messages: unknown[] = calls.map((call, i) => ({
     role: "tool",
     tool_call_id: call.id,
@@ -62,6 +66,10 @@ export function openaiToolResultMessages(calls: ToolCall[], results: ToolResult[
         ...imageParts,
       ],
     });
+  }
+
+  if (extraUserText) {
+    messages.push({ role: "user", content: extraUserText });
   }
 
   return messages;

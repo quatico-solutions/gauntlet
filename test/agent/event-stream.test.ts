@@ -36,6 +36,7 @@ function makeAdapter(): Adapter {
     async start() {}, async close() {},
     describeTarget: (target: string) => `The application is available at: ${target}`,
     defaultViewport: () => null,
+      isMutatingTool: () => false,
   } as unknown as Adapter;
 }
 
@@ -139,6 +140,7 @@ describe("agent event stream", () => {
       async start() {}, async close() {},
       describeTarget: (target: string) => `The application is available at: ${target}`,
       defaultViewport: () => null,
+      isMutatingTool: () => false,
     } as unknown as Adapter;
 
     await runAgent(makeCard(), adapter, client, logger, undefined, {
@@ -183,6 +185,7 @@ describe("agent event stream", () => {
       async start() {}, async close() {},
       describeTarget: (target: string) => `The application is available at: ${target}`,
       defaultViewport: () => null,
+      isMutatingTool: () => false,
     } as unknown as Adapter;
 
     await runAgent(makeCard(), adapter, client, logger, undefined, {

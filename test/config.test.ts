@@ -107,6 +107,47 @@ describe("loadConfig", () => {
     expect(() => loadConfig({}, { GAUNTLET_SAVE_SCREENCAST: "maybe" } as NodeJS.ProcessEnv))
       .toThrow(/GAUNTLET_SAVE_SCREENCAST/);
   });
+
+  test("defaultReflectionInterval defaults to 10", () => {
+    const c = loadConfig({}, emptyEnv);
+    expect(c.defaultReflectionInterval).toBe(10);
+    expect(c.sources.defaultReflectionInterval).toBe("default");
+  });
+
+  test("GAUNTLET_REFLECTION_INTERVAL overrides default", () => {
+    const c = loadConfig({}, { GAUNTLET_REFLECTION_INTERVAL: "5" } as NodeJS.ProcessEnv);
+    expect(c.defaultReflectionInterval).toBe(5);
+    expect(c.sources.defaultReflectionInterval).toBe("env");
+  });
+
+  test("GAUNTLET_REFLECTION_INTERVAL=0 disables", () => {
+    const c = loadConfig({}, { GAUNTLET_REFLECTION_INTERVAL: "0" } as NodeJS.ProcessEnv);
+    expect(c.defaultReflectionInterval).toBe(0);
+    expect(c.sources.defaultReflectionInterval).toBe("env");
+  });
+
+  test("--reflection-interval flag overrides env", () => {
+    const c = loadConfig(
+      { reflectionInterval: 7 },
+      { GAUNTLET_REFLECTION_INTERVAL: "20" } as NodeJS.ProcessEnv,
+    );
+    expect(c.defaultReflectionInterval).toBe(7);
+    expect(c.sources.defaultReflectionInterval).toBe("flag");
+  });
+
+  test("invalid GAUNTLET_REFLECTION_INTERVAL throws", () => {
+    expect(() => loadConfig({}, { GAUNTLET_REFLECTION_INTERVAL: "-1" } as NodeJS.ProcessEnv))
+      .toThrow(/GAUNTLET_REFLECTION_INTERVAL/);
+    expect(() => loadConfig({}, { GAUNTLET_REFLECTION_INTERVAL: "abc" } as NodeJS.ProcessEnv))
+      .toThrow(/GAUNTLET_REFLECTION_INTERVAL/);
+  });
+
+  test("invalid --reflection-interval throws", () => {
+    expect(() => loadConfig({ reflectionInterval: -3 }, emptyEnv))
+      .toThrow(/reflection-interval/);
+    expect(() => loadConfig({ reflectionInterval: 1.5 }, emptyEnv))
+      .toThrow(/reflection-interval/);
+  });
 });
 
 describe("validateRunBody", () => {

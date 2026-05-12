@@ -35,6 +35,14 @@ export interface AppConfig {
    */
   defaultMaxStuckRetries: number;
   /**
+   * Number of LLM turns between reflection checkpoints. Every N turns
+   * the agent loop appends a `<SYSTEM-REMINDER>` block with a literal
+   * trace of recent mutating tool calls to the user message carrying
+   * tool results. Default 10; set to 0 to disable. Not enforced — a
+   * prompt nudge to recognize the agent's own loops.
+   */
+  defaultReflectionInterval: number;
+  /**
    * Viewport applied to the browsing tab on web-adapter runs (via
    * `Emulation.setDeviceMetricsOverride`). Per-run overrides (request
    * body `viewport` or CLI `--viewport`) take precedence.
@@ -101,6 +109,7 @@ export interface AppConfig {
     defaultTarget: "default" | "env" | "flag" | "unset";
     defaultBudgetMs: "default" | "env" | "flag";
     defaultMaxStuckRetries: "default" | "env" | "flag";
+    defaultReflectionInterval: "default" | "env" | "flag";
     defaultViewport: "default" | "env" | "flag";
     defaultSaveScreencast: "default" | "env" | "flag";
     shutdownGraceMs: "default" | "env";
@@ -122,6 +131,7 @@ export interface CliArgsInput {
   target?: string;
   maxTime?: string;
   maxStuckRetries?: number;
+  reflectionInterval?: number;
   viewport?: string;
   saveScreencast?: boolean;
   models?: { agent?: string; fanout?: string };
@@ -157,11 +167,13 @@ export interface EffectiveRunConfig {
   projectRoot: string;
   budgetMs: number;
   maxStuckRetries: number;
+  reflectionInterval: number;
 }
 
 const RUN_BODY_ALLOWED = new Set(["target", "model", "chrome", "adapter", "viewport", "saveScreencast", "passes"]);
 export const DEFAULT_BUDGET_MS = 300_000;
 export const DEFAULT_MAX_STUCK_RETRIES = 5;
+export const DEFAULT_REFLECTION_INTERVAL = 10;
 export const DEFAULT_VIEWPORT: Viewport = { width: 1440, height: 900 };
 
 function parseViewportString(raw: string, label: string): Viewport {
@@ -270,6 +282,7 @@ export function mergeRunConfig(app: AppConfig, body: RunRequestBody): EffectiveR
     projectRoot: app.projectRoot,
     budgetMs: app.defaultBudgetMs,
     maxStuckRetries: app.defaultMaxStuckRetries,
+    reflectionInterval: app.defaultReflectionInterval,
   };
 }
 
@@ -471,6 +484,26 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     stuckSource = "flag";
   }
 
+  // defaultReflectionInterval — turns between reflection checkpoints.
+  // 0 disables. Prompt-only nudge, not enforced.
+  let defaultReflectionInterval = DEFAULT_REFLECTION_INTERVAL;
+  let reflectionSource: "default" | "env" | "flag" = "default";
+  if (env.GAUNTLET_REFLECTION_INTERVAL) {
+    const raw = env.GAUNTLET_REFLECTION_INTERVAL;
+    if (!/^\d+$/.test(raw)) {
+      throw new Error(`Invalid GAUNTLET_REFLECTION_INTERVAL "${raw}": expected non-negative integer (0 disables)`);
+    }
+    defaultReflectionInterval = parseInt(raw, 10);
+    reflectionSource = "env";
+  }
+  if (args.reflectionInterval !== undefined) {
+    if (!Number.isInteger(args.reflectionInterval) || args.reflectionInterval < 0) {
+      throw new Error(`Invalid --reflection-interval ${args.reflectionInterval}: expected non-negative integer (0 disables)`);
+    }
+    defaultReflectionInterval = args.reflectionInterval;
+    reflectionSource = "flag";
+  }
+
   // shutdownGraceMs — drain window for graceful shutdown (PRI-1477).
   // No flag override; this is an operator-level knob (env only).
   const shutdownGraceMs = parseNonNegIntEnv(
@@ -568,6 +601,7 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     defaultTarget,
     defaultBudgetMs,
     defaultMaxStuckRetries,
+    defaultReflectionInterval,
     defaultViewport,
     defaultSaveScreencast,
     shutdownGraceMs,
@@ -589,6 +623,7 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
       defaultTarget: targetSource,
       defaultBudgetMs: budgetSource,
       defaultMaxStuckRetries: stuckSource,
+      defaultReflectionInterval: reflectionSource,
       defaultViewport: viewportSource,
       defaultSaveScreencast: saveScreencastSource,
       shutdownGraceMs: shutdownGraceMsSource,

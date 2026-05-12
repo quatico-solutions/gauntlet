@@ -33,6 +33,12 @@ export interface RunStartFields {
    * enforced in the loop.
    */
   maxStuckRetries: number;
+  /**
+   * Turns between mid-loop reflection-checkpoint injections; 0 disables.
+   * Surfaced on run_start so post-hoc readers can see what cadence the
+   * run was launched with.
+   */
+  reflectionInterval: number;
   toolTimeoutMs: number;
   contextTreeBytes: number;
   /** Absolute path to this run's evidence directory. Optional to keep
