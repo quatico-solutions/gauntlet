@@ -29,12 +29,6 @@ export interface AppConfig {
    */
   defaultBudgetMs: number;
   /**
-   * Hint to the model (injected into the system prompt) for how many
-   * retries on the same action before giving up and calling
-   * report_result with status=investigate. Not enforced in code.
-   */
-  defaultMaxStuckRetries: number;
-  /**
    * Number of LLM turns between reflection checkpoints. Every N turns
    * the agent loop appends a `<SYSTEM-REMINDER>` block with a literal
    * trace of recent mutating tool calls to the user message carrying
@@ -108,7 +102,6 @@ export interface AppConfig {
     defaultChrome: "default" | "env" | "flag";
     defaultTarget: "default" | "env" | "flag" | "unset";
     defaultBudgetMs: "default" | "env" | "flag";
-    defaultMaxStuckRetries: "default" | "env" | "flag";
     defaultReflectionInterval: "default" | "env" | "flag";
     defaultViewport: "default" | "env" | "flag";
     defaultSaveScreencast: "default" | "env" | "flag";
@@ -130,7 +123,6 @@ export interface CliArgsInput {
   chrome?: string;
   target?: string;
   maxTime?: string;
-  maxStuckRetries?: number;
   reflectionInterval?: number;
   viewport?: string;
   saveScreencast?: boolean;
@@ -166,13 +158,11 @@ export interface EffectiveRunConfig {
   saveScreencast: boolean;
   projectRoot: string;
   budgetMs: number;
-  maxStuckRetries: number;
   reflectionInterval: number;
 }
 
 const RUN_BODY_ALLOWED = new Set(["target", "model", "chrome", "adapter", "viewport", "saveScreencast", "passes"]);
 export const DEFAULT_BUDGET_MS = 300_000;
-export const DEFAULT_MAX_STUCK_RETRIES = 5;
 export const DEFAULT_REFLECTION_INTERVAL = 10;
 export const DEFAULT_VIEWPORT: Viewport = { width: 1440, height: 900 };
 
@@ -281,7 +271,6 @@ export function mergeRunConfig(app: AppConfig, body: RunRequestBody): EffectiveR
     saveScreencast: body.saveScreencast ?? app.defaultSaveScreencast,
     projectRoot: app.projectRoot,
     budgetMs: app.defaultBudgetMs,
-    maxStuckRetries: app.defaultMaxStuckRetries,
     reflectionInterval: app.defaultReflectionInterval,
   };
 }
@@ -461,29 +450,6 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     budgetSource = "flag";
   }
 
-  // defaultMaxStuckRetries — prompt-injected, not enforced.
-  let defaultMaxStuckRetries = DEFAULT_MAX_STUCK_RETRIES;
-  let stuckSource: "default" | "env" | "flag" = "default";
-  if (env.GAUNTLET_MAX_STUCK_RETRIES) {
-    const raw = env.GAUNTLET_MAX_STUCK_RETRIES;
-    if (!/^\d+$/.test(raw)) {
-      throw new Error(`Invalid GAUNTLET_MAX_STUCK_RETRIES "${raw}": expected positive integer`);
-    }
-    const parsed = parseInt(raw, 10);
-    if (parsed < 1) {
-      throw new Error(`Invalid GAUNTLET_MAX_STUCK_RETRIES "${raw}": expected positive integer`);
-    }
-    defaultMaxStuckRetries = parsed;
-    stuckSource = "env";
-  }
-  if (args.maxStuckRetries !== undefined) {
-    if (!Number.isInteger(args.maxStuckRetries) || args.maxStuckRetries < 1) {
-      throw new Error(`Invalid --max-stuck-retries ${args.maxStuckRetries}: expected positive integer`);
-    }
-    defaultMaxStuckRetries = args.maxStuckRetries;
-    stuckSource = "flag";
-  }
-
   // defaultReflectionInterval — turns between reflection checkpoints.
   // 0 disables. Prompt-only nudge, not enforced.
   let defaultReflectionInterval = DEFAULT_REFLECTION_INTERVAL;
@@ -600,7 +566,6 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
     defaultChrome,
     defaultTarget,
     defaultBudgetMs,
-    defaultMaxStuckRetries,
     defaultReflectionInterval,
     defaultViewport,
     defaultSaveScreencast,
@@ -622,7 +587,6 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
       defaultChrome: chromeSource,
       defaultTarget: targetSource,
       defaultBudgetMs: budgetSource,
-      defaultMaxStuckRetries: stuckSource,
       defaultReflectionInterval: reflectionSource,
       defaultViewport: viewportSource,
       defaultSaveScreencast: saveScreencastSource,

@@ -135,7 +135,6 @@ describe("runAgent — reflection checkpoints", () => {
     await runAgent(card, makeAdapter(), client, logger, "http://x", {
       runId: makeRunId(card.id),
       budgetMs: 600_000,
-      maxStuckRetries: 5,
       reflectionInterval: 3,
     });
 
@@ -191,7 +190,6 @@ describe("runAgent — reflection checkpoints", () => {
     await runAgent(card, adapter, client, makeLogger(), "http://x", {
       runId: makeRunId(card.id),
       budgetMs: 600_000,
-      maxStuckRetries: 5,
       reflectionInterval: 3,
     });
     const reminder = client._extraTexts[2]!;
@@ -213,7 +211,6 @@ describe("runAgent — reflection checkpoints", () => {
     await runAgent(card, makeAdapter(), client, logger, "http://x", {
       runId: makeRunId(card.id),
       budgetMs: 600_000,
-      maxStuckRetries: 5,
       reflectionInterval: 0,
     });
     expect(client._extraTexts.every((t) => t === undefined)).toBe(true);

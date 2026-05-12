@@ -45,7 +45,6 @@ export function buildSystemPrompt(
   contextTree: string | undefined,
   adapterName: string | undefined,
   projectPrompt: string | undefined,
-  maxStuckRetries: number,
 ): string {
   const parts: string[] = [];
 
@@ -56,13 +55,6 @@ export function buildSystemPrompt(
   }
 
   parts.push(loadPromptFile("evaluation"));
-
-  parts.push(
-    loadPromptFile("stuck-handling").replace(
-      "{{MAX_STUCK_RETRIES}}",
-      String(maxStuckRetries),
-    ),
-  );
 
   // Per-adapter overlay (e.g. web side-trip guidance). Whitelisted to
   // the known adapter types so a missing adapter-{name}.md for a real

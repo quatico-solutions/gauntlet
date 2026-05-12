@@ -147,7 +147,6 @@ export async function executeHttpRun(
         adapter: effective.adapter,
         target: effective.target,
         budgetMs: effective.budgetMs,
-        maxStuckRetries: effective.maxStuckRetries,
         reflectionInterval: effective.reflectionInterval,
         chrome: effective.chrome,
         viewport: effective.viewport,

@@ -127,7 +127,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.status).toBe("pass");
     expect(result.summary).toBe("All good");
@@ -167,7 +167,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     // Second chat() call should have: initial user message + rawAssistantMessage + tool result
     const secondCallMessages = (client as any)._chatCalls[1];
@@ -239,7 +239,7 @@ describe("runAgent", () => {
       click: "clicked .btn",
     });
 
-    const result = await runAgent(card, adapter, client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    const result = await runAgent(card, adapter, client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.status).toBe("pass");
     expect(result.summary).toBe("UI renders correctly");
@@ -312,7 +312,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.usage).toEqual({
       inputTokens: 750,
@@ -374,7 +374,7 @@ describe("runAgent", () => {
 
     const result = await runAgent(
       card, slowAdapter as any, client, makeMockLogger(), undefined,
-      { toolTimeoutMs: 500, runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 }
+      { toolTimeoutMs: 500, runId: makeRunId(card.id), budgetMs: 600_000 }
     );
 
     expect(result.status).toBe("fail");
@@ -393,7 +393,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.status).toBe("investigate");
     expect(result.summary).toContain("max_tokens");
@@ -412,7 +412,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.status).toBe("investigate");
     expect(result.summary).toContain("neither tool call nor text");
@@ -440,7 +440,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.status).toBe("investigate");
     expect(result.summary).toContain("malformed report_result");
@@ -481,7 +481,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.usage).toEqual({
       inputTokens: 1200,
@@ -517,7 +517,7 @@ describe("runAgent", () => {
       },
     ]);
 
-    const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+    const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.status).toBe("pass");
     // Exactly one logged dropped-tools event, and it names the two.
@@ -567,7 +567,7 @@ describe("runAgent", () => {
         },
       ]);
 
-      await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 });
+      await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
       // Every setTimeout in the race path should be matched by a clearTimeout.
       // We had at least one tool call, so created must be >= 1.
@@ -623,7 +623,7 @@ describe("runAgent", () => {
       client,
       makeMockLogger(),
       undefined,
-      { runId: makeRunId(card.id), budgetMs: 600_000, maxStuckRetries: 5 }
+      { runId: makeRunId(card.id), budgetMs: 600_000 }
     );
 
     expect(result.status).toBe("fail");
@@ -675,7 +675,6 @@ describe("runAgent", () => {
     const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, {
       runId: makeRunId(card.id),
       budgetMs: 0,
-      maxStuckRetries: 5,
     });
 
     // Honor the agent's verdict from the grace turn.
@@ -734,7 +733,6 @@ describe("runAgent", () => {
     const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, {
       runId: makeRunId(card.id),
       budgetMs: 0,
-      maxStuckRetries: 5,
     });
 
     expect(result.status).toBe("investigate");

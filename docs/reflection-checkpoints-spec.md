@@ -1,15 +1,17 @@
 # Reflection Checkpoints — Spec
 
-**Status:** draft, pending sign-off
+**Status:** implemented; `stuck-handling.md` retired in favor of this design
 **Author:** Granny@ff86836c (Opus 4.7)
 **Date:** 2026-05-12
 
 ## Problem
 
 The agent loop has no mechanism to recognize when it has stopped making
-progress. The existing `src/agent/prompts/stuck-handling.md` is read into
-the system prompt once at run start; by turn 20+ it is buried under
-megabytes of tool-call/tool-result traffic and stops driving behavior.
+progress. The previous attempt — a `stuck-handling.md` block in the
+system prompt at run start — was buried under megabytes of
+tool-call/tool-result traffic by turn 20+ and stopped driving behavior.
+That block has now been retired (the reflection checkpoints supersede
+its practical effect).
 
 Empirical evidence from `examples/tutorial/.gauntlet/results/`: a
 representative `tutorial-04-login-credentials` run burned 23 tool calls
@@ -160,9 +162,8 @@ own approach) — is more valuable than burning budget on more variations.
 ```
 
 The reminder is **prompt-only**, never enforced. No tool-stripping or
-forced exit at any number of firings — this matches the existing
-`maxStuckRetries` posture. The deadline grace path remains the only
-hard-stop in the loop.
+forced exit at any number of firings. The deadline grace path remains
+the only hard-stop in the loop.
 
 **Rationale for no escalation.** Earlier drafts of this spec included
 three escalating levels (gentle / pointed / terminal). The terminal
@@ -182,9 +183,6 @@ tonal escalation in the framing.
 - **Config field:** `defaultReflectionInterval` in app config; threaded
   through to `AgentOptions.reflectionInterval`.
 
-Naming follows the existing `maxStuckRetries` / `GAUNTLET_MAX_STUCK_RETRIES`
-pattern.
-
 ## Evidence logging
 
 Each checkpoint emits:
@@ -201,12 +199,17 @@ Each checkpoint emits:
 - Signal-based triggers (repeated identical tool calls, consecutive
   errors). Possible future addition, but the cadence-only design must
   prove out first. Adding signals later is purely additive.
-- Tightening the existing `stuck-handling.md` system-prompt block —
-  separate question. The reflection checkpoints supersede its
-  practical effect; we can decide later whether to remove it.
-- Adjusting `maxStuckRetries` semantics. Left as-is.
 - Per-card cadence overrides. Global default is sufficient until we
   see runs.
+
+## Follow-up
+
+After live testing on both stuck and long-but-progressing runs,
+`stuck-handling.md` and the `maxStuckRetries` knob were retired
+entirely (the latter is gone from config, CLI, env, run_start logging,
+and `RunConfigSnapshot`; result schema bumped to v4). The reflection
+checkpoint is the sole give-up mechanism short of the deadline grace
+turn.
 
 ## Acceptance
 

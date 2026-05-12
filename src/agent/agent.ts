@@ -30,11 +30,6 @@ export interface AgentOptions {
   budgetMs: number;
 
   /**
-   * Hint injected into the system prompt for how many retries on the same
-   * action before the model should give up. Not enforced in code.
-   */
-  maxStuckRetries: number;
-  /**
    * Number of LLM turns between mid-loop reflection checkpoints. Each
    * checkpoint appends a `<SYSTEM-REMINDER>` block (recent mutating-call
    * trace + give-up framing) to the user message carrying tool results.
@@ -140,13 +135,12 @@ export async function runAgent(
   options: AgentOptions,
 ): Promise<VetResult> {
   const startTime = Date.now();
-  const { runId, budgetMs, maxStuckRetries } = options;
+  const { runId, budgetMs } = options;
   const systemPrompt = buildSystemPrompt(
     card,
     options.contextTree,
     adapter.name,
     options.projectPrompt,
-    maxStuckRetries,
   );
   const tools = [...adapter.toolDefinitions(), REPORT_TOOL];
 
@@ -158,7 +152,6 @@ export async function runAgent(
     model: options.model ?? "unknown",
     adapter: adapter.name ?? "unknown",
     budgetMs,
-    maxStuckRetries,
     reflectionInterval: options.reflectionInterval,
     toolTimeoutMs: options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS,
     contextTreeBytes: options.contextTree ? Buffer.byteLength(options.contextTree, "utf8") : 0,

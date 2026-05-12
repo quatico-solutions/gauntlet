@@ -28,12 +28,6 @@ export interface RunStartFields {
   budgetMs: number;
 
   /**
-   * Hint injected into the system prompt for how many retries on the same
-   * action before the model should give up. Observational only — not
-   * enforced in the loop.
-   */
-  maxStuckRetries: number;
-  /**
    * Turns between mid-loop reflection-checkpoint injections; 0 disables.
    * Surfaced on run_start so post-hoc readers can see what cadence the
    * run was launched with.

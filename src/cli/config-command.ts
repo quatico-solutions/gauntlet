@@ -8,7 +8,6 @@ interface ConfigOutput {
     defaultChrome: { host: string; port: number };
     defaultTarget: string | null;
     defaultBudgetMs: number;
-    defaultMaxStuckRetries: number;
     defaultReflectionInterval: number;
     defaultViewport: { width: number; height: number };
     defaultSaveScreencast: boolean;
@@ -48,7 +47,6 @@ export function buildConfigOutput(config: AppConfig, env: NodeJS.ProcessEnv): Co
       defaultChrome: config.defaultChrome,
       defaultTarget: config.defaultTarget ?? null,
       defaultBudgetMs: config.defaultBudgetMs,
-      defaultMaxStuckRetries: config.defaultMaxStuckRetries,
       defaultReflectionInterval: config.defaultReflectionInterval,
       defaultViewport: config.defaultViewport,
       defaultSaveScreencast: config.defaultSaveScreencast,
@@ -93,7 +91,6 @@ export function formatConfigText(output: ConfigOutput): string {
   lines.push(`  defaultChrome:  ${output.gauntlet.defaultChrome.host}:${output.gauntlet.defaultChrome.port}  (${output.gauntlet.sources.defaultChrome})`);
   lines.push(`  defaultTarget:  ${output.gauntlet.defaultTarget ?? "(unset)"}  (${output.gauntlet.sources.defaultTarget})`);
   lines.push(`  defaultBudgetMs: ${output.gauntlet.defaultBudgetMs}  (${output.gauntlet.sources.defaultBudgetMs})`);
-  lines.push(`  defaultMaxStuckRetries: ${output.gauntlet.defaultMaxStuckRetries}  (${output.gauntlet.sources.defaultMaxStuckRetries})`);
   lines.push(`  defaultReflectionInterval: ${output.gauntlet.defaultReflectionInterval}  (${output.gauntlet.sources.defaultReflectionInterval})`);
   lines.push(`  defaultViewport: ${output.gauntlet.defaultViewport.width}x${output.gauntlet.defaultViewport.height}  (${output.gauntlet.sources.defaultViewport})`);
   lines.push(`  defaultSaveScreencast: ${output.gauntlet.defaultSaveScreencast}  (${output.gauntlet.sources.defaultSaveScreencast})`);

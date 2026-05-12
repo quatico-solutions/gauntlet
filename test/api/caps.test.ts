@@ -42,33 +42,15 @@ describe("validateRunBody: body.turns is rejected", () => {
   });
 });
 
-describe("loadConfig: GAUNTLET_MAX_TIME and GAUNTLET_MAX_STUCK_RETRIES", () => {
-  test("default budget is 5 minutes; default stuck retries is 5", () => {
+describe("loadConfig: GAUNTLET_MAX_TIME", () => {
+  test("default budget is 5 minutes", () => {
     const c = loadConfig({}, {} as NodeJS.ProcessEnv);
     expect(c.defaultBudgetMs).toBe(300_000);
-    expect(c.defaultMaxStuckRetries).toBe(5);
   });
 
   test("GAUNTLET_MAX_TIME accepts duration strings", () => {
     const c = loadConfig({}, { GAUNTLET_MAX_TIME: "30s" } as NodeJS.ProcessEnv);
     expect(c.defaultBudgetMs).toBe(30_000);
-  });
-
-  test("GAUNTLET_MAX_STUCK_RETRIES accepts positive integer", () => {
-    const c = loadConfig({}, { GAUNTLET_MAX_STUCK_RETRIES: "3" } as NodeJS.ProcessEnv);
-    expect(c.defaultMaxStuckRetries).toBe(3);
-  });
-
-  test("rejects GAUNTLET_MAX_STUCK_RETRIES with trailing garbage like '3abc'", () => {
-    expect(() =>
-      loadConfig({ args: {} } as any, { GAUNTLET_MAX_STUCK_RETRIES: "3abc" } as NodeJS.ProcessEnv),
-    ).toThrow(/GAUNTLET_MAX_STUCK_RETRIES.*3abc/);
-  });
-
-  test("rejects fractional GAUNTLET_MAX_STUCK_RETRIES", () => {
-    expect(() =>
-      loadConfig({ args: {} } as any, { GAUNTLET_MAX_STUCK_RETRIES: "3.5" } as NodeJS.ProcessEnv),
-    ).toThrow(/GAUNTLET_MAX_STUCK_RETRIES.*3.5/);
   });
 
   test("CLI --max-time overrides env", () => {

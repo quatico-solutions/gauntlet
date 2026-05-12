@@ -135,7 +135,6 @@ describe("EvidenceLogger", () => {
       model: "claude-opus-4-7",
       adapter: "web",
       budgetMs: 300_000,
-      maxStuckRetries: 5,
       toolTimeoutMs: 30000,
       contextTreeBytes: 0,
     });
@@ -153,7 +152,6 @@ describe("EvidenceLogger", () => {
     expect(row.cardId).toBe("card-001");
     expect(row.provider).toBe("anthropic");
     expect(row.budgetMs).toBe(300_000);
-    expect(row.maxStuckRetries).toBe(5);
   });
 
   test("each subsequent event chains parentEventId to the previous eventId", () => {
@@ -268,7 +266,6 @@ describe("EvidenceLogger", () => {
       model: "claude-opus-4-7",
       adapter: "web",
       budgetMs: 300_000,
-      maxStuckRetries: 5,
       toolTimeoutMs: 30000,
       contextTreeBytes: 0,
     });

@@ -8,7 +8,10 @@
 //     in ms) and maxStuckRetries (prompt-injected stuck-retry hint).
 //     Reflects the time-budget loop replacing maxTurns. See
 //     docs/superpowers/specs/2026-05-11-time-budget-and-stuck-detection-spec.md.
-export const RESULT_SCHEMA_VERSION = 3;
+// v4: Removed maxStuckRetries (the stuck-handling system-prompt block it
+//     templated into has been retired in favor of mid-loop reflection
+//     checkpoints — see docs/reflection-checkpoints-spec.md, PRI-1569).
+export const RESULT_SCHEMA_VERSION = 4;
 
 import type { RunSetCtx } from "./runs/run-set-types";
 
@@ -20,8 +23,6 @@ export interface RunConfigSnapshot {
   chrome?: string;
   /** Wall-clock budget in ms that this run was launched with. */
   budgetMs: number;
-  /** Stuck-retry hint that was injected into the system prompt for this run. */
-  maxStuckRetries: number;
   /**
    * Viewport this run actually used, reported by the adapter. Units are
    * adapter-dependent: CSS pixels for web, character cells for tui.

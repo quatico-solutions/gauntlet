@@ -46,7 +46,6 @@ export interface RunCoreConfig {
   adapter: RunAdapterType;
   target: string;
   budgetMs: number;
-  maxStuckRetries: number;
   /** Turns between reflection-checkpoint injections; 0 disables. */
   reflectionInterval: number;
   /** Already-resolved Chrome endpoint, or undefined to let WebAdapter
@@ -190,7 +189,6 @@ export async function executeRunCore(
       adapter: runConfig.adapter,
       chrome: runConfig.chrome ? `${runConfig.chrome.host}:${runConfig.chrome.port}` : undefined,
       budgetMs: runConfig.budgetMs,
-      maxStuckRetries: runConfig.maxStuckRetries,
       viewport: snapshotViewport(adapter),
     };
 
@@ -199,7 +197,6 @@ export async function executeRunCore(
       projectPrompt,
       runId,
       budgetMs: runConfig.budgetMs,
-      maxStuckRetries: runConfig.maxStuckRetries,
       reflectionInterval: runConfig.reflectionInterval,
       provider: resolveProvider(runConfig.model),
       model: runConfig.model,

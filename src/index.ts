@@ -29,10 +29,8 @@ async function main() {
     case "run": {
       if (args.showPromptAndExit) {
         // Introspect path: render the composed system prompt with
-        // provenance and exit. Load config to respect env/flag overrides
-        // (e.g. GAUNTLET_MAX_STUCK_RETRIES) in the rendered prompt.
-        // loadConfigOrThrow does NOT require LLM creds; only
-        // requireLlmCapableOrThrow does.
+        // provenance and exit. loadConfigOrThrow does NOT require LLM
+        // creds; only requireLlmCapableOrThrow does.
         const { showPromptAndExit } = await import("./cli/show-prompt");
         const config = await loadConfigOrThrow(args.cli);
         const viewport = args.cli.viewport ?? "1440x900";
@@ -43,7 +41,6 @@ async function main() {
           projectRoot: config.projectRoot,
           projectPromptPath: args.projectPromptPath,
           viewport,
-          maxStuckRetries: config.defaultMaxStuckRetries,
         });
         break;
       }
