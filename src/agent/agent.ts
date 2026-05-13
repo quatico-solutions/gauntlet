@@ -1,4 +1,5 @@
 import type { LLMClient, ToolDefinition, ToolResult } from "../models/provider";
+import { pushAssistantTurn } from "../models/provider";
 import type { Adapter } from "../adapters/adapter";
 import type { EvidenceLogger } from "../evidence/logger";
 import type { StoryCard } from "../format/story-card";
@@ -235,7 +236,7 @@ export async function runAgent(
 
   while (Date.now() < deadline) {
     logger.logLlmRequest(turns + 1, messages.length);
-    const response = await client.chat(messages, tools, systemPrompt);
+    const response = await client.chat(messages, tools, systemPrompt, { runId });
 
     totalInputTokens += response.usage.inputTokens;
     totalOutputTokens += response.usage.outputTokens;
@@ -261,6 +262,7 @@ export async function runAgent(
       stopReason: response.stopReason,
       text: response.text,
       thinking: thinkingBlocks,
+      reasoning: response.reasoning,
       toolCalls: response.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
       usage: {
         inputTokens: response.usage.inputTokens,
@@ -330,7 +332,7 @@ export async function runAgent(
 
     // Process tool calls
     if (response.toolCalls.length > 0) {
-      messages.push(response.rawAssistantMessage);
+      pushAssistantTurn(messages, response.rawAssistantMessage);
 
       const toolTimeout = options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
       const results: ToolResult[] = [];
@@ -404,7 +406,7 @@ export async function runAgent(
 
       messages.push(...client.toolResultMessages(response.toolCalls, results, extraUserText));
     } else if (response.text) {
-      messages.push(response.rawAssistantMessage);
+      pushAssistantTurn(messages, response.rawAssistantMessage);
       messages.push(
         client.userMessage(
           "Use the tools to interact with the application, or call report_result when done."
@@ -457,7 +459,7 @@ export async function runAgent(
   messages.push(client.userMessage(reminderText));
 
   logger.logLlmRequest(graceTurn, messages.length);
-  const graceResponse = await client.chat(messages, [REPORT_TOOL], systemPrompt);
+  const graceResponse = await client.chat(messages, [REPORT_TOOL], systemPrompt, { runId });
   totalInputTokens += graceResponse.usage.inputTokens;
   totalOutputTokens += graceResponse.usage.outputTokens;
   totalCacheCreation += graceResponse.usage.cacheCreationInputTokens ?? 0;

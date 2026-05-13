@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import type { LLMClient, ToolCall, ToolDefinition, ToolResult } from "../models/provider";
+import { pushAssistantTurn } from "../models/provider";
 import { buildRevivalAddendum } from "./system-prompt-addendum";
 import { getAdapterToolDefinitionsByName } from "../adapters/registry";
 import { REPORT_TOOL } from "../agent/agent";
@@ -124,7 +125,7 @@ export function rebuildMessages(
     }
 
     if (llmResp) {
-      messages.push(llmResp.rawAssistantMessage);
+      pushAssistantTurn(messages, llmResp.rawAssistantMessage);
     }
 
     if (toolResultEvts.length > 0) {

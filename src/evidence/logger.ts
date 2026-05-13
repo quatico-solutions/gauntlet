@@ -50,6 +50,16 @@ export interface LlmResponseFields {
   stopReason: string;
   text: string;
   thinking: Array<{ text: string; signature?: string }>;
+  /**
+   * Model's reasoning content for this turn (provider-neutral).
+   * Sourced from `AgentResponse.reasoning`. Distinct from the
+   * verdict's `reasoning` field on `RunEndFields` — that's the
+   * agent's justification for its pass/fail/investigate verdict;
+   * this is what the model thought during the turn. OpenAI populates
+   * this with summary text from `ResponseReasoningItem.summary[]`
+   * (a model-authored summary, not raw chain-of-thought).
+   */
+  reasoning?: string;
   toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
   usage: {
     inputTokens: number;

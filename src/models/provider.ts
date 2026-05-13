@@ -31,18 +31,28 @@ export interface ToolResult {
 }
 
 export interface TokenUsage {
+  /**
+   * Uncached input tokens for this turn. Convention: Anthropic's
+   * `input_tokens` is naturally disjoint from `cache_read_input_tokens`,
+   * so it lands here as-is. OpenAI's `ResponseUsage.input_tokens`
+   * *includes* `input_tokens_details.cached_tokens`; the OpenAI
+   * adapter subtracts so this field stays uncached-only across both
+   * providers.
+   */
   inputTokens: number;
   outputTokens: number;
   /**
-   * Tokens written to the prompt cache on this turn. Set by Anthropic's
-   * `cache_creation_input_tokens`. OpenAI's SDK does not surface this
-   * metric in the current shape we consume, so it stays undefined there.
+   * Tokens written to the prompt cache on this turn. Anthropic only —
+   * set from `cache_creation_input_tokens`. OpenAI's `ResponseUsage`
+   * returns only a read counter, no write counter, so this stays
+   * undefined there.
    */
   cacheCreationInputTokens?: number;
   /**
-   * Tokens read from the prompt cache on this turn. Set by Anthropic's
-   * `cache_read_input_tokens`. Tells us whether the three cache
-   * breakpoints in anthropic.ts are actually hitting.
+   * Tokens read from the prompt cache on this turn. Both providers
+   * populate this — Anthropic from `cache_read_input_tokens`, OpenAI
+   * from `input_tokens_details.cached_tokens`. Tells us whether
+   * caching is actually hitting.
    */
   cacheReadInputTokens?: number;
 }
@@ -64,17 +74,39 @@ export type StopReason =
 
 export interface AgentResponse {
   text: string;
+  /**
+   * Model's reasoning content for this turn. OpenAI populates with
+   * the joined text from `ResponseReasoningItem.summary[]` (a model-
+   * authored summary, not raw chain-of-thought — OpenAI does not
+   * expose raw thoughts). Anthropic will populate with extended-
+   * thinking text once the separate Anthropic ticket lands; today
+   * it leaves this undefined. Distinct from the verdict's
+   * `reasoning` field on RunEndFields, which is the agent's
+   * justification for its pass/fail/investigate verdict.
+   */
+  reasoning?: string;
   toolCalls: ToolCall[];
   stopReason: StopReason;
   rawAssistantMessage: unknown;
   usage: TokenUsage;
 }
 
+/**
+ * Optional per-request context. Currently used by the OpenAI adapter
+ * for `prompt_cache_key` (set to `runId`) to improve routing
+ * stickiness across turns of the same run. Anthropic ignores it; its
+ * caching uses `cache_control` breakpoints, not key-based routing.
+ */
+export interface RequestContext {
+  runId?: string;
+}
+
 export interface LLMClient {
   chat(
     messages: unknown[],
     tools: ToolDefinition[],
-    systemPrompt: string
+    systemPrompt: string,
+    requestContext?: RequestContext,
   ): Promise<AgentResponse>;
 
   userMessage(content: string): unknown;
@@ -94,4 +126,19 @@ export interface LLMClient {
     results: ToolResult[],
     extraUserText?: string,
   ): unknown[];
+}
+
+/**
+ * Append an assistant turn's `rawAssistantMessage` to the messages
+ * array. Anthropic returns a single message object → push as-is.
+ * OpenAI Responses returns an array of output items (reasoning,
+ * function calls, message) → spread into the flat `input[]` shape
+ * the next request expects.
+ */
+export function pushAssistantTurn(messages: unknown[], rawAssistantMessage: unknown): void {
+  if (Array.isArray(rawAssistantMessage)) {
+    messages.push(...rawAssistantMessage);
+  } else {
+    messages.push(rawAssistantMessage);
+  }
 }
