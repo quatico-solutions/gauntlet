@@ -67,6 +67,10 @@ export interface ToolResultFields {
   durationMs: number;
   text: string;
   image?: string;            // relative path
+  /** Media type of the image (e.g. "image/png"). Set when `image` is set
+   * so post-hoc readers (e.g. session revival) can re-feed the bytes
+   * into a provider-native image block without guessing. */
+  mediaType?: string;
   artifact?: string;         // relative path
   /** Relative path to a TUI capture (`captures/NNN.ansi`). When set, the
    * tool_result row's `text` is replaced with this path to keep
@@ -175,6 +179,12 @@ export class EvidenceLogger {
 
   logSystemPrompt(content: string): void {
     this.writeEvent("system_prompt", { content });
+  }
+
+  logToolDefinitions(
+    tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>,
+  ): void {
+    this.writeEvent("tool_definitions", { tools });
   }
 
   logUserMessage(turn: number, content: string): void {

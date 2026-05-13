@@ -425,4 +425,48 @@ describe("EvidenceLogger", () => {
     expect(row.name).toBe("navigate");
     expect(row.arguments.url).toBe("/");
   });
+
+  test("logToolDefinitions writes a tool_definitions event with the full tools array", () => {
+    logger.logSystemPrompt("hello system");
+    logger.logToolDefinitions([
+      { name: "click", description: "Click", parameters: { type: "object" } },
+      { name: "report_result", description: "Report", parameters: { type: "object" } },
+    ]);
+
+    const rows = readFileSync(join(outDir, "run.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+
+    const evt = rows.find((r) => r.type === "tool_definitions");
+    expect(evt).toBeDefined();
+    expect(evt.tools).toHaveLength(2);
+    expect(evt.tools[0].name).toBe("click");
+    expect(evt.tools[1].name).toBe("report_result");
+    // parentEventId chains after the system_prompt event
+    const sysRow = rows.find((r) => r.type === "system_prompt");
+    expect(evt.parentEventId).toBe(sysRow.eventId);
+  });
+
+  test("logToolResult records optional mediaType for images", () => {
+    logger.logToolResult({
+      turn: 1,
+      toolUseId: "tu_1",
+      name: "screenshot",
+      durationMs: 12,
+      text: "",
+      image: "screenshots/001.png",
+      mediaType: "image/png",
+      error: false,
+    });
+
+    const row = readFileSync(join(outDir, "run.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((r) => r.type === "tool_result");
+
+    expect(row.mediaType).toBe("image/png");
+    expect(row.image).toBe("screenshots/001.png");
+  });
 });
