@@ -65,10 +65,17 @@ function attachKeyboardInput({ state, getPageSession, click }) {
 
   /**
    * Smart text input. If `selector` is supplied, focuses the element
-   * (via JS focus to avoid mouse-click side effects). Then types the
+   * (via JS focus to avoid mouse-click side effects) AND clears any
+   * existing value so the call is replace-not-append. Then types the
    * value, treating \t as Tab, \n as Enter (unless current focus is a
    * <textarea>, in which case \n is inserted as a literal newline).
    * Buffers runs of plain characters into single insertText calls.
+   *
+   * The clear step uses the native value setter and dispatches an
+   * input event so framework-tracked inputs (React's onChange,
+   * Vue's v-model, etc.) see the change — a plain `el.value = ''`
+   * is invisible to React, which is why "I cleared the field but it
+   * still has its old value" is a frequent agent failure mode.
    *
    * Special characters in `value`: \t = Tab, \n = Enter (or newline in textarea).
    * Literal "\\t" / "\\n" in the input are also normalised — MCP payloads
@@ -78,16 +85,34 @@ function attachKeyboardInput({ state, getPageSession, click }) {
     const ps = await getPageSession(tabIndexOrPageSession);
 
     if (selector) {
-      const focusJs = `
+      const focusAndClearJs = `
         (() => {
           const el = ${getElementSelector(selector)};
           if (!el) return { success: false, error: 'Element not found' };
           el.focus();
-          return { success: true, focused: document.activeElement === el };
+          if (document.activeElement !== el) {
+            return { success: false, error: 'Failed to focus element' };
+          }
+          // Clear via the native value setter so framework-tracked
+          // inputs (React) see the change. Skip clear for non-text
+          // fields that don't have a string value (checkboxes etc.).
+          if ('value' in el && typeof el.value === 'string') {
+            const proto = el instanceof HTMLTextAreaElement
+              ? HTMLTextAreaElement.prototype
+              : HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            if (setter) {
+              setter.call(el, '');
+            } else {
+              el.value = '';
+            }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          return { success: true };
         })()
       `;
       const focusResult = await ps.send('Runtime.evaluate', {
-        expression: focusJs,
+        expression: focusAndClearJs,
         returnByValue: true,
       });
       throwIfExceptionDetails(focusResult);
