@@ -1,11 +1,8 @@
 ---
-title: Sonnet 4.6 selects tools by what their descriptions say — descriptions are load-bearing
+title: "Sonnet 4.6 selects tools by what their descriptions say — descriptions are load-bearing"
+source: "../sources/resolve-ai-sonnet-46-impressions.md"
 created: 2026-05-12
-source: ../sources/resolve-ai-sonnet-46-impressions.md
-links:
-  - sonnet-46-is-more-proactive-than-45
-  - bloated-tool-sets-cause-ambiguity
-  - tester-not-developer-pattern
+links: [bloated-tool-sets-cause-ambiguity, sonnet-46-is-more-proactive-than-45, stable-prefix-is-the-caching-strategy, tester-not-developer-pattern]
 ---
 
 # Sonnet 4.6 selects tools by what their descriptions say — descriptions are load-bearing

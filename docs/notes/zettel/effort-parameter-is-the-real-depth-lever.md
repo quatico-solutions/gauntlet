@@ -1,10 +1,8 @@
 ---
-title: The `effort` parameter is the real depth lever; prompts are not
+title: "The `effort` parameter is the real depth lever; prompts are not"
+source: "../sources/anthropic-claude-4-best-practices.md"
 created: 2026-05-12
-source: ../sources/anthropic-claude-4-best-practices.md
-links:
-  - late-claude-overtriggers-on-aggressive-prompts
-  - sonnet-46-defaults-to-high-effort
+links: [chat-completions-cannot-expose-reasoning, late-claude-overtriggers-on-aggressive-prompts, reasoning-summary-not-raw-thoughts, sonnet-46-defaults-to-high-effort]
 ---
 
 # The `effort` parameter is the real depth lever; prompts are not

@@ -1,10 +1,8 @@
 ---
-title: Push state out of the prompt and into the harness; long loops bury static reminders
+title: "Push state out of the prompt and into the harness; long loops bury static reminders"
+source: "../../reflection-checkpoints-spec.md"
 created: 2026-05-12
-source: ../../reflection-checkpoints-spec.md
-links:
-  - reflection-trace-as-permission-slip
-  - effort-parameter-is-the-real-depth-lever
+links: [effort-parameter-is-the-real-depth-lever, prompt-cache-key-is-routing-not-lookup, reflection-trace-as-permission-slip]
 ---
 
 # Push state out of the prompt and into the harness; long loops bury static reminders

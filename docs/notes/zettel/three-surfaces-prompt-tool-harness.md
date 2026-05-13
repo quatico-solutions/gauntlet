@@ -1,12 +1,8 @@
 ---
-title: Agent behavior has three surfaces — prompt, tool, harness; each is the right lever for different problems
+title: "Agent behavior has three surfaces — prompt, tool, harness; each is the right lever for different problems"
+source: "(synthesis — Lirael@5062343a)"
 created: 2026-05-12
-source: (synthesis — Lirael@5062343a)
-links:
-  - tool-descriptions-load-bearing-on-46
-  - state-out-of-prompt-into-harness
-  - bloated-tool-sets-cause-ambiguity
-  - effort-parameter-is-the-real-depth-lever
+links: [bloated-tool-sets-cause-ambiguity, effort-parameter-is-the-real-depth-lever, stable-prefix-is-the-caching-strategy, state-out-of-prompt-into-harness, tool-descriptions-load-bearing-on-46]
 ---
 
 # Agent behavior has three surfaces — prompt, tool, harness; each is the right lever for different problems
