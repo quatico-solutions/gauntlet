@@ -37,7 +37,7 @@ describe("compiled binary --show-prompt-and-exit", () => {
       ], { cwd: runDir, encoding: "utf-8" });
 
       expect(r.status).toBe(0);
-      expect(r.stdout).toContain("You are a thorough QA tester");  // Persona body
+      expect(r.stdout).toContain("You are an auditor");  // Persona body
       expect(r.stdout).toContain("Side trips for sign-in flows");  // Adapter web body
     } finally {
       rmSync(buildDir, { recursive: true, force: true });

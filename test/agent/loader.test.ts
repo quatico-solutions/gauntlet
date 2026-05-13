@@ -12,8 +12,8 @@ describe("loadPromptFile", () => {
     }
   });
 
-  test("persona file has the QA-tester opener", () => {
-    expect(loadPromptFile("persona")).toMatch(/^You are a thorough QA tester\./);
+  test("persona file has the auditor opener", () => {
+    expect(loadPromptFile("persona")).toMatch(/^You are an auditor\./);
   });
 
   test("evaluation file has the Reporting header", () => {
