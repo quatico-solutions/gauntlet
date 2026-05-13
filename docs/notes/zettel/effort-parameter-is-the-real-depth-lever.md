@@ -10,13 +10,21 @@ links:
 # The `effort` parameter is the real depth lever; prompts are not
 
 Sonnet 4.6 (and Opus 4.6/4.7) use adaptive thinking calibrated by an
-`effort` parameter — `low | medium | high | xhigh | max`. Higher
+`effort` parameter. The API surface in `@anthropic-ai/sdk@0.78.0`
+exposes `low | medium | high | max` on `output_config.effort`; the
+five-tier `low | medium | high | xhigh | max` naming appears in Claude
+Code's UI but not in the public SDK type as of this writing. Higher
 effort elicits more reasoning. The Anthropic guidance is clear: when
 you observe over-investigation or under-investigation, the *first*
 lever is `effort`, not the prompt.
 
 > "If you observe shallow reasoning on complex problems, raise effort
 > to `high` or `xhigh` rather than prompting around it."
+
+(The Anthropic doc cites `xhigh` in this prose, but the value isn't
+present on `output_config.effort` in SDK 0.78.0 — likely either ahead
+of the SDK or specific to a separate API surface. Use `high` or `max`
+in code today.)
 > "In some cases, Claude Opus 4.6 may think extensively… If this
 > behavior is undesirable, you can add explicit instructions to
 > constrain its reasoning, or you can lower the `effort` setting."
