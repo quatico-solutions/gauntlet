@@ -16,11 +16,12 @@ describes what's in it and how to read it.
   result.json        The run's result, including a manifest of evidence files
   result.md          Human-readable rendering of result.json
   run.jsonl          Append-only event stream — one JSON object per event.
-                     Events: run_start, system_prompt, user_message,
-                     llm_request, llm_response (text, thinking blocks,
-                     tool calls, usage, raw assistant message), tool_call,
-                     tool_result (text inline or image/artifact relative
-                     paths), event (adapter/agent anomalies), run_end.
+                     Events: run_start, system_prompt, tool_definitions,
+                     user_message, llm_request, llm_response (text,
+                     thinking blocks, tool calls, usage, raw assistant
+                     message), tool_call, tool_result (text inline or
+                     image/artifact relative paths; mediaType when image
+                     is set), event (adapter/agent anomalies), run_end.
                      Every event carries eventId + parentEventId,
                      forming a linear chain.
   artifacts/         Document-like tool outputs spilled from tool_result
@@ -42,6 +43,10 @@ describes what's in it and how to read it.
 ```
 
 The four `*.jsonl` browser-event files exist on disk but are not listed in `result.json`'s manifest. The HTTP file route only serves files that the manifest names; consumers reading off disk see them, consumers reading via the API do not.
+
+The `tool_definitions` event captures the full set of tool schemas exposed to the agent (adapter tools plus `report_result`) so post-hoc consumers — e.g. `gauntlet ask` — can faithfully tell a revival model what was available during the original run. It is written once immediately after `system_prompt`.
+
+The `tool_result` event optionally carries a `mediaType` string when `image` is set, recording the image's media type so revival can slot the bytes back into a provider-native image block without guessing.
 
 `projectRoot` is the Gauntlet project directory (default: cwd). Gauntlet
 owns the `.gauntlet/` subdirectory inside it. `runId` is the primary
