@@ -93,7 +93,7 @@ describe("agent event stream", () => {
     expect((res!.toolCalls as any[])[0].name).toBe("report_result");
   });
 
-  test("emits run_start, system_prompt, user_message as first three rows", async () => {
+  test("emits run_start, system_prompt, tool_definitions, user_message as the first four rows", async () => {
     const client = makeClient([{
       text: "", toolCalls: [{ id: "t1", name: "report_result", arguments: { status: "pass", summary: "s", reasoning: "r" } }],
       stopReason: "tool_use", rawAssistantMessage: { role: "assistant", content: [] },
@@ -110,9 +110,11 @@ describe("agent event stream", () => {
     expect(rows[0].cardId).toBe("card-001");
     expect(rows[1].type).toBe("system_prompt");
     expect(typeof rows[1].content).toBe("string");
-    expect(rows[2].type).toBe("user_message");
-    expect(rows[2].turn).toBe(0);
-    expect((rows[2].content as string)).toContain("http://x");
+    expect(rows[2].type).toBe("tool_definitions");
+    expect(Array.isArray(rows[2].tools)).toBe(true);
+    expect(rows[3].type).toBe("user_message");
+    expect(rows[3].turn).toBe(0);
+    expect((rows[3].content as string)).toContain("http://x");
   });
 
   test("emits tool_call + tool_result around each tool execution", async () => {

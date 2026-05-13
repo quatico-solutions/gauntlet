@@ -78,7 +78,7 @@ export interface AgentOptions {
 // array shape is established before the model is deep in a long quoted
 // reasoning blob. (See PRI-1528: observations was being string-wrapped
 // after the model accumulated escape-heavy reasoning output.)
-const REPORT_TOOL: ToolDefinition = {
+export const REPORT_TOOL: ToolDefinition = {
   name: "report_result",
   description:
     "Report your test result. Call this when you are done testing.",
@@ -159,6 +159,7 @@ export async function runAgent(
     viewport: options.viewport,
   });
   logger.logSystemPrompt(systemPrompt);
+  logger.logToolDefinitions(tools);
 
   const initialMessage = buildInitialUserMessage(adapter, target);
 
@@ -364,6 +365,7 @@ export async function runAgent(
           durationMs: Date.now() - started,
           text: result.text ?? "",
           image: (result as any).imagePath,       // populated by T6; undefined today
+          mediaType: (result as any).image?.mediaType, // pairs with imagePath; needed by revival image rehydration
           artifact: (result as any).artifactPath, // populated by T6/T7
           capturePath: (result as any).capturePath, // populated by TUIAdapter read_screen
           error: errored,

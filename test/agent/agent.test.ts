@@ -27,6 +27,7 @@ function makeMockLogger(): EvidenceLogger {
     logAction: () => {},
     logRunStart: () => {},
     logSystemPrompt: () => {},
+    logToolDefinitions: () => {},
     logUserMessage: () => {},
     logLlmRequest: () => {},
     logLlmResponse: () => {},
@@ -740,5 +741,56 @@ describe("runAgent", () => {
     expect(result.reasoning).toContain("grace");
     // One chat() call: the grace turn. The loop never ran (budgetMs: 0).
     expect((client as any)._chatCalls).toHaveLength(1);
+  });
+
+  test("logs tool_definitions after system_prompt at run start", async () => {
+    const calls: Array<{ kind: string; payload?: unknown }> = [];
+    const mockLogger = {
+      screenshots: [],
+      artifacts: [],
+      captures: [],
+      logPath: "/tmp/test.log",
+      logRunStart: () => { calls.push({ kind: "logRunStart" }); },
+      logSystemPrompt: (p: string) => { calls.push({ kind: "logSystemPrompt", payload: p }); },
+      logToolDefinitions: (tools: unknown) => { calls.push({ kind: "logToolDefinitions", payload: tools }); },
+      logUserMessage: () => {},
+      logLlmRequest: () => {},
+      logLlmResponse: () => {},
+      logToolCall: () => {},
+      logToolResult: () => {},
+      logEvent: () => {},
+      logRunEnd: () => {},
+    } as unknown as EvidenceLogger;
+
+    const client = makeMockClient([
+      {
+        text: "",
+        toolCalls: [{
+          id: "rep1",
+          name: "report_result",
+          arguments: { status: "pass", summary: "ok", reasoning: "ok", observations: [] },
+        }],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: [
+          { type: "tool_use", id: "rep1", name: "report_result",
+            input: { status: "pass", summary: "ok", reasoning: "ok", observations: [] } },
+        ] },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+    ]);
+
+    await runAgent(card, makeMockAdapter(), client, mockLogger, "http://x", {
+      runId: makeRunId(card.id),
+      budgetMs: 60000,
+    } as any);
+
+    const sysIdx = calls.findIndex((c) => c.kind === "logSystemPrompt");
+    const toolDefsIdx = calls.findIndex((c) => c.kind === "logToolDefinitions");
+    expect(toolDefsIdx).toBeGreaterThan(-1);
+    expect(toolDefsIdx).toBeGreaterThan(sysIdx);
+    const tools = calls[toolDefsIdx].payload as Array<{ name: string }>;
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("screenshot"); // from makeMockAdapter
+    expect(names).toContain("report_result");
   });
 });

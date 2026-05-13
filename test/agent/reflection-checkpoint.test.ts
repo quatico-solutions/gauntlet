@@ -29,6 +29,7 @@ function makeLogger(): EvidenceLogger & { events: Array<{ kind: string; payload:
     logAction: () => {},
     logRunStart: () => {},
     logSystemPrompt: () => {},
+    logToolDefinitions: () => {},
     logUserMessage: (turn: number, text: string) => { userMessages.push({ turn, text }); },
     logLlmRequest: () => {},
     logLlmResponse: () => {},
