@@ -1,0 +1,164 @@
+import { readFileSync } from "fs";
+import { join } from "path";
+import type { LLMClient, ToolCall, ToolDefinition, ToolResult } from "../models/provider";
+import { buildRevivalAddendum } from "./system-prompt-addendum";
+
+/**
+ * The subset of LLMClient that rebuildMessages depends on. Both
+ * userMessage and toolResultMessages are pure (no API calls). Tests
+ * supply a fake; production passes a real provider client so the
+ * rebuilt message shape is provider-native.
+ */
+export type MessageBuilder = Pick<LLMClient, "userMessage" | "toolResultMessages">;
+
+export interface RebuildResult {
+  systemPrompt: string;
+  messages: unknown[];
+  toolDefs: ToolDefinition[];
+  modelId: string;
+  adapterName: string;
+  warnings: string[];
+}
+
+interface RawEvent {
+  eventId: number;
+  parentEventId: number;
+  ts: string;
+  type: string;
+  [k: string]: unknown;
+}
+
+export function rebuildMessages(
+  runDir: string,
+  client: MessageBuilder,
+  upToTurn?: number,
+): RebuildResult {
+  const path = join(runDir, "run.jsonl");
+  const text = readFileSync(path, "utf8");
+  const events: RawEvent[] = text
+    .split("\n")
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as RawEvent);
+
+  if (events.length === 0) {
+    throw new Error(`Run ${runDir} produced no events`);
+  }
+
+  const runStart = events.find((e) => e.type === "run_start");
+  if (!runStart) throw new Error(`Run ${runDir} has no run_start event`);
+  const modelId = String(runStart.model ?? "");
+  const adapterName = String(runStart.adapter ?? "");
+
+  const sysEvt = events.find((e) => e.type === "system_prompt");
+  if (!sysEvt) throw new Error(`Run ${runDir} has no system_prompt event`);
+  const systemPromptBody = String(sysEvt.content ?? "");
+
+  const toolDefsEvt = events.find((e) => e.type === "tool_definitions");
+  const warnings: string[] = [];
+  // Fallback (no tool_definitions event) handled in a later task.
+  const toolDefs: ToolDefinition[] = toolDefsEvt
+    ? (toolDefsEvt.tools as ToolDefinition[])
+    : [];
+
+  const fallback = !toolDefsEvt;
+  const systemPrompt =
+    systemPromptBody + buildRevivalAddendum(toolDefs, { fallback });
+
+  const turnsSeen = events
+    .map((e) => (typeof e.turn === "number" ? (e.turn as number) : undefined))
+    .filter((t): t is number => t !== undefined);
+  const lastTurn = turnsSeen.length > 0 ? Math.max(...turnsSeen) : 0;
+
+  if (upToTurn !== undefined && upToTurn > lastTurn) {
+    throw new Error(
+      `--turn ${upToTurn} out of range; run ended at turn ${lastTurn}`,
+    );
+  }
+
+  const cutoff = upToTurn ?? lastTurn;
+
+  const messages: unknown[] = [];
+
+  // Initial user message (turn 0)
+  const initialUser = events.find(
+    (e) => e.type === "user_message" && (e.turn === 0 || e.turn === undefined),
+  );
+  if (initialUser) {
+    messages.push(client.userMessage(String(initialUser.content ?? "")));
+  }
+
+  const turnNumbers = Array.from(
+    new Set(
+      events
+        .filter(
+          (e) =>
+            (e.turn as number | undefined) !== undefined &&
+            (e.turn as number) >= 1 &&
+            (e.turn as number) <= cutoff,
+        )
+        .map((e) => e.turn as number),
+    ),
+  ).sort((a, b) => a - b);
+
+  for (const turn of turnNumbers) {
+    const turnEvents = events.filter((e) => e.turn === turn);
+    const llmResp = turnEvents.find((e) => e.type === "llm_response");
+    const toolResultEvts = turnEvents.filter((e) => e.type === "tool_result");
+    const toolCallEvts = turnEvents.filter((e) => e.type === "tool_call");
+
+    if (llmResp) {
+      messages.push(llmResp.rawAssistantMessage);
+    }
+
+    if (toolResultEvts.length > 0) {
+      const calls: ToolCall[] = toolCallEvts.map((tc) => ({
+        id: String(tc.toolUseId),
+        name: String(tc.name),
+        arguments: (tc.arguments as Record<string, unknown>) ?? {},
+      }));
+      const results: ToolResult[] = toolResultEvts.map((tr) =>
+        rebuildToolResult(tr, runDir, warnings),
+      );
+      messages.push(...client.toolResultMessages(calls, results));
+    }
+  }
+
+  return { systemPrompt, messages, toolDefs, modelId, adapterName, warnings };
+}
+
+/**
+ * Reconstruct an in-memory ToolResult from a logged tool_result event,
+ * rehydrating spilled image / text / capture content from disk.
+ */
+function rebuildToolResult(
+  tr: RawEvent,
+  runDir: string,
+  warnings: string[],
+): ToolResult {
+  const result: ToolResult = { text: String(tr.text ?? "") };
+
+  const textTruncated = tr.textTruncated === true;
+  const artifactRel = tr.artifact as string | undefined;
+  if (textTruncated && artifactRel) {
+    result.text = readFileSync(join(runDir, artifactRel), "utf8");
+  }
+  const capturePathRel = tr.capturePath as string | undefined;
+  if (capturePathRel) {
+    result.text = readFileSync(join(runDir, capturePathRel), "utf8");
+  }
+
+  const imageRel = tr.image as string | undefined;
+  if (imageRel) {
+    let mediaType = tr.mediaType as string | undefined;
+    if (!mediaType) {
+      mediaType = "image/png";
+      warnings.push(
+        `tool_result for ${String(tr.name)} had no mediaType; defaulting to image/png (older run.jsonl format)`,
+      );
+    }
+    const data = readFileSync(join(runDir, imageRel)).toString("base64");
+    result.image = { data, mediaType };
+  }
+
+  return result;
+}
