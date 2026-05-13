@@ -381,16 +381,34 @@ function parseServeArgs(args: string[]): ServeArgs {
   };
 }
 
-function parseModelFlagArray(modelFlags: string[] | undefined): { agent?: string; fanout?: string } | undefined {
+/**
+ * Accepted form is `--model agent=<name>` or `--model fanout=<name>`.
+ * Anything else (bare value, unknown role prefix) is dropped with a
+ * stderr warning so the user sees what was ignored — the silent-drop
+ * behavior was the source of the "why didn't --model work?" report.
+ */
+function parseModelFlagArray(
+  modelFlags: string[] | undefined,
+): { agent?: string; fanout?: string } | undefined {
   if (!modelFlags || modelFlags.length === 0) return undefined;
   const out: { agent?: string; fanout?: string } = {};
   for (const flag of modelFlags) {
     const idx = flag.indexOf("=");
-    if (idx === -1) continue;
+    if (idx === -1) {
+      console.warn(
+        `warning: ignoring --model "${flag}" — expected --model agent=<name> or --model fanout=<name>`,
+      );
+      continue;
+    }
     const role = flag.slice(0, idx);
     const model = flag.slice(idx + 1);
-    if (role === "agent") out.agent = model;
-    else if (role === "fanout") out.fanout = model;
+    if (role !== "agent" && role !== "fanout") {
+      console.warn(
+        `warning: ignoring --model "${flag}" — unknown role "${role}"; expected "agent" or "fanout"`,
+      );
+      continue;
+    }
+    out[role] = model;
   }
   return out;
 }

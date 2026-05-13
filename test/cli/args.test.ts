@@ -52,6 +52,35 @@ describe("parseArgs", () => {
     expect(args.cli.models?.fanout).toBe("claude-sonnet-4-6");
   });
 
+  test("warns and drops bare --model values (no role prefix)", () => {
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...m: unknown[]) => { warnings.push(m.map(String).join(" ")); };
+    try {
+      const args = parseArgs(["bun", "index.ts", "run", "story.md", "--target", "url", "--model", "claude-opus-4-7"]);
+      if (args.command !== "run") throw new Error("unreachable");
+      expect(args.cli.models?.agent).toBeUndefined();
+      expect(args.cli.models?.fanout).toBeUndefined();
+      expect(warnings.some((w) => w.includes("claude-opus-4-7") && w.includes("agent=") && w.includes("fanout="))).toBe(true);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  test("warns and drops --model with unknown role prefix", () => {
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...m: unknown[]) => { warnings.push(m.map(String).join(" ")); };
+    try {
+      const args = parseArgs(["bun", "index.ts", "run", "story.md", "--target", "url", "--model", "gpt=foo"]);
+      if (args.command !== "run") throw new Error("unreachable");
+      expect(args.cli.models?.agent).toBeUndefined();
+      expect(warnings.some((w) => w.includes("gpt=foo") && w.includes("unknown role"))).toBe(true);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
   test("throws on missing target", () => {
     expect(() => parseArgs(["bun", "index.ts", "run", "story.md"])).toThrow("--target");
   });
