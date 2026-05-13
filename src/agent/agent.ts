@@ -78,7 +78,7 @@ export interface AgentOptions {
 // array shape is established before the model is deep in a long quoted
 // reasoning blob. (See PRI-1528: observations was being string-wrapped
 // after the model accumulated escape-heavy reasoning output.)
-const REPORT_TOOL: ToolDefinition = {
+export const REPORT_TOOL: ToolDefinition = {
   name: "report_result",
   description:
     "Report your test result. Call this when you are done testing.",

@@ -2,6 +2,8 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import type { LLMClient, ToolCall, ToolDefinition, ToolResult } from "../models/provider";
 import { buildRevivalAddendum } from "./system-prompt-addendum";
+import { getAdapterToolDefinitionsByName } from "../adapters/registry";
+import { REPORT_TOOL } from "../agent/agent";
 
 /**
  * The subset of LLMClient that rebuildMessages depends on. Both
@@ -55,12 +57,20 @@ export function rebuildMessages(
 
   const toolDefsEvt = events.find((e) => e.type === "tool_definitions");
   const warnings: string[] = [];
-  // Fallback (no tool_definitions event) handled in a later task.
-  const toolDefs: ToolDefinition[] = toolDefsEvt
-    ? (toolDefsEvt.tools as ToolDefinition[])
-    : [];
-
   const fallback = !toolDefsEvt;
+  let toolDefs: ToolDefinition[];
+  if (toolDefsEvt) {
+    toolDefs = toolDefsEvt.tools as ToolDefinition[];
+  } else {
+    // Old run without tool_definitions event: reconstruct from the live
+    // adapter + REPORT_TOOL. If the adapter is no longer registered
+    // we throw — silent fallback to "no tools" would mislead the model.
+    toolDefs = [...getAdapterToolDefinitionsByName(adapterName), REPORT_TOOL];
+    warnings.push(
+      "No tool_definitions event in this run's run.jsonl (old format); reconstructed from current adapter code. Schemas may have drifted.",
+    );
+  }
+
   const systemPrompt =
     systemPromptBody + buildRevivalAddendum(toolDefs, { fallback });
 

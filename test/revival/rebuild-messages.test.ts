@@ -290,3 +290,96 @@ describe("rebuildMessages — TUI capture rehydration", () => {
     expect(userTurn.content[0].content).toBe("RAW ANSI SCREEN CONTENT");
   });
 });
+
+describe("rebuildMessages — old-run fallback", () => {
+  test("falls back to live adapter.toolDefinitions() + REPORT_TOOL with a drift warning", () => {
+    const dir = makeRunDir([
+      minimalRunStart,
+      { type: "system_prompt", content: "sys" },
+      // intentionally no tool_definitions event
+      { type: "user_message", turn: 0, content: "go" },
+      { type: "llm_response", turn: 1, stopReason: "end_turn", text: "hi",
+        thinking: [], toolCalls: [], usage: { inputTokens: 10, outputTokens: 5 },
+        rawAssistantMessage: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+      },
+    ]);
+    cleanups.push(dir);
+
+    const result = rebuildMessages(dir, makeFakeAnthropicClient());
+    const toolNames = result.toolDefs.map((t) => t.name);
+    expect(toolNames).toContain("report_result");
+    expect(toolNames.length).toBeGreaterThan(1);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("drift"))).toBe(true);
+    expect(result.systemPrompt).toContain("fallback");
+  });
+
+  test("errors with a clear message when the recorded adapter is no longer registered", () => {
+    const dir = makeRunDir([
+      { ...minimalRunStart, adapter: "nonexistent-adapter" },
+      { type: "system_prompt", content: "sys" },
+      { type: "user_message", turn: 0, content: "go" },
+    ]);
+    cleanups.push(dir);
+    expect(() => rebuildMessages(dir, makeFakeAnthropicClient())).toThrow(/not registered|no longer/i);
+  });
+});
+
+describe("rebuildMessages — --turn cutoff", () => {
+  const events3turn = [
+    minimalRunStart,
+    { type: "system_prompt", content: "sys" },
+    { type: "tool_definitions", tools: [
+      { name: "click", description: "click", parameters: { type: "object" } },
+      { name: "report_result", description: "report", parameters: { type: "object" } },
+    ]},
+    { type: "user_message", turn: 0, content: "go" },
+    { type: "llm_response", turn: 1, stopReason: "tool_use", text: "", thinking: [],
+      toolCalls: [{ id: "t1", name: "click", arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 },
+      rawAssistantMessage: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "click", input: {} }] } },
+    { type: "tool_call", turn: 1, toolUseId: "t1", name: "click", arguments: {} },
+    { type: "tool_result", turn: 1, toolUseId: "t1", name: "click", durationMs: 5, text: "ok", error: false },
+    { type: "llm_response", turn: 2, stopReason: "tool_use", text: "", thinking: [],
+      toolCalls: [{ id: "t2", name: "click", arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 },
+      rawAssistantMessage: { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "click", input: {} }] } },
+    { type: "tool_call", turn: 2, toolUseId: "t2", name: "click", arguments: {} },
+    { type: "tool_result", turn: 2, toolUseId: "t2", name: "click", durationMs: 5, text: "ok", error: false },
+    { type: "llm_response", turn: 3, stopReason: "tool_use", text: "", thinking: [],
+      toolCalls: [{ id: "rep1", name: "report_result", arguments: { status: "pass", summary: "ok", reasoning: "ok", observations: [] } }], usage: { inputTokens: 10, outputTokens: 5 },
+      rawAssistantMessage: { role: "assistant", content: [{ type: "tool_use", id: "rep1", name: "report_result", input: { status: "pass", summary: "ok", reasoning: "ok", observations: [] } }] } },
+    { type: "run_end", status: "pass", summary: "ok", reasoning: "ok", observationCount: 0, observations: [], durationMs: 100, usage: { inputTokens: 10, outputTokens: 5, turns: 3 } },
+  ];
+
+  test("--turn 0 yields only the initial user message", () => {
+    const dir = makeRunDir(events3turn);
+    cleanups.push(dir);
+    const result = rebuildMessages(dir, makeFakeAnthropicClient(), 0);
+    expect(result.messages).toHaveLength(1);
+    expect((result.messages[0] as { role: string }).role).toBe("user");
+  });
+
+  test("--turn 1 includes turn 1 assistant + tool result", () => {
+    const dir = makeRunDir(events3turn);
+    cleanups.push(dir);
+    const result = rebuildMessages(dir, makeFakeAnthropicClient(), 1);
+    const roles = result.messages.map((m) => (m as { role?: string }).role);
+    expect(roles).toEqual(["user", "assistant", "user"]);
+  });
+
+  test("--turn 2 includes turns 1 and 2 but NOT turn 3 report_result", () => {
+    const dir = makeRunDir(events3turn);
+    cleanups.push(dir);
+    const result = rebuildMessages(dir, makeFakeAnthropicClient(), 2);
+    const assistantTurns = result.messages.filter(
+      (m) => (m as { role?: string }).role === "assistant",
+    );
+    expect(assistantTurns).toHaveLength(2);
+    const last = result.messages[result.messages.length - 1] as { role: string };
+    expect(last.role).toBe("user");
+  });
+
+  test("--turn out of range errors clearly", () => {
+    const dir = makeRunDir(events3turn);
+    cleanups.push(dir);
+    expect(() => rebuildMessages(dir, makeFakeAnthropicClient(), 99)).toThrow(/out of range|ended at turn 3/);
+  });
+});
