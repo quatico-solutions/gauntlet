@@ -50,3 +50,29 @@ export function saveState(state: TodoState, path?: string): void {
   const file = resolveStatePath(path);
   writeFileSync(file, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
+
+// Alphabet: a-k, m, n, p-z, 2-9 (no 0/1/l/o, no ambiguous chars).
+// 30 symbols, 4 chars => 810,000 distinct ids — plenty for a fixture.
+const ID_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
+
+function generateId(existing: Set<string>): string {
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    let id = "";
+    for (let i = 0; i < 4; i++) {
+      id += ID_ALPHABET[Math.floor(Math.random() * ID_ALPHABET.length)];
+    }
+    if (!existing.has(id)) return id;
+  }
+  throw new Error("todo: failed to generate a unique id after 1000 attempts");
+}
+
+export function addItem(state: TodoState, text: string): TodoItem {
+  const existing = new Set(state.items.map((i) => i.id));
+  const item: TodoItem = {
+    id: generateId(existing),
+    text,
+    done: false,
+  };
+  state.items.push(item);
+  return item;
+}

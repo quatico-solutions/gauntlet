@@ -5,6 +5,7 @@ import { join } from "path";
 import {
   loadState,
   saveState,
+  addItem,
   type TodoState,
 } from "../../../examples/todo/core";
 
@@ -64,5 +65,39 @@ describe("saveState", () => {
     };
     saveState(s, stateFile);
     expect(loadState(stateFile)).toEqual(s);
+  });
+});
+
+describe("addItem", () => {
+  test("appends an active item and returns it", () => {
+    const s: TodoState = { items: [], filter: "all" };
+    const added = addItem(s, "buy milk");
+    expect(s.items.length).toBe(1);
+    expect(s.items[0]).toBe(added);
+    expect(added.text).toBe("buy milk");
+    expect(added.done).toBe(false);
+  });
+
+  test("preserves insertion order across multiple adds", () => {
+    const s: TodoState = { items: [], filter: "all" };
+    addItem(s, "first");
+    addItem(s, "second");
+    addItem(s, "third");
+    expect(s.items.map((i) => i.text)).toEqual(["first", "second", "third"]);
+  });
+
+  test("generated IDs are 4 chars from the unambiguous alphabet", () => {
+    const s: TodoState = { items: [], filter: "all" };
+    for (let i = 0; i < 50; i++) addItem(s, `item ${i}`);
+    for (const item of s.items) {
+      expect(item.id).toMatch(/^[a-km-np-z2-9]{4}$/);
+    }
+  });
+
+  test("IDs are unique within a state", () => {
+    const s: TodoState = { items: [], filter: "all" };
+    for (let i = 0; i < 100; i++) addItem(s, `item ${i}`);
+    const seen = new Set(s.items.map((i) => i.id));
+    expect(seen.size).toBe(s.items.length);
   });
 });
