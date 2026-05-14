@@ -72,6 +72,15 @@ export interface AgentOptions {
    * between the Adapter and Context blocks. Resolved upstream by
    * `resolveProjectPrompt` in `src/runs/orchestrator.ts`. */
   projectPrompt?: string;
+  /**
+   * Optional cancellation signal. When aborted, the agent loop **returns**
+   * a synthetic `errored` VetResult at its next abort check (between
+   * turns, or between adjacent tool calls within a turn). It does NOT
+   * throw — the orchestrator's success path is the one that writes
+   * `result.json`; throwing would skip that and force the §3 stub
+   * fallback for every aborted run. See PRI-1507 spec §1.
+   */
+  abortSignal?: AbortSignal;
 }
 
 // Property order matters here. Models emit object properties in schema
@@ -236,7 +245,22 @@ export async function runAgent(
     return result;
   };
 
+  const isAborted = (): boolean => options.abortSignal?.aborted === true;
+  const abortedResult = (): VetResult => {
+    logger.logShutdownSignaled({
+      turn: turns,
+      reason: String(options.abortSignal?.reason ?? "unknown"),
+    });
+    return buildResult({
+      status: "errored",
+      summary: "Run interrupted by shutdown signal",
+      reasoning: `Daemon shutdown signal received at turn ${turns}; agent loop terminated before completion.`,
+      error: { type: "shutdown_interrupted", message: "interrupted by shutdown signal" },
+    });
+  };
+
   while (Date.now() < deadline) {
+    if (isAborted()) return abortedResult();
     logger.logLlmRequest(turns + 1, messages.length);
     const response = await client.chat(messages, tools, systemPrompt, { runId });
 
@@ -339,6 +363,7 @@ export async function runAgent(
       const toolTimeout = options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
       const results: ToolResult[] = [];
       for (const tc of response.toolCalls) {
+        if (isAborted()) return abortedResult();
         logger.logToolCall({ turn: turns, toolUseId: tc.id, name: tc.name, arguments: tc.arguments });
         const started = Date.now();
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;

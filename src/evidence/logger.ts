@@ -274,6 +274,16 @@ export class EvidenceLogger {
     this.writeEvent("run_error", { ...fields });
   }
 
+  /**
+   * Emitted by the agent loop when it observes an aborted AbortSignal at
+   * one of its abort check points (between turns, or between adjacent
+   * tool calls within a turn). The `turn` field may be `0` if the abort
+   * was already set when the loop began. See PRI-1507 spec §1 / §7.
+   */
+  logShutdownSignaled(fields: { turn: number; reason: string }): void {
+    this.writeEvent("shutdown_signaled", { ...fields });
+  }
+
   logRunEnd(fields: RunEndFields): void {
     this.writeEvent("run_end", { ...fields });
   }
