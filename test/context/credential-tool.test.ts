@@ -15,6 +15,7 @@ const FAIL = resolve(FIXTURES, "credential-resolver-fail.sh");
 const SLOW = resolve(FIXTURES, "credential-resolver-slow.sh");
 const EMPTY = resolve(FIXTURES, "credential-resolver-empty.sh");
 const OVERFLOW = resolve(FIXTURES, "credential-resolver-overflow.sh");
+const STDERR_OVERFLOW = resolve(FIXTURES, "credential-resolver-stderr-overflow.sh");
 
 function cfg(path: string, timeoutMs = 5_000): CredentialResolverConfig {
   return { path, timeoutMs, includeInTranscripts: false };
@@ -168,6 +169,67 @@ describe("buildFetchCredentialTool", () => {
         key: "pin",
         step: "nonzero_exit",
       });
+    });
+  });
+
+  test("execute timeout returns timeout error markdown and logs timeout event", async () => {
+    await withPopulatedContextRoot(async (root) => {
+      const { events, logger } = makeLogger();
+      const tool = buildFetchCredentialTool(root, cfg(SLOW, 200))!;
+      const result = await tool.execute({ entity: "alice", key: "otp" }, logger);
+      expect(result.text).toMatch(/Error: fetch_credential resolver timed out after 200ms for alice:otp/);
+      expect(events[0]?.name).toBe("fetch_credential_failed");
+      expect(events[0]?.payload).toMatchObject({
+        entity: "alice",
+        key: "otp",
+        step: "timeout",
+        timeoutMs: 200,
+      });
+    });
+  });
+
+  test("execute empty stdout returns empty-success error and logs empty_stdout event", async () => {
+    await withPopulatedContextRoot(async (root) => {
+      const { events, logger } = makeLogger();
+      const tool = buildFetchCredentialTool(root, cfg(EMPTY))!;
+      const result = await tool.execute({ entity: "alice", key: "otp" }, logger);
+      expect(result.text).toMatch(/Error: fetch_credential resolver returned empty success for alice:otp/);
+      expect(events[0]?.name).toBe("fetch_credential_failed");
+      expect(events[0]?.payload?.step).toBe("empty_stdout");
+    });
+  });
+
+  test("execute stdout overflow returns overflow error and logs stdout_overflow event", async () => {
+    await withPopulatedContextRoot(async (root) => {
+      const { events, logger } = makeLogger();
+      const tool = buildFetchCredentialTool(root, cfg(OVERFLOW))!;
+      const result = await tool.execute({ entity: "alice", key: "otp" }, logger);
+      expect(result.text).toMatch(/Error: fetch_credential resolver stdout exceeded 64 KiB for alice:otp/);
+      expect(events[0]?.name).toBe("fetch_credential_failed");
+      expect(events[0]?.payload?.step).toBe("stdout_overflow");
+    });
+  });
+
+  test("execute stderr overflow returns stderr-overflow error and logs stderr_overflow event", async () => {
+    await withPopulatedContextRoot(async (root) => {
+      const { events, logger } = makeLogger();
+      const tool = buildFetchCredentialTool(root, cfg(STDERR_OVERFLOW))!;
+      const result = await tool.execute({ entity: "alice", key: "otp" }, logger);
+      expect(result.text).toMatch(/Error: fetch_credential resolver stderr exceeded 8 KiB for alice:otp/);
+      expect(events[0]?.name).toBe("fetch_credential_failed");
+      expect(events[0]?.payload?.step).toBe("stderr_overflow");
+    });
+  });
+
+  test("execute spawn failure returns spawn error and logs spawn event", async () => {
+    await withPopulatedContextRoot(async (root) => {
+      const { events, logger } = makeLogger();
+      const missing: CredentialResolverConfig = { path: "/nonexistent/resolver.sh", timeoutMs: 5000, includeInTranscripts: false };
+      const tool = buildFetchCredentialTool(root, missing)!;
+      const result = await tool.execute({ entity: "alice", key: "otp" }, logger);
+      expect(result.text).toMatch(/Error: fetch_credential resolver failed to spawn/);
+      expect(events[0]?.name).toBe("fetch_credential_failed");
+      expect(events[0]?.payload?.step).toBe("spawn");
     });
   });
 

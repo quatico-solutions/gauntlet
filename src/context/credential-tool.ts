@@ -166,7 +166,7 @@ function validateEntity(entity: unknown): { ok: true; value: string } | { ok: fa
     return { ok: false, reason: "must not contain '..'" };
   }
   if (ENTITY_FORBIDDEN_PATTERN.test(entity)) {
-    return { ok: false, reason: "must not contain '/' or '\\\\'" };
+    return { ok: false, reason: "must not contain '/' or '\\'" };
   }
   return { ok: true, value: entity };
 }
