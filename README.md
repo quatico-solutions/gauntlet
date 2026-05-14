@@ -26,7 +26,7 @@ Beyond single-story testing, Gauntlet can **generate variations** ("fanout") fro
         └────────┬───────┘
                  │
            ┌─────┴──────┐
-           │   Agent    │  (agentic loop: LLM + adapter tools, up to 50 turns)
+           │   Agent    │  (agentic loop: LLM + adapter tools, wall-clock budget)
            └─────┬──────┘
                  │
         ┌────────┼────────┐
@@ -144,7 +144,7 @@ The core of Gauntlet is an agentic loop in `src/agent/agent.ts`:
 1. The story card is loaded and a system prompt is built, instructing the LLM to act as a thorough QA tester.
 2. The LLM is given adapter tools — the set depends on which adapter the run picked. Web exposes a browser surface (mouse, keyboard, navigation, extraction, tab management); `cli` exposes `type` / `press` / `read_output`; `tui` exposes `type` / `press` / `read_screen`. See [Adapters](#adapters) for the full lists. A special `report_result` tool is always added.
 3. On each turn, the LLM decides what to do -- take a screenshot, click a button, type into a form, etc. Tool results (including screenshot images) are fed back into the conversation.
-4. The loop continues until the agent calls `report_result` with its verdict, or hits the 50-turn limit.
+4. The loop continues until the agent calls `report_result` with its verdict, or exhausts its wall-clock time budget (`--max-time`, default 5m). When the budget runs out, the orchestrator gives the agent one grace turn to file a final report before terminating.
 5. Each tool call has a 30-second timeout to prevent hangs.
 
 The agent reports:
@@ -298,8 +298,8 @@ bun unlink
 # Run a story against a target URL
 gauntlet run story.md --target http://localhost:3000
 
-# Run with a specific model, adapter, viewport, and turn cap
-gauntlet run story.md --target http://localhost:3000 --model agent=claude-sonnet-4-6 --adapter web --viewport 1440x900 --turns 50
+# Run with a specific model, adapter, viewport, and time budget
+gauntlet run story.md --target http://localhost:3000 --model agent=claude-sonnet-4-6 --adapter web --viewport 1440x900 --max-time 5m
 
 # Stream machine-readable events instead of the pretty terminal transcript
 gauntlet run story.md --target http://localhost:3000 --format jsonl
@@ -341,15 +341,15 @@ Gauntlet · 3 cards · target https://app.local
         → /…/.gauntlet/results/login-matt_…/
   ! login-not-logged-in     investigate   9 turns · 8.1s
         → /…/.gauntlet/results/login-not-logged-in_…/
-  ⠋ [3/3] login-locked-out   turn 4 / 10
+  ⠋ [3/3] login-locked-out   turn 4
 
 batch: 1 pass · 0 fail · 1 investigate · 0 errored
 results: /…/.gauntlet/results
 ```
 
 Per-card flags (`--target`, `--adapter`, `--model`, `--chrome`,
-`--turns`, `--viewport`, `--save-screencast`, `--project-dir`) apply
-uniformly to every card. `--out` is rejected — each card uses its
+`--max-time`, `--reflection-interval`, `--viewport`, `--save-screencast`,
+`--project-dir`) apply uniformly to every card. `--out` is rejected — each card uses its
 default per-run directory under `<.gauntlet>/results/<runId>/`.
 
 Output modes:
@@ -454,7 +454,8 @@ The web `POST /api/run/:id` body is validated against an explicit allow-list. Un
 | `run` | `--model agent=<name>` | Model for the agent |
 | `run` | `--chrome host:port` | Chrome debugging endpoint |
 | `run` | `--adapter web\|cli\|tui` | Adapter type (default: web) |
-| `run` | `--turns <n>` | Max agent turns for this run (default: 50) |
+| `run` | `--max-time <duration>` | Wall-clock budget per run; accepts ms/s/m/h or bare seconds (default: 5m) |
+| `run` | `--reflection-interval <n>` | Inject a reflection-checkpoint reminder every N turns (default: 10; 0 disables) |
 | `run` | `--passes <n>` | Number of attempts for this card; integer in `[1, 50]` (default: 1). Used to surface flaky behavior — repeated attempts roll up into a run-set. |
 | `run` | `--viewport WxH` | Browser viewport for web-adapter runs (default: 1440x900) |
 | `run` | `--save-screencast [bool]` | Persist screencast frames to disk (default: off; live UI stream is unchanged) |
@@ -463,6 +464,8 @@ The web `POST /api/run/:id` body is validated against an explicit allow-list. Un
 | `run` | `--silent` | Suppress the streaming transcript; prints only `runId` on stderr |
 | `run` | `--format pretty\|jsonl` | Streaming transcript format (default: auto by TTY) |
 | `run` | `--no-color` | Disable ANSI color output; `NO_COLOR` is also respected |
+| `run` | `--project-prompt <path>` | Caller-supplied augmentation prompt (overrides `.gauntlet/project.md`) |
+| `run` | `--show-prompt-and-exit` | Print the composed system prompt with provenance and exit (no Chrome, no LLM call) |
 | `batch` | `<story.md> [more.md ...]` | Positional card paths (at least one required) |
 | `batch` | `--target <url>` | (required) Application under test |
 | `batch` | `--passes <n>` | Attempts per card; integer in `[1, 50]` (default: 1). The full execution becomes `cards × passes` runs, all rolled up into one run-set. |
@@ -475,7 +478,8 @@ The web `POST /api/run/:id` body is validated against an explicit allow-list. Un
 | `serve` | `--chrome host:port` | Default Chrome endpoint for runs |
 | `serve` | `--target <url>` | Default target hint for the UI |
 | `serve` | `--model agent=<name>` | Default agent model |
-| `serve` | `--turns <n>` | Default max turns per run (default: 50) |
+| `serve` | `--max-time <duration>` | Default time budget per run (default: 5m) |
+| `serve` | `--reflection-interval <n>` | Default reflection-checkpoint interval (default: 10; 0 disables) |
 | `serve` | `--viewport WxH` | Default browser viewport (default: 1440x900) |
 | `serve` | `--save-screencast [bool]` | Default screencast-frame persistence (default: off) |
 | `config` | `--json` | Emit JSON instead of formatted text |
@@ -484,12 +488,18 @@ The web `POST /api/run/:id` body is validated against an explicit allow-list. Un
 | `config` | `--chrome host:port` | Inspect config with this Chrome endpoint override |
 | `config` | `--target <url>` | Inspect config with this target override |
 | `config` | `--model agent=<name>` | Inspect config with this agent model override |
-| `config` | `--turns <n>` | Inspect config with this turn cap override |
+| `config` | `--max-time <duration>` | Inspect config with this time-budget override |
+| `config` | `--reflection-interval <n>` | Inspect config with this reflection-interval override |
 | `config` | `--viewport WxH` | Inspect config with this viewport override |
 | `config` | `--save-screencast [bool]` | Inspect config with this screencast override |
+| `validate` | (positional `<story.md>` only) | Parse and validate a story card's frontmatter and structure. Exits non-zero on failure. |
 | `fanout` | `--out <dir>` | Output directory |
 | `fanout` | `--model fanout=<name>` | Model for generation |
 | `fanout` | `--from-result <dir>` | Generate from an existing result |
+| `ask` | (positional `<runId>`) | Open an interactive REPL against a completed run, replaying its conversation up to a chosen turn |
+| `ask` | `--turn <n>` | Cut off at turn N (default: include all turns) |
+| `ask` | `--model <model-id>` | Override the recorded model (default: pin to recorded) |
+| `ask` | `--project-dir <dir>` | Project root (contains `.gauntlet/results/<runId>`) |
 
 Unknown flags are now rejected loudly. If you mistype `--chrom` you will get an error, not silent fallthrough.
 
@@ -503,7 +513,8 @@ Gauntlet-prefixed (consumed by `loadConfig`):
 | `GAUNTLET_PROJECT_ROOT` | Project root (contains `.gauntlet/` state dir) | `.` |
 | `GAUNTLET_CHROME` | Default Chrome endpoint (`host:port`) | `127.0.0.1:9222` |
 | `GAUNTLET_TARGET` | Default target URL, surfaced as a UI prefill | -- |
-| `GAUNTLET_TURNS` | Default max turns per run | `50` |
+| `GAUNTLET_MAX_TIME` | Default wall-clock budget per run; accepts ms/s/m/h or bare seconds | `5m` |
+| `GAUNTLET_REFLECTION_INTERVAL` | Default reflection-checkpoint interval (turns; `0` disables) | `10` |
 | `GAUNTLET_VIEWPORT` | Default browser viewport (`WxH`) | `1440x900` |
 | `GAUNTLET_SAVE_SCREENCAST` | Persist screencast frames to disk (`1/0`, `true/false`, `yes/no`, `on/off`) | `0` |
 | `GAUNTLET_AGENT_MODEL` | Default agent model | `claude-sonnet-4-6` |
@@ -562,7 +573,8 @@ See the [Configuration](#configuration) section above for the full list. Quick r
 | `GAUNTLET_PROJECT_ROOT` | Project root (contains `.gauntlet/` state dir) | `.` |
 | `GAUNTLET_CHROME` | Default Chrome endpoint | `127.0.0.1:9222` |
 | `GAUNTLET_TARGET` | Default target URL for the web UI | -- |
-| `GAUNTLET_TURNS` | Default max turns per run | 50 |
+| `GAUNTLET_MAX_TIME` | Default wall-clock budget per run | `5m` |
+| `GAUNTLET_REFLECTION_INTERVAL` | Default reflection-checkpoint interval (turns; `0` disables) | `10` |
 | `GAUNTLET_VIEWPORT` | Default browser viewport | `1440x900` |
 | `GAUNTLET_SAVE_SCREENCAST` | Persist screencast frames to disk | `0` |
 | `GAUNTLET_AGENT_MODEL` | Default model for test execution | `claude-sonnet-4-6` |

@@ -78,7 +78,7 @@ agent's reasoning, the observations, and pointers to the evidence files.
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 4,
   "runId": "login-001_20260416T142301Z_k3xm",
   "scenario": "login-001",
   "status": "pass",
@@ -103,7 +103,7 @@ agent's reasoning, the observations, and pointers to the evidence files.
     "target": "https://app.local",
     "model": "claude-sonnet-4-6",
     "adapter": "web",
-    "turns": 50,
+    "budgetMs": 300000,
     "viewport": { "width": 1440, "height": 900 }
   }
 }
@@ -111,7 +111,7 @@ agent's reasoning, the observations, and pointers to the evidence files.
 
 ### Fields
 
-- `schemaVersion` — format version. `2` today.
+- `schemaVersion` — format version. `4` today.
 - `runId` — composite id for this run. See [`runId`](#runid) above.
 - `scenario` — id of the story card that was tested. Present alongside `runId`
   for convenience (the cardId is also embedded in `runId`, but having it as
@@ -139,7 +139,8 @@ agent's reasoning, the observations, and pointers to the evidence files.
 - `config` (optional) — snapshot of the knobs the run was launched with.
   Fields: `target`, `model`, `adapter` (`"web"` \| `"cli"` \| `"tui"`),
   `chrome` (host:port; omitted when the adapter auto-launched Chrome),
-  `turns`, `viewport` (`{width, height}`; omitted for the `cli` adapter).
+  `budgetMs` (wall-clock budget the run was launched with, in ms),
+  `viewport` (`{width, height}`; omitted for the `cli` adapter).
   Used by the UI to offer "Run again" without re-asking the user for
   parameters. Optional for back-compat with v1 results on disk.
 - `runSet` (optional) — context for runs that were spawned as part of a
@@ -205,6 +206,14 @@ do not require a bump.
 
 ### Changelog
 
+- **v4** — Removed `maxStuckRetries` from `config` (the stuck-handling
+  system-prompt block it templated into has been retired in favor of
+  mid-loop reflection checkpoints). Additive for readers; the field is
+  simply absent on new runs.
+- **v3** — `config.turns` (max-turn cap) replaced with `config.budgetMs`
+  (wall-clock budget in ms) and `config.maxStuckRetries`. Reflects the
+  time-budget loop replacing maxTurns. Readers expecting `turns` will
+  not find it on v3+ runs.
 - **v2** — Added optional `config` block to `result.json` capturing the
   per-run knobs (target, model, adapter, chrome, turns, viewport) so the
   UI can offer a "Run again" action without re-eliciting parameters.
