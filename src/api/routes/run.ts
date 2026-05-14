@@ -45,6 +45,12 @@ export interface ExecuteHttpRunOpts {
   /** Test seam: forwarded to executeRunCore. Production routes leave
    * undefined; tests stub the adapter without touching modules. */
   adapterFactory?: ExecuteRunCoreOptions["adapterFactory"];
+  /**
+   * Optional cancellation signal — forwarded to executeRunCore for the
+   * agent loop to observe. PRI-1507. The route's per-run AbortController
+   * lives in the active-run registry; this is just the public signal end.
+   */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -141,6 +147,7 @@ export async function executeHttpRun(
       client,
       runSetCtx,
       adapterFactory: opts.adapterFactory,
+      abortSignal: opts.abortSignal,
       runConfig: {
         projectRoot,
         model: effective.model,
@@ -235,6 +242,7 @@ export function runRoutes(
       // ── Solo path ──
       const runId = makeRunId(entry.card.id);
       const startedAt = Date.now();
+      const ac = new AbortController();
       if (registry) {
         registry.register({
           id: runId,
@@ -245,6 +253,7 @@ export function runRoutes(
           startedAt,
           status: "running",
         });
+        registry.attachAbortController(runId, ac);
       }
 
       executeHttpRun({
@@ -258,6 +267,7 @@ export function runRoutes(
         registry,
         errorLog,
         startedAt,
+        abortSignal: ac.signal,
       }).catch(() => {
         // executeHttpRun's onError hook already wrote to errorLog and
         // broadcast the terminal error event before rethrowing. Swallow
@@ -276,12 +286,41 @@ export function runRoutes(
     // ── Multi-pass path ──
     const cancelToken = { cancelled: false };
 
+    // Per-attempt AbortControllers. PRI-1507. Populated synchronously
+    // from `onAllRunsKnown` (which fires in runRunSet's prep phase,
+    // BEFORE runLoop starts) so the executor can pick up its run's
+    // controller on first invocation. Attaching inside the executor
+    // would race with the registry not yet having entries — see plan
+    // Step 5 / spec §4.
+    const controllers = new Map<string, AbortController>();
+
     const handle = await runRunSet({
       resultsRoot: gauntletPath(config.projectRoot),
       cards: [entry.card.id],
       passes,
       kind: "single",
       cancelToken,
+      onAllRunsKnown: (allRuns) => {
+        for (const r of allRuns) {
+          const ac = new AbortController();
+          controllers.set(r.runId, ac);
+          if (registry) {
+            registry.register({
+              id: r.runId,
+              cardId: entry.card.id,
+              title: entry.card.title,
+              target: effective.target,
+              model: effective.model,
+              startedAt: Date.now(),
+              status: "queued",
+              attemptNumber: r.attemptNumber,
+              passes,
+              runSetId: undefined, // populated below once we know it; see post-await fixup
+            });
+            registry.attachAbortController(r.runId, ac);
+          }
+        }
+      },
       executor: async ({ runSetCtx, runId }) => {
         if (registry) registry.setStatus(runId, "running");
         if (setBroadcaster) {
@@ -302,6 +341,7 @@ export function runRoutes(
           errorLog,
           // No startedAt — see solo-path comment in legacy code.
           runSetCtx,
+          abortSignal: controllers.get(runId)?.signal,
         });
 
         if (setBroadcaster) {
@@ -315,20 +355,13 @@ export function runRoutes(
       },
     });
 
+    // Patch runSetId onto the registry entries pre-registered by
+    // onAllRunsKnown (we didn't know the id at that point because
+    // runRunSet generates it during prep — the handle is the source).
     if (registry) {
       for (const r of handle.runs) {
-        registry.register({
-          id: r.runId,
-          cardId: entry.card.id,
-          title: entry.card.title,
-          target: effective.target,
-          model: effective.model,
-          startedAt: Date.now(),
-          status: "queued",
-          attemptNumber: r.attemptNumber,
-          passes,
-          runSetId: handle.runSetId,
-        });
+        const snap = registry.getSnapshot(r.runId);
+        if (snap) snap.info.runSetId = handle.runSetId;
       }
     }
 

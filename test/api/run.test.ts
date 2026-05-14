@@ -139,6 +139,10 @@ describe("Run API", () => {
     expect(registry.has(body.runs[0].runId)).toBe(true);
     expect(registry.has("story-001")).toBe(false);
 
+    // PRI-1507: solo path attaches an AbortController on register so
+    // shutdown drain can fire it on grace-window expiry.
+    expect(registry.getAbortController(body.runs[0].runId)).toBeDefined();
+
     // Give the detached task time to finish writing before afterEach rm's the dir.
     await new Promise((r) => setTimeout(r, 100));
     } finally {

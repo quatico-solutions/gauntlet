@@ -115,6 +115,16 @@ export interface ExecuteRunCoreOptions {
    * registry. PRI-1507.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Test seam: substitute the result-file writer. Production callers
+   * leave undefined and the core uses the imported `writeResultFiles`.
+   * The seam exists so `test/runs/orchestrator-ordering.test.ts` can pin
+   * the load-bearing invariant that result files are written BEFORE
+   * `afterClose` runs (which is where the wrapper unregisters from the
+   * active-run registry — the existsSync defense in the shutdown stub
+   * writer depends on this ordering). PRI-1507.
+   */
+  writeResultFiles?: typeof writeResultFiles;
 }
 
 export interface ExecuteRunCoreResult {
@@ -218,7 +228,7 @@ export async function executeRunCore(
     });
     result.config = stampedRunConfig;
     if (runSetCtx) result.runSet = runSetCtx;
-    writeResultFiles(outDir, result);
+    (opts.writeResultFiles ?? writeResultFiles)(outDir, result);
 
     await hooks?.beforeClose?.(started);
     try { await adapter.close(); } catch { /* swallow */ }

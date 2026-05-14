@@ -59,6 +59,14 @@ describe("POST /api/run/:id with passes > 1", () => {
       expect(body.runs[0].attemptNumber).toBe(1);
       expect(body.runs[2].attemptNumber).toBe(3);
       expect(body.runSetId).toMatch(/^single_/);
+
+      // PRI-1507: multi-pass must attach an AbortController per attempt
+      // via onAllRunsKnown (registering inside the executor would race
+      // an empty registry — see plan Step 5). Regression test for that
+      // attach-point bug: every run in the response has a controller.
+      for (const r of body.runs) {
+        expect(registry.getAbortController(r.runId)).toBeDefined();
+      }
     } finally {
       process.env.ANTHROPIC_API_KEY = prev;
     }
