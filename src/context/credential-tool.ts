@@ -3,7 +3,8 @@
 // timeout cascade, and the existing seam's `kill()` doesn't take a
 // signal. Every other caller in the codebase is fine with the seam;
 // this module is the deliberate exception.
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, type ChildProcessByStdio } from "child_process";
+import type { Readable } from "stream";
 import type { CredentialResolverConfig } from "../config";
 import type { ToolDefinition, ToolResult } from "../models/provider";
 import type { EvidenceLogger } from "../evidence/logger";
@@ -33,7 +34,9 @@ export async function runResolver(
   key: string,
 ): Promise<ResolverResult> {
   const start = Date.now();
-  let child: ChildProcessWithoutNullStreams;
+  // stdio: ["ignore", "pipe", "pipe"] narrows stdin to null and gives us
+  // readable stdout/stderr — that's the precise ChildProcessByStdio variant.
+  let child: ChildProcessByStdio<null, Readable, Readable>;
   try {
     child = spawn(config.path, [entity, key], {
       detached: false,
