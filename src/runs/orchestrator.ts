@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { CLIAdapter } from "../adapters/cli/adapter";
 import { snapshotViewport, type Adapter } from "../adapters/adapter";
-import type { ChromeEndpoint, Viewport } from "../config";
+import type { ChromeEndpoint, CredentialResolverConfig, Viewport } from "../config";
 import { renderContextTree } from "../context/tree";
 import { EvidenceLogger } from "../evidence/logger";
 import { writeResultFiles } from "../evidence/writer";
@@ -52,6 +52,12 @@ export interface RunCoreConfig {
    * auto-launch. Surfaces collapse "default" → undefined themselves. */
   chrome?: ChromeEndpoint;
   viewport?: Viewport;
+  /**
+   * Caller-provided credential resolver, threaded through from
+   * AppConfig/EffectiveRunConfig. When set, adapters register the
+   * fetch_credential tool. PRI-1605.
+   */
+  credentialResolver?: CredentialResolverConfig;
 }
 
 export interface RunCorePrepared {
@@ -144,13 +150,14 @@ async function buildDefaultAdapter(
   runId: string,
   chrome: ChromeEndpoint | undefined,
   viewport: Viewport | undefined,
+  credentialResolver: CredentialResolverConfig | undefined,
 ): Promise<Adapter> {
   switch (type) {
     case "cli":
-      return new CLIAdapter({ contextRoot });
+      return new CLIAdapter({ contextRoot, credentialResolver });
     case "tui": {
       const { TUIAdapter } = await import("../adapters/tui/adapter");
-      return new TUIAdapter({ contextRoot });
+      return new TUIAdapter({ contextRoot, credentialResolver });
     }
     case "web": {
       const { WebAdapter } = await import("../adapters/web/adapter");
@@ -160,6 +167,7 @@ async function buildDefaultAdapter(
         logger,
         chromeProfileName: `gauntlet-run-${runId}`,
         viewport,
+        credentialResolver,
       });
     }
   }
@@ -196,6 +204,7 @@ export async function executeRunCore(
         runId,
         runConfig.chrome,
         runConfig.viewport,
+        runConfig.credentialResolver,
       ));
 
   try {

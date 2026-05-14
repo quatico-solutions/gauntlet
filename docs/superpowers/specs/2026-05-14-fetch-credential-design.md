@@ -199,8 +199,9 @@ Matches the lengths-only pattern from `install_cookies` / `install_passkey`.
 
 - **Live agent context** receives the full resolver stdout — the agent must type or paste the value.
 - **Evidence log (`run.jsonl`, action log)** records `fetch_credential_ok` events with: `entity`, `key`, `exitCode: 0`, `stdoutLength`, `stderrLength`, `elapsedMs`. Never the stdout bytes. `fetch_credential_failed` events add `step` (one of the labels above) and `error` (the bounded message). Mirrors `credentialContext()` in `src/adapters/web/passkey.ts:129`.
-- **Transcripts and exported run artifacts** redact the resolver stdout by default. The redacted marker reads `<credential redacted: entity=<e> key=<k> len=<n>>` and is what session revival sees.
+- **Transcripts and exported run artifacts** redact the `tool_result.text` row in `run.jsonl` by default. The redacted marker reads `<credential redacted: entity=<e> key=<k> len=<n>>` and is what session revival sees for that row.
 - **Opt-in reveal:** `GAUNTLET_CREDENTIAL_INCLUDE_IN_TRANSCRIPTS=1` (parsed via the existing `parseBoolEnv` in `config.ts`) keeps the stdout bytes in transcripts. Off by default. Intended for local debugging only; not safe to set in shared CI.
+- **Out of scope — model-side leakage.** Once the credential is in the agent's live context, the LLM may quote it in subsequent assistant prose, reasoning blocks, or reflection summaries — those land in `llm_response` rows of `run.jsonl` and are not redacted. The provider itself also keeps a copy server-side per their normal policy. Operators who need stricter handling should use throwaway credentials and rotate them after the run, the same advice that already applies to cookies and passkeys (`docs/credentials.md` §"Do not commit either file"). This is consistent with existing precedent: the lengths-only convention has always been about Gauntlet's own evidence files, not about constraining the model's subsequent behavior.
 
 ### Lifecycle
 

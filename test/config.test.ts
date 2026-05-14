@@ -1,8 +1,23 @@
 import { describe, test, expect } from "bun:test";
+import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { loadConfig, validateRunBody, mergeRunConfig, requireLlmCapable } from "../src/config";
 
 describe("loadConfig", () => {
   const emptyEnv = {} as NodeJS.ProcessEnv;
+
+  function withExecutableResolver<T>(fn: (resolverPath: string) => T): T {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cfg-resolver-"));
+    const resolverPath = join(tmp, "resolver.sh");
+    writeFileSync(resolverPath, "#!/bin/sh\necho ok\n");
+    chmodSync(resolverPath, 0o755);
+    try {
+      return fn(resolverPath);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 
   test("all defaults when no args and empty env", () => {
     const c = loadConfig({}, emptyEnv);
@@ -147,6 +162,89 @@ describe("loadConfig", () => {
       .toThrow(/reflection-interval/);
     expect(() => loadConfig({ reflectionInterval: 1.5 }, emptyEnv))
       .toThrow(/reflection-interval/);
+  });
+
+  test("GAUNTLET_CREDENTIAL_RESOLVER populates credentialResolver", () => {
+    withExecutableResolver((resolverPath) => {
+      const c = loadConfig({}, {
+        GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
+      } as NodeJS.ProcessEnv);
+      expect(c.credentialResolver).toEqual({
+        path: resolverPath,
+        timeoutMs: 10_000,
+        includeInTranscripts: false,
+      });
+      expect(c.sources.credentialResolver).toBe("env");
+    });
+  });
+
+  test("credentialResolver is undefined when env var unset", () => {
+    const c = loadConfig({}, {} as NodeJS.ProcessEnv);
+    expect(c.credentialResolver).toBeUndefined();
+    expect(c.sources.credentialResolver).toBe("default");
+  });
+
+  test("GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS overrides default", () => {
+    withExecutableResolver((resolverPath) => {
+      const c = loadConfig({}, {
+        GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
+        GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS: "5000",
+      } as NodeJS.ProcessEnv);
+      expect(c.credentialResolver?.timeoutMs).toBe(5_000);
+    });
+  });
+
+  test("invalid GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS throws", () => {
+    withExecutableResolver((resolverPath) => {
+      expect(() => loadConfig({}, {
+        GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
+        GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS: "abc",
+      } as NodeJS.ProcessEnv)).toThrow(/GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS/);
+    });
+  });
+
+  test("GAUNTLET_CREDENTIAL_INCLUDE_IN_TRANSCRIPTS=1 sets includeInTranscripts true", () => {
+    withExecutableResolver((resolverPath) => {
+      const c = loadConfig({}, {
+        GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
+        GAUNTLET_CREDENTIAL_INCLUDE_IN_TRANSCRIPTS: "1",
+      } as NodeJS.ProcessEnv);
+      expect(c.credentialResolver?.includeInTranscripts).toBe(true);
+    });
+  });
+
+  test("GAUNTLET_CREDENTIAL_RESOLVER pointing at nonexistent path throws", () => {
+    expect(() =>
+      loadConfig({}, {
+        GAUNTLET_CREDENTIAL_RESOLVER: "/nonexistent/path/credential-resolver.sh",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/GAUNTLET_CREDENTIAL_RESOLVER/);
+  });
+
+  test("GAUNTLET_CREDENTIAL_RESOLVER pointing at non-executable file throws", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cfg-resolver-"));
+    try {
+      const resolverPath = join(tmp, "resolver.sh");
+      writeFileSync(resolverPath, "not-executable");
+      chmodSync(resolverPath, 0o644);
+      expect(() =>
+        loadConfig({}, {
+          GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
+        } as NodeJS.ProcessEnv),
+      ).toThrow(/GAUNTLET_CREDENTIAL_RESOLVER/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("relative GAUNTLET_CREDENTIAL_RESOLVER is resolved against projectRoot", () => {
+    withExecutableResolver((resolverPath) => {
+      const c = loadConfig({}, {
+        GAUNTLET_PROJECT_ROOT: dirname(resolverPath),
+        GAUNTLET_CREDENTIAL_RESOLVER: "resolver.sh",
+      } as NodeJS.ProcessEnv);
+      expect(c.credentialResolver?.path).toBe(resolverPath);
+    });
   });
 });
 
