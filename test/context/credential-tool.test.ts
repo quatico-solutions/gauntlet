@@ -7,6 +7,8 @@ const FIXTURES = resolve(__dirname, "../fixtures");
 const OK = resolve(FIXTURES, "credential-resolver-ok.sh");
 const FAIL = resolve(FIXTURES, "credential-resolver-fail.sh");
 const SLOW = resolve(FIXTURES, "credential-resolver-slow.sh");
+const EMPTY = resolve(FIXTURES, "credential-resolver-empty.sh");
+const OVERFLOW = resolve(FIXTURES, "credential-resolver-overflow.sh");
 
 function cfg(path: string, timeoutMs = 5_000): CredentialResolverConfig {
   return { path, timeoutMs, includeInTranscripts: false };
@@ -34,16 +36,8 @@ describe("runResolver", () => {
 
   test("empty stdout on success is reported as empty_stdout", async () => {
     // Resolver that exits 0 but prints nothing to stdout.
-    const empty = resolve(FIXTURES, "credential-resolver-empty.sh");
-    const { writeFileSync, chmodSync, unlinkSync } = require("fs");
-    writeFileSync(empty, "#!/usr/bin/env bash\nexit 0\n");
-    chmodSync(empty, 0o755);
-    try {
-      const result = await runResolver(cfg(empty), "alice", "otp");
-      expect(result.kind).toBe("empty_stdout");
-    } finally {
-      try { unlinkSync(empty); } catch {}
-    }
+    const result = await runResolver(cfg(EMPTY), "alice", "otp");
+    expect(result.kind).toBe("empty_stdout");
   });
 
   test("timeout: SIGTERM after timeout, then SIGKILL after grace", async () => {
@@ -71,18 +65,7 @@ describe("runResolver", () => {
     // some number of `data` events; the first chunk that pushes the
     // running total past 64 KiB trips the overflow guard, regardless of
     // chunk boundaries. So this is robust to Bun's stream buffering.
-    const overflow = resolve(FIXTURES, "credential-resolver-overflow.sh");
-    const { writeFileSync, chmodSync, unlinkSync } = require("fs");
-    writeFileSync(
-      overflow,
-      "#!/usr/bin/env bash\nhead -c 102400 /dev/zero | tr '\\0' 'x'\n",
-    );
-    chmodSync(overflow, 0o755);
-    try {
-      const result = await runResolver(cfg(overflow), "alice", "otp");
-      expect(result.kind).toBe("stdout_overflow");
-    } finally {
-      try { unlinkSync(overflow); } catch {}
-    }
+    const result = await runResolver(cfg(OVERFLOW), "alice", "otp");
+    expect(result.kind).toBe("stdout_overflow");
   });
 });

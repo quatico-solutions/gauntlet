@@ -3,15 +3,20 @@
 // timeout cascade, and the existing seam's `kill()` doesn't take a
 // signal. Every other caller in the codebase is fine with the seam;
 // this module is the deliberate exception.
-import { spawn } from "child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import type { CredentialResolverConfig } from "../config";
 
+// `empty_stdout` is intentionally distinct from `ok`: per spec, a resolver
+// that exits 0 but writes nothing is a failure mode the agent and operator
+// need to see separately (agent: "resolver returned empty success"; action
+// log step label: `empty_stdout`). Collapsing into `ok` would force the
+// wrapper layer to reintroduce the distinction.
 export type ResolverResult =
   | { kind: "ok"; stdout: string; stderr: string; exitCode: 0; elapsedMs: number }
   | { kind: "nonzero_exit"; stdout: string; stderr: string; exitCode: number; elapsedMs: number }
   | { kind: "empty_stdout"; stderr: string; exitCode: 0; elapsedMs: number }
   | { kind: "timeout"; stderr: string; timeoutMs: number; elapsedMs: number }
-  | { kind: "spawn_failed"; error: string }
+  | { kind: "spawn_failed"; error: string; elapsedMs: number }
   | { kind: "stdout_overflow"; elapsedMs: number }
   | { kind: "stderr_overflow"; elapsedMs: number };
 
@@ -25,14 +30,14 @@ export async function runResolver(
   key: string,
 ): Promise<ResolverResult> {
   const start = Date.now();
-  let child;
+  let child: ChildProcessWithoutNullStreams;
   try {
     child = spawn(config.path, [entity, key], {
       detached: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
-    return { kind: "spawn_failed", error: (err as Error).message };
+    return { kind: "spawn_failed", error: (err as Error).message, elapsedMs: Date.now() - start };
   }
 
   return new Promise<ResolverResult>((resolveOutcome) => {
@@ -64,7 +69,7 @@ export async function runResolver(
       }
     }, config.timeoutMs + KILL_GRACE_MS);
 
-    child.stdout!.on("data", (chunk: Buffer) => {
+    child.stdout.on("data", (chunk: Buffer) => {
       if (stdoutOverflow) return;
       stdoutBytes += chunk.length;
       if (stdoutBytes > STDOUT_CAP_BYTES) {
@@ -76,7 +81,7 @@ export async function runResolver(
       stdoutChunks.push(chunk);
     });
 
-    child.stderr!.on("data", (chunk: Buffer) => {
+    child.stderr.on("data", (chunk: Buffer) => {
       if (stderrOverflow) return;
       stderrBytes += chunk.length;
       if (stderrBytes > STDERR_CAP_BYTES) {
@@ -89,7 +94,7 @@ export async function runResolver(
     });
 
     child.on("error", (err) => {
-      settle({ kind: "spawn_failed", error: err.message });
+      settle({ kind: "spawn_failed", error: err.message, elapsedMs: Date.now() - start });
     });
 
     child.on("exit", (code) => {
