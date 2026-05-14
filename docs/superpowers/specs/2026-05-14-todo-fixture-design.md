@@ -57,7 +57,7 @@ place; the frontends are presentation only.
 type Filter = "all" | "active" | "completed";
 
 interface TodoItem {
-  id: string;   // 4-char id from a small unambiguous alphabet (lowercase letters + digits, no 0/1/l/o), generated on add
+  id: string;   // 4-char id from alphabet `a–k m n p–z 2–9` (lowercase, no 0/1/l/o), generated on add
   text: string;
   done: boolean;
 }
@@ -106,14 +106,14 @@ scope (no card requires it).
 Single-shot. Each invocation: load state, mutate, save, exit.
 
 ```
-todo add "buy milk"           Add an item; print its row.
-todo list                     Print visible items (respects filter).
-todo list --all               Ignore filter, print everything.
-todo toggle <id>              Flip done on the item with that id.
-todo rm <id>                  Delete by id.
-todo filter <all|active|done> Set filter.
-todo clear-completed          Remove all items where done=true.
-todo                          Alias for `list`.
+todo add "buy milk"                Add an item; print its row.
+todo list                          Print visible items (respects filter).
+todo list --all                    Ignore filter, print everything.
+todo toggle <id>                   Flip done on the item with that id.
+todo rm <id>                       Delete by id.
+todo filter <all|active|completed> Set filter; then prints the list.
+todo clear-completed               Remove all items where done=true.
+todo                               Alias for `list`.
 ```
 
 Output format, one item per line:
@@ -123,17 +123,20 @@ a3xq  [ ] buy milk
 b7kn  [x] walk dog
 ```
 
-Footer line on `list`:
+Footer line on `list` always begins with `Filter: <name>` so the filter
+state is visible without needing to recall what was last set:
 
 ```
+Filter: all — 3 items left
 Filter: active — 2 items left (showing 2 of 3)
+Filter: completed — 0 items left (showing 1 of 3)
 ```
 
-When filter is `all`, the footer is:
+The `(showing X of Y)` clause is emitted only when items are hidden
+(non-`all` filters); it's redundant under `all`.
 
-```
-3 items left
-```
+`todo filter <name>` sets the filter and *also* prints the list, so the
+filter footer is always observable as the result of the action.
 
 Filter visibility in CLI output is what makes card 06 (filter-active)
 work — the agent must observe filter state through the footer, not infer
@@ -157,7 +160,7 @@ Footer:
 [i] add  [j/k] move  [space] toggle  [d] delete  [1/2/3] filter  [c] clear-completed  [q] quit
 ```
 
-Keybinds:
+Keybinds (normal mode — input mode captures only `Enter` and `Esc`):
 - `i` — enter input mode; type; `Enter` adds, `Esc` cancels.
 - `j` / `k` — move cursor down / up.
 - `Space` or `Enter` — toggle the cursor item's done state.
@@ -191,8 +194,11 @@ Filter buttons are `<button>` elements, never `<select>`. The memory
 `project_gauntlet_select_cdp_trap` documents why native `<select>` is
 not viable in fixture webapps.
 
-State persistence: in-memory while running, write `state.json` after
-every mutation, read it at startup. Restart-survivable.
+State persistence: in-memory while running, persists via `core.ts`
+(which resolves `$TODO_STATE_FILE`, then the argument, then the default
+`./.todo-state.json`). Written after every mutation, read at startup.
+Restart-survivable; the harness's per-run isolation guarantee holds
+because the Web frontend honors the same env var as CLI and TUI.
 
 Port: `$TODO_WEB_PORT` (env), default 7891. (Chosen to avoid collision
 with the tutorial webapp on 7890.)
@@ -200,10 +206,11 @@ with the tutorial webapp on 7890.)
 ## Cards
 
 Eight stories at `examples/todo/.gauntlet/stories/`. All use the
-Vampire Accountant cast (Fred / Deborah / Quinn) for continuity with the
-tutorial. All tagged `tutorial, todo`. Persona-bound (`You are <Name>.`),
-adapter-neutral in voice, outcome-shaped per the `writing-gauntlet-stories`
-skill.
+Vampire Accountant cast (Fred / Deborah / Quinn) — named for tutorial
+continuity rather than for profile-inference testing (this fixture has
+no profile tree under it). All tagged `tutorial, todo`. Each opens
+`You are <Name>.`; cards are adapter-neutral in voice and outcome-shaped
+per the `writing-gauntlet-stories` skill.
 
 ### 01-add-one.md
 
@@ -224,8 +231,8 @@ confirm the new item is in the list and is not yet done.
 - The list shows an item whose text is "finalize Cresswell
   estate ledger"
 - That item is not marked done
-- The "items left" footer reflects the addition (one more
-  active item than the starting state)
+- The "items left" readout shows `1 item left` (starting from
+  the empty fixture state, one item was added)
 ```
 
 ### 02-add-three.md
@@ -247,8 +254,8 @@ invoice*, *file Deborah's century-end summary*.
 - All three items appear in the list
 - They appear in the order given
 - None are marked done
-- The "items left" footer shows three more active items than
-  the starting state
+- The "items left" readout shows `3 items left` (starting from
+  the empty fixture state)
 ```
 
 ### 03-toggle-one.md
@@ -342,8 +349,9 @@ unfinished work is visible.
 - The visible list shows exactly the two active items:
   "replace garden stake" and "fix the back gate"
 - The two done items are NOT visible in the current view
-- The view's filter indicator shows that the "active" subset
-  is selected (the items are filtered, not deleted)
+- The app's readout names "active" as the currently selected
+  view (the items are filtered, not deleted — switching back
+  to the full view would bring them back)
 ```
 
 ### 07-clear-completed.md
@@ -391,8 +399,8 @@ cellar* and *ring Quinn* done. Report how many tasks remain.
 - Exactly two are marked done: "sort the cellar" and "ring
   Quinn"
 - The reported remaining count is 3
-- The reported count cites what is visible in the app's count
-  area, not an inferred count
+- The reported count cites the "items left" readout shown by
+  the app, not an inferred count
 ```
 
 ## Context tree
