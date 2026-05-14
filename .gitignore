@@ -44,7 +44,13 @@ examples/tutorial/.gauntlet/results/
 examples/tutorial/.gauntlet/run-sets/
 
 # Claude Code local data (worktrees, agent state, etc.)
-.claude/
+# Ignore the contents (not the directory itself) so we can re-include
+# shared skills below — git negations cannot resurrect paths inside an
+# ignored directory.
+.claude/*
+# ...except shared skills, which are checked in so agents working in this
+# repo pick them up automatically.
+!.claude/skills/
 
 # Git worktrees for in-flight feature work
 .worktrees/
