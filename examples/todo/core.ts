@@ -76,3 +76,41 @@ export function addItem(state: TodoState, text: string): TodoItem {
   state.items.push(item);
   return item;
 }
+
+export function toggleItem(state: TodoState, id: string): TodoItem | null {
+  const item = state.items.find((i) => i.id === id);
+  if (!item) return null;
+  item.done = !item.done;
+  return item;
+}
+
+export function deleteItem(state: TodoState, id: string): boolean {
+  const before = state.items.length;
+  state.items = state.items.filter((i) => i.id !== id);
+  return state.items.length < before;
+}
+
+export function setFilter(state: TodoState, filter: Filter): void {
+  state.filter = filter;
+}
+
+export function visibleItems(state: TodoState): TodoItem[] {
+  switch (state.filter) {
+    case "all":
+      return state.items;
+    case "active":
+      return state.items.filter((i) => !i.done);
+    case "completed":
+      return state.items.filter((i) => i.done);
+  }
+}
+
+export function activeCount(state: TodoState): number {
+  return state.items.filter((i) => !i.done).length;
+}
+
+export function clearCompleted(state: TodoState): number {
+  const before = state.items.length;
+  state.items = state.items.filter((i) => !i.done);
+  return before - state.items.length;
+}
