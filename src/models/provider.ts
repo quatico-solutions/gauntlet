@@ -14,6 +14,15 @@ export interface ToolCall {
 
 export interface ToolResult {
   text: string;
+  /**
+   * Optional alternative representation used for the run transcript /
+   * evidence log. When set, `text` still goes to the agent's live
+   * context (the agent must see the real value to type or paste it),
+   * but `tool_result.text` in run.jsonl uses this string instead.
+   * Use when the agent-visible value contains a secret that should
+   * not land in the transcript by default. PRI-1605.
+   */
+  transcriptText?: string;
   image?: {
     data: string;       // base64-encoded
     mediaType: string;  // e.g. "image/png"
