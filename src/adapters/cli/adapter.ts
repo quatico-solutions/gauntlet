@@ -2,6 +2,8 @@ import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
 import { buildReadTool, type ReadTool } from "../../context/read-tool";
+import { buildFetchCredentialTool, type FetchCredentialTool } from "../../context/credential-tool";
+import type { CredentialResolverConfig } from "../../config";
 import { validateToolArgs } from "../../agent/validators";
 import { spawn, type SpawnedProcess } from "../../runtime/spawn";
 
@@ -17,6 +19,7 @@ const KEY_MAP: Record<string, string> = {
 
 export interface CLIAdapterOptions {
   contextRoot?: string;
+  credentialResolver?: CredentialResolverConfig;
 }
 
 export class CLIAdapter implements Adapter {
@@ -24,6 +27,7 @@ export class CLIAdapter implements Adapter {
   private proc: SpawnedProcess | null = null;
   private buffer = "";
   private readTool: ReadTool | null;
+  private credentialTool: FetchCredentialTool | null;
   /** Lazy cache of tool name → parameter schema for O(1) validation. */
   private toolSchemas: Map<string, ToolDefinition["parameters"]> | null = null;
 
@@ -31,6 +35,10 @@ export class CLIAdapter implements Adapter {
     this.readTool = options?.contextRoot
       ? buildReadTool(options.contextRoot)
       : null;
+    this.credentialTool = buildFetchCredentialTool(
+      options?.contextRoot ?? "",
+      options?.credentialResolver,
+    );
   }
 
   async start(command: string): Promise<void> {
@@ -141,6 +149,7 @@ export class CLIAdapter implements Adapter {
     if (this.readTool) {
       tools.push(this.readTool.definition);
     }
+    if (this.credentialTool) tools.push(this.credentialTool.definition);
     return tools;
   }
 
@@ -167,6 +176,10 @@ export class CLIAdapter implements Adapter {
 
     if (name === "read" && this.readTool) {
       return this.readTool.execute(args);
+    }
+
+    if (name === "fetch_credential" && this.credentialTool) {
+      return this.credentialTool.execute(args, logger);
     }
 
     switch (name) {
