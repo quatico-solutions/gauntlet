@@ -180,4 +180,77 @@ describe("ActiveRunRegistry — status", () => {
     const r = new ActiveRunRegistry();
     expect(() => r.setStatus("nope", "running")).not.toThrow();
   });
+
+});
+
+// PRI-1507 — AbortController storage and bulk abort. Independent describe
+// because the existing two describes don't share their `info` helper at
+// module scope; defining locally is cleaner than refactoring.
+describe("ActiveRunRegistry — abort controllers", () => {
+  const info = (runId: string, startedAt: number, status: "queued" | "running" = "running") => ({
+    id: runId,
+    cardId: "card-x",
+    title: `Title ${runId}`,
+    target: "http://localhost:3000",
+    model: "claude-sonnet-4-6",
+    startedAt,
+    status,
+  });
+
+  test("attach then retrieve", () => {
+    const r = new ActiveRunRegistry();
+    r.register(info("a", 100));
+    const ac = new AbortController();
+    r.attachAbortController("a", ac);
+    expect(r.getAbortController("a")).toBe(ac);
+  });
+
+  test("attach for unknown runId is a no-op (no throw)", () => {
+    const r = new ActiveRunRegistry();
+    const ac = new AbortController();
+    expect(() => r.attachAbortController("nope", ac)).not.toThrow();
+    expect(r.getAbortController("nope")).toBeUndefined();
+  });
+
+  test("abortAll fires every registered controller exactly once and returns the count", () => {
+    const r = new ActiveRunRegistry();
+    r.register(info("a", 100));
+    r.register(info("b", 200));
+    r.register(info("c", 300));
+    const acA = new AbortController();
+    const acB = new AbortController();
+    // c is registered but has no controller — should be skipped silently.
+    r.attachAbortController("a", acA);
+    r.attachAbortController("b", acB);
+
+    const fired = r.abortAll("shutdown");
+    expect(fired).toBe(2);
+    expect(acA.signal.aborted).toBe(true);
+    expect(acA.signal.reason).toBe("shutdown");
+    expect(acB.signal.aborted).toBe(true);
+  });
+
+  test("abortAll is idempotent — second call returns 0", () => {
+    const r = new ActiveRunRegistry();
+    r.register(info("a", 100));
+    const ac = new AbortController();
+    r.attachAbortController("a", ac);
+
+    expect(r.abortAll("shutdown")).toBe(1);
+    expect(r.abortAll("shutdown")).toBe(0);
+  });
+
+  test("abortAll skips a controller already aborted by external code", () => {
+    // Simulates the race where a run finishes (and its controller is
+    // already aborted by some other mechanism) between registry.list()
+    // and the abortAll iteration.
+    const r = new ActiveRunRegistry();
+    r.register(info("a", 100));
+    const ac = new AbortController();
+    ac.abort("external");
+    r.attachAbortController("a", ac);
+
+    expect(r.abortAll("shutdown")).toBe(0);
+    expect(ac.signal.reason).toBe("external"); // not overwritten
+  });
 });
