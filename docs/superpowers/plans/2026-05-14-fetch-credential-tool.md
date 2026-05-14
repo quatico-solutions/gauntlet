@@ -4,12 +4,14 @@
 
 **Goal:** Add a new built-in Gauntlet agent tool `fetch_credential(entity, key) → markdown`, backed by a caller-provided executable invoked as `$GAUNTLET_CREDENTIAL_RESOLVER <entity> <key>`. The tool is registered only when both `contextRootIsPopulated(contextRoot)` and a resolver is configured; otherwise the agent never sees it.
 
-**Architecture:** One new module at `src/context/credential-tool.ts` containing a pure subprocess runner (`runResolver`) and an adapter-agnostic tool builder (`buildFetchCredentialTool`), mirroring the shape of `src/context/read-tool.ts`. Config changes in `src/config.ts` add three env vars and a `credentialResolver` field on `AppConfig` / `EffectiveRunConfig`. Each of the three adapters splices the tool registration alongside `buildReadTool`. The orchestrator at `src/runs/orchestrator.ts` threads the field from `EffectiveRunConfig` into adapter options.
+**Architecture:** One new module at `src/context/credential-tool.ts` containing a pure subprocess runner (`runResolver`) and an adapter-agnostic tool builder (`buildFetchCredentialTool`). Follows the same adapter-agnostic placement as `src/context/read-tool.ts` and the same `contextRootIsPopulated`-gating + null-when-disabled return pattern, though the surface is larger (two args, async execute, per-call logger). Config changes in `src/config.ts` add three env vars and a `credentialResolver` field on `AppConfig` / `EffectiveRunConfig`. Each of the three adapters splices the tool registration alongside `buildReadTool`. The orchestrator at `src/runs/orchestrator.ts` threads the field from `EffectiveRunConfig` into adapter options.
 
 **Tech Stack:** Bun/TypeScript. `bun:test` for tests. `child_process.spawn` for resolver invocation (Bun-compatible). Existing patterns from `src/adapters/web/passkey.ts` (logger + step-labeled events) and `src/context/read-tool.ts` (adapter-agnostic tool, gated on `contextRootIsPopulated`).
 
-**Spec:** `docs/superpowers/specs/2026-05-14-fetch-credential-design.md` (commit `f3bae96`).
+**Spec:** `docs/superpowers/specs/2026-05-14-fetch-credential-design.md` (commit `f3bae96`; secrets-handling section updated post-plan-review to clarify model-side leakage is out of scope).
 **Ticket:** PRI-1605.
+
+**Out of scope (re-flagging from spec):** redacting secrets out of `llm_response` rows or other model-quoted artifacts in `run.jsonl`. The plan redacts `tool_result.text` only. Operators who need stricter handling should use throwaway credentials.
 
 ---
 
@@ -17,7 +19,7 @@
 
 **Create:**
 
-- `src/context/credential-tool.ts` — `runResolver(config, entity, key)`, `buildFetchCredentialTool(contextRoot, resolverConfig, logger)`, `FetchCredentialTool` interface, `CredentialResolverConfig` interface, `ResolverResult` type, `FETCH_CREDENTIAL_TOOL_DESCRIPTION` const.
+- `src/context/credential-tool.ts` — `runResolver(config, entity, key)`, `buildFetchCredentialTool(contextRoot, resolverConfig)`, `FetchCredentialTool` interface (whose `execute(args, logger?)` takes a per-call logger), `ResolverResult` type, `FETCH_CREDENTIAL_TOOL_DESCRIPTION` const. `CredentialResolverConfig` is defined in `src/config.ts` (Task 1) and imported here.
 - `test/context/credential-tool.test.ts` — unit tests for both exports.
 - `test/fixtures/credential-resolver-ok.sh` — canned-success resolver used by tests.
 - `test/fixtures/credential-resolver-fail.sh` — canned-failure resolver used by tests.
@@ -25,7 +27,7 @@
 
 **Modify:**
 
-- `src/config.ts` — add `CredentialCredentialResolverConfig` interface, three env vars, `loadConfig` validation/population, `credentialResolver` on `AppConfig` and `EffectiveRunConfig`, `mergeRunConfig` propagation.
+- `src/config.ts` — add `CredentialResolverConfig` interface, three env vars, `loadConfig` validation/population, `credentialResolver` on `AppConfig` and `EffectiveRunConfig`, `mergeRunConfig` propagation.
 - `src/context/credential-tool.ts` — (created in earlier task; subsequent tasks add to it).
 - `src/adapters/web/adapter.ts` — add `credentialResolver?` to `WebAdapterOptions`, splice tool registration, dispatch in `executeTool`.
 - `src/adapters/cli/adapter.ts` — same.
@@ -177,7 +179,7 @@ Expected: 7 failures, all citing missing `credentialResolver` field on `AppConfi
 After the existing `Viewport` interface (around line 12), add:
 
 ```typescript
-export interface CredentialCredentialResolverConfig {
+export interface CredentialResolverConfig {
   path: string;
   timeoutMs: number;
   includeInTranscripts: boolean;
@@ -201,7 +203,7 @@ In `AppConfig` (in `src/config.ts`), add after `apiKeys`:
    * executable per call with `<entity> <key>` as argv. Undefined when
    * GAUNTLET_CREDENTIAL_RESOLVER is unset. PRI-1605.
    */
-  credentialResolver?: CredentialCredentialResolverConfig;
+  credentialResolver?: CredentialResolverConfig;
 ```
 
 In `AppConfig.sources` (the sources block), add:
@@ -218,7 +220,7 @@ In `EffectiveRunConfig`, add after `reflectionInterval`:
    * AppConfig. Adapters use this to register the fetch_credential
    * tool when set. PRI-1605.
    */
-  credentialResolver?: CredentialCredentialResolverConfig;
+  credentialResolver?: CredentialResolverConfig;
 ```
 
 - [ ] **Step 5: Add resolver-path validator to `src/config.ts`**
@@ -229,7 +231,7 @@ Add this helper function near the other parse helpers (around line 337):
 function resolveCredentialResolver(
   rawPath: string,
   projectRoot: string,
-): CredentialCredentialResolverConfig["path"] {
+): CredentialResolverConfig["path"] {
   const { resolve, isAbsolute } = require("path");
   const { statSync } = require("fs");
   const absolute = isAbsolute(rawPath) ? rawPath : resolve(projectRoot, rawPath);
@@ -262,7 +264,7 @@ In `loadConfig` (in `src/config.ts`), find the `apiKeys` block (around line 558)
 
 ```typescript
   // credentialResolver — caller-provided fetch_credential backend (PRI-1605).
-  let credentialResolver: CredentialCredentialResolverConfig | undefined;
+  let credentialResolver: CredentialResolverConfig | undefined;
   let credentialResolverSource: "default" | "env" = "default";
   if (env.GAUNTLET_CREDENTIAL_RESOLVER) {
     const resolvedPath = resolveCredentialResolver(
@@ -436,7 +438,10 @@ describe("runResolver", () => {
   });
 
   test("stdout overflow: resolver writes > 64 KiB returns kind=stdout_overflow", async () => {
-    // Resolver that prints 100 KiB.
+    // Resolver that prints 100 KiB. The kernel chunks the pipe write into
+    // some number of `data` events; the first chunk that pushes the
+    // running total past 64 KiB trips the overflow guard, regardless of
+    // chunk boundaries. So this is robust to Bun's stream buffering.
     const overflow = resolve(FIXTURES, "credential-resolver-overflow.sh");
     const { writeFileSync, chmodSync, unlinkSync } = require("fs");
     writeFileSync(
@@ -465,6 +470,11 @@ Expected: failure citing missing `src/context/credential-tool.ts` module.
 Create `src/context/credential-tool.ts`:
 
 ```typescript
+// We use `child_process` directly here rather than `src/runtime/spawn.ts`
+// because the credential resolver needs a SIGTERM → grace → SIGKILL
+// timeout cascade, and the existing seam's `kill()` doesn't take a
+// signal. Every other caller in the codebase is fine with the seam;
+// this module is the deliberate exception.
 import { spawn } from "child_process";
 import type { CredentialResolverConfig } from "../config";
 
@@ -608,9 +618,7 @@ EOF
 - Modify: `src/context/credential-tool.ts`
 - Modify: `test/context/credential-tool.test.ts`
 
-Adapter-agnostic tool wrapper. Validates args, calls `runResolver`, logs structured events, returns markdown tool results.
-
-> **Ordering note:** Step 3 of this task returns `{ text, transcriptText }` from the tool's success path. The `transcriptText` field is added to the `ToolResult` interface in Task 3.5 below. If you complete steps 1–2 here, then jump to Task 3.5 entirely, then return for steps 3–5, TypeScript stays happy throughout. Reading both tasks before starting is recommended.
+Adapter-agnostic tool wrapper. Validates args, calls `runResolver`, logs structured events, returns markdown tool results. Step 3 also extends `ToolResult` with `transcriptText` so the wrapper's success path compiles; the downstream logger plumbing that honors it lands in Task 3.5.
 
 - [ ] **Step 1: Write failing tests for buildFetchCredentialTool**
 
@@ -635,33 +643,39 @@ function makeLogger(): { events: RecordedEvent[]; logger: { logEvent(name: strin
   };
 }
 
-function withPopulatedContextRoot<T>(fn: (root: string) => T): T {
+async function withPopulatedContextRoot<T>(
+  fn: (root: string) => T | Promise<T>,
+): Promise<T> {
+  // Async so callers can `await` work inside `fn` before the temp dir
+  // is deleted. A sync `try/finally` would `rmSync` the dir the
+  // instant `fn` returned its Promise, racing against any unresolved
+  // awaits inside.
   const tmp = mkdtempSync(join(tmpdir(), "gauntlet-credtool-"));
   writeFileSync(join(tmp, "marker.md"), "anything");
-  try { return fn(tmp); } finally { rmSync(tmp, { recursive: true, force: true }); }
+  try { return await fn(tmp); } finally { rmSync(tmp, { recursive: true, force: true }); }
 }
 
 describe("buildFetchCredentialTool", () => {
   test("returns null when contextRoot is empty (no files)", () => {
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-credtool-empty-"));
     try {
-      const tool = buildFetchCredentialTool(tmp, cfg(OK), null);
+      const tool = buildFetchCredentialTool(tmp, cfg(OK));
       expect(tool).toBeNull();
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  test("returns null when resolverConfig is undefined", () => {
-    withPopulatedContextRoot((root) => {
-      const tool = buildFetchCredentialTool(root, undefined, null);
+  test("returns null when resolverConfig is undefined", async () => {
+    await withPopulatedContextRoot((root) => {
+      const tool = buildFetchCredentialTool(root, undefined);
       expect(tool).toBeNull();
     });
   });
 
-  test("registers as `fetch_credential` with entity + key string params", () => {
-    withPopulatedContextRoot((root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null);
+  test("registers as `fetch_credential` with entity + key string params", async () => {
+    await withPopulatedContextRoot((root) => {
+      const tool = buildFetchCredentialTool(root, cfg(OK));
       expect(tool).not.toBeNull();
       expect(tool!.definition.name).toBe("fetch_credential");
       const params = tool!.definition.parameters as {
@@ -674,9 +688,9 @@ describe("buildFetchCredentialTool", () => {
     });
   });
 
-  test("tool description matches exported constant", () => {
-    withPopulatedContextRoot((root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null);
+  test("tool description matches exported constant", async () => {
+    await withPopulatedContextRoot((root) => {
+      const tool = buildFetchCredentialTool(root, cfg(OK));
       expect(tool!.definition.description).toBe(FETCH_CREDENTIAL_TOOL_DESCRIPTION);
     });
   });
@@ -684,8 +698,8 @@ describe("buildFetchCredentialTool", () => {
   test("execute success returns resolver stdout verbatim and logs ok event", async () => {
     await withPopulatedContextRoot(async (root) => {
       const { events, logger } = makeLogger();
-      const tool = buildFetchCredentialTool(root, cfg(OK), logger)!;
-      const result = await tool.execute({ entity: "alice", key: "otp" });
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
+      const result = await tool.execute({ entity: "alice", key: "otp" }, logger);
       expect(result.text).toBe("ok-for-alice:otp\n");
       expect(events).toHaveLength(1);
       expect(events[0]?.name).toBe("fetch_credential_ok");
@@ -701,8 +715,8 @@ describe("buildFetchCredentialTool", () => {
   test("execute nonzero exit returns error markdown and logs failed event", async () => {
     await withPopulatedContextRoot(async (root) => {
       const { events, logger } = makeLogger();
-      const tool = buildFetchCredentialTool(root, cfg(FAIL), logger)!;
-      const result = await tool.execute({ entity: "alice", key: "pin" });
+      const tool = buildFetchCredentialTool(root, cfg(FAIL))!;
+      const result = await tool.execute({ entity: "alice", key: "pin" }, logger);
       expect(result.text).toMatch(/Error: fetch_credential resolver exited 2 for alice:pin/);
       expect(result.text).toContain("no credential 'pin' for entity 'alice'");
       expect(events[0]?.name).toBe("fetch_credential_failed");
@@ -717,8 +731,8 @@ describe("buildFetchCredentialTool", () => {
   test("execute rejects entity with path traversal", async () => {
     await withPopulatedContextRoot(async (root) => {
       const { events, logger } = makeLogger();
-      const tool = buildFetchCredentialTool(root, cfg(OK), logger)!;
-      const result = await tool.execute({ entity: "../escape", key: "otp" });
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
+      const result = await tool.execute({ entity: "../escape", key: "otp" }, logger);
       expect(result.text).toMatch(/Error: fetch_credential argument "entity" rejected/);
       expect(events[0]?.payload?.step).toBe("validate_args");
     });
@@ -726,7 +740,7 @@ describe("buildFetchCredentialTool", () => {
 
   test("execute rejects entity with backslash", async () => {
     await withPopulatedContextRoot(async (root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null)!;
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
       const result = await tool.execute({ entity: "alice\\nope", key: "otp" });
       expect(result.text).toMatch(/Error: fetch_credential argument "entity" rejected/);
     });
@@ -734,7 +748,7 @@ describe("buildFetchCredentialTool", () => {
 
   test("execute rejects entity with leading dot", async () => {
     await withPopulatedContextRoot(async (root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null)!;
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
       const result = await tool.execute({ entity: ".hidden", key: "otp" });
       expect(result.text).toMatch(/Error: fetch_credential argument "entity" rejected/);
     });
@@ -742,7 +756,7 @@ describe("buildFetchCredentialTool", () => {
 
   test("execute rejects empty entity", async () => {
     await withPopulatedContextRoot(async (root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null)!;
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
       const result = await tool.execute({ entity: "", key: "otp" });
       expect(result.text).toMatch(/Error: fetch_credential argument "entity" rejected/);
     });
@@ -750,7 +764,7 @@ describe("buildFetchCredentialTool", () => {
 
   test("execute rejects entity longer than 256 chars", async () => {
     await withPopulatedContextRoot(async (root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null)!;
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
       const result = await tool.execute({ entity: "a".repeat(257), key: "otp" });
       expect(result.text).toMatch(/Error: fetch_credential argument "entity" rejected/);
     });
@@ -758,7 +772,7 @@ describe("buildFetchCredentialTool", () => {
 
   test("execute rejects key with disallowed chars (e.g. dot)", async () => {
     await withPopulatedContextRoot(async (root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null)!;
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
       const result = await tool.execute({ entity: "alice", key: "ot.p" });
       expect(result.text).toMatch(/Error: fetch_credential argument "key" rejected/);
     });
@@ -766,7 +780,7 @@ describe("buildFetchCredentialTool", () => {
 
   test("execute rejects empty key", async () => {
     await withPopulatedContextRoot(async (root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null)!;
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
       const result = await tool.execute({ entity: "alice", key: "" });
       expect(result.text).toMatch(/Error: fetch_credential argument "key" rejected/);
     });
@@ -774,7 +788,7 @@ describe("buildFetchCredentialTool", () => {
 
   test("execute accepts email-shaped entity", async () => {
     await withPopulatedContextRoot(async (root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null)!;
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
       const result = await tool.execute({ entity: "alice@example.com", key: "otp" });
       expect(result.text).toBe("ok-for-alice@example.com:otp\n");
     });
@@ -782,7 +796,7 @@ describe("buildFetchCredentialTool", () => {
 
   test("success returns redacted transcriptText by default", async () => {
     await withPopulatedContextRoot(async (root) => {
-      const tool = buildFetchCredentialTool(root, cfg(OK), null)!;
+      const tool = buildFetchCredentialTool(root, cfg(OK))!;
       const result = await tool.execute({ entity: "alice", key: "otp" });
       expect(result.text).toBe("ok-for-alice:otp\n");
       // Length matches the stdout returned to the agent.
@@ -799,7 +813,7 @@ describe("buildFetchCredentialTool", () => {
         timeoutMs: 5_000,
         includeInTranscripts: true,
       };
-      const tool = buildFetchCredentialTool(root, reveal, null)!;
+      const tool = buildFetchCredentialTool(root, reveal)!;
       const result = await tool.execute({ entity: "alice", key: "otp" });
       expect(result.text).toBe("ok-for-alice:otp\n");
       expect((result as { transcriptText?: string }).transcriptText).toBeUndefined();
@@ -814,7 +828,35 @@ Run: `bun test test/context/credential-tool.test.ts`
 
 Expected: failures citing missing `buildFetchCredentialTool` / `FETCH_CREDENTIAL_TOOL_DESCRIPTION` exports.
 
-- [ ] **Step 3: Add the wrapper implementation**
+- [ ] **Step 3: Add `transcriptText` to the `ToolResult` interface**
+
+In `src/models/provider.ts`, find the existing `ToolResult` interface (around line 15). Add an optional `transcriptText` field, placed between `text` and `image`:
+
+```typescript
+export interface ToolResult {
+  text: string;
+  /**
+   * Optional alternative representation used for the run transcript /
+   * evidence log. When set, `text` still goes to the agent's live
+   * context (the agent must see the real value to type or paste it),
+   * but `tool_result.text` in run.jsonl uses this string instead.
+   * Use when the agent-visible value contains a secret that should
+   * not land in the transcript by default. PRI-1605.
+   */
+  transcriptText?: string;
+  image?: {
+    data: string;
+    mediaType: string;
+  };
+  imagePath?: string;
+  artifactPath?: string;
+  capturePath?: string;
+}
+```
+
+This is a forward declaration only — the logger doesn't honor it yet. That lands in Task 3.5. The field has to exist now so the wrapper implementation in Step 4 compiles.
+
+- [ ] **Step 4: Add the wrapper implementation**
 
 Append to `src/context/credential-tool.ts`:
 
@@ -839,7 +881,14 @@ export const FETCH_CREDENTIAL_TOOL_DESCRIPTION =
 
 export interface FetchCredentialTool {
   definition: ToolDefinition;
-  execute(args: Record<string, unknown>): Promise<ToolResult>;
+  // Logger is per-call rather than captured at construction so the
+  // adapter-agnostic builder works equally well from web/cli/tui
+  // adapters, each of which receives a per-tool-call logger in its
+  // own executeTool(name, args, logger) entry point.
+  execute(
+    args: Record<string, unknown>,
+    logger?: import("../evidence/logger").EvidenceLogger | null,
+  ): Promise<ToolResult>;
 }
 
 const ENTITY_FORBIDDEN_PATTERN = /[\/\\]/;
@@ -878,7 +927,6 @@ function validateKey(key: unknown): { ok: true; value: string } | { ok: false; r
 export function buildFetchCredentialTool(
   contextRoot: string,
   resolverConfig: CredentialResolverConfig | undefined,
-  logger: EvidenceLogger | null = null,
 ): FetchCredentialTool | null {
   if (!resolverConfig) return null;
   if (!contextRootIsPopulated(contextRoot)) return null;
@@ -904,7 +952,10 @@ export function buildFetchCredentialTool(
     },
   };
 
-  const execute = async (args: Record<string, unknown>): Promise<ToolResult> => {
+  const execute = async (
+    args: Record<string, unknown>,
+    logger: EvidenceLogger | null = null,
+  ): Promise<ToolResult> => {
     const entityValidation = validateEntity(args.entity);
     if (!entityValidation.ok) {
       const reason = entityValidation.reason;
@@ -1012,16 +1063,16 @@ export function buildFetchCredentialTool(
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `bun test test/context/credential-tool.test.ts`
 
 Expected: all tests in the file pass (including Task 2's tests).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/context/credential-tool.ts test/context/credential-tool.test.ts
+git add src/context/credential-tool.ts test/context/credential-tool.test.ts src/models/provider.ts
 git commit -m "$(cat <<'EOF'
 feat(credential-tool): buildFetchCredentialTool wrapper (PRI-1605)
 
@@ -1101,33 +1152,9 @@ Run: `bun test test/evidence/logger.test.ts`
 
 Expected: the first new test fails (no `transcriptText` field exists yet; logger writes raw `text`). The second test passes already (matches current behavior). TypeScript may also reject `transcriptText` on `ToolResultFields` — that's the same root cause.
 
-- [ ] **Step 3: Add `transcriptText` to `ToolResult`**
+- [ ] **Step 3: Add `transcriptText` to `ToolResultFields` and update `logToolResult`**
 
-In `src/models/provider.ts`, the existing `ToolResult` interface (around line 15) becomes:
-
-```typescript
-export interface ToolResult {
-  text: string;
-  /**
-   * Optional alternative representation used for the run transcript /
-   * evidence log. When set, `text` still goes to the agent's live
-   * context (the agent must see the real value to type or paste it),
-   * but `tool_result.text` in run.jsonl uses this string instead.
-   * Use when the agent-visible value contains a secret that should
-   * not land in the transcript by default. PRI-1605.
-   */
-  transcriptText?: string;
-  image?: {
-    data: string;
-    mediaType: string;
-  };
-  imagePath?: string;
-  artifactPath?: string;
-  capturePath?: string;
-}
-```
-
-- [ ] **Step 4: Add `transcriptText` to `ToolResultFields` and update `logToolResult`**
+`ToolResult.transcriptText` was added in Task 3 Step 3; this step adds the matching field on the evidence-logger side and rewrites `logToolResult` to honor it.
 
 In `src/evidence/logger.ts`:
 
@@ -1208,7 +1235,7 @@ logToolResult(fields: ToolResultFields): void {
 }
 ```
 
-- [ ] **Step 5: Pass `transcriptText` through in agent.ts**
+- [ ] **Step 4: Pass `transcriptText` through in agent.ts**
 
 In `src/agent/agent.ts`, the `logger.logToolResult({...})` call around line 390. Add `transcriptText: result.transcriptText` to the object literal:
 
@@ -1228,32 +1255,33 @@ logger.logToolResult({
 });
 ```
 
-- [ ] **Step 6: Run logger tests to verify they pass**
+- [ ] **Step 5: Run logger tests to verify they pass**
 
 Run: `bun test test/evidence/logger.test.ts`
 
 Expected: all tests pass, including the two new ones.
 
-- [ ] **Step 7: Run the full suite to catch regressions**
+- [ ] **Step 6: Run the full suite to catch regressions**
 
 Run: `bun test`
 
 Expected: all previously-passing tests still pass.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/models/provider.ts src/evidence/logger.ts src/agent/agent.ts test/evidence/logger.test.ts
+git add src/evidence/logger.ts src/agent/agent.ts test/evidence/logger.test.ts
 git commit -m "$(cat <<'EOF'
 feat(logger): honor optional transcriptText on tool results (PRI-1605)
 
-ToolResult and ToolResultFields gain an optional transcriptText. When
-set, logToolResult writes that string into tool_result.text in
-run.jsonl instead of the raw text, and drops transcriptText itself
-from the row. The agent's live context is untouched — only the
-recorded transcript is affected. fetch_credential uses this to redact
-secrets by default; the same seam is available to any future tool
-that wants a transcript-specific representation.
+ToolResultFields gains an optional transcriptText. When set,
+logToolResult writes that string into tool_result.text in run.jsonl
+instead of the raw text, and drops transcriptText itself from the
+row. The agent's live context (ToolResult.text, added in the previous
+commit) is untouched — only the recorded transcript is affected.
+fetch_credential uses this to redact secrets by default; the same
+seam is available to any future tool that wants a transcript-specific
+representation.
 
 Co-Authored-By: Lirael@36bd0b63 (Opus 4.7)
 EOF
@@ -1354,13 +1382,13 @@ In `src/adapters/web/adapter.ts`, find the `WebAdapterOptions` interface (line 9
    * Caller-provided credential resolver. When set together with
    * contextRoot, the WebAdapter registers fetch_credential. PRI-1605.
    */
-  credentialResolver?: CredentialCredentialResolverConfig;
+  credentialResolver?: CredentialResolverConfig;
 ```
 
 At the top of the file, add the import for the config type:
 
 ```typescript
-import type { CredentialCredentialResolverConfig } from "../../config";
+import type { CredentialResolverConfig } from "../../config";
 ```
 
 (Add it near the other type imports.)
@@ -1385,31 +1413,30 @@ In the constructor body, immediately after the `cookiesTool` initialization (lin
     this.credentialTool = buildFetchCredentialTool(
       options?.contextRoot ?? "",
       options?.credentialResolver,
-      this.logger,
     );
 ```
 
+(Note: no `this.logger` here. The credential tool takes its logger per call, in `executeTool`'s dispatch below — see Step 6.)
+
 - [ ] **Step 5: Splice the tool into `toolDefinitions`**
 
-Find `toolDefinitions()` in `src/adapters/web/adapter.ts`. It currently appends `readTool`, `passkeyTool`, `cookiesTool` conditionally. Add a similar conditional append for `credentialTool` (after the cookies append):
+Find `toolDefinitions()` in `src/adapters/web/adapter.ts`. It currently appends `readTool`, `passkeyTool`, `cookiesTool` conditionally. Add a similar conditional append for `credentialTool` (after the cookies append), matching the exact line style used for `cookiesTool`:
 
 ```typescript
     if (this.credentialTool) tools.push(this.credentialTool.definition);
 ```
 
-(Match the exact style of the surrounding code — if it uses spread, mimic that.)
-
 - [ ] **Step 6: Dispatch in `executeTool`**
 
-Find `executeTool` in `src/adapters/web/adapter.ts` (around line 911). The current code handles `install_passkey` and `install_cookies`. Add a parallel branch:
+Find the existing `install_cookies` dispatch branch in `src/adapters/web/adapter.ts` (look for `if (name === "install_cookies" && this.cookiesTool)`). Add a parallel branch immediately after, passing the per-call `logger` through to `execute`:
 
 ```typescript
     if (name === "fetch_credential" && this.credentialTool) {
-      return this.credentialTool.execute(args);
+      return this.credentialTool.execute(args, logger);
     }
 ```
 
-Place it next to the existing install branches.
+The `logger` identifier refers to the `executeTool(name, args, logger)` parameter, which is in scope here.
 
 - [ ] **Step 7: Run tests to verify they pass**
 
@@ -1497,13 +1524,13 @@ Add imports at the top:
 
 ```typescript
 import { buildFetchCredentialTool, type FetchCredentialTool } from "../../context/credential-tool";
-import type { CredentialCredentialResolverConfig } from "../../config";
+import type { CredentialResolverConfig } from "../../config";
 ```
 
 Add to `CLIAdapterOptions`:
 
 ```typescript
-  credentialResolver?: CredentialCredentialResolverConfig;
+  credentialResolver?: CredentialResolverConfig;
 ```
 
 Add a private field next to `readTool`:
@@ -1518,15 +1545,22 @@ In the constructor, after the `readTool` assignment, add:
     this.credentialTool = buildFetchCredentialTool(
       options?.contextRoot ?? "",
       options?.credentialResolver,
-      null, // CLI adapter does not currently take a logger — match readTool's pattern.
     );
 ```
 
-Find `toolDefinitions()` and add the conditional append matching how `readTool` is handled. Same for `executeTool`:
+Find `toolDefinitions()` (locate the line that conditionally appends `this.readTool.definition`) and immediately after add the parallel conditional append for `credentialTool`:
+
+```typescript
+    if (this.credentialTool) tools.push(this.credentialTool.definition);
+```
+
+(The exact identifier and method may differ from `tools.push` — match the style of the existing `readTool` append in this same file.)
+
+Find `executeTool` (signature `async executeTool(name: string, args: Record<string, unknown>, logger: EvidenceLogger): Promise<ToolResult>`). Immediately after the existing `if (name === "read" && this.readTool)` branch, add the parallel branch, passing the per-call `logger` through:
 
 ```typescript
     if (name === "fetch_credential" && this.credentialTool) {
-      return this.credentialTool.execute(args);
+      return this.credentialTool.execute(args, logger);
     }
 ```
 
@@ -1567,7 +1601,39 @@ Expected: 2 failures.
 
 - [ ] **Step 3: Modify `src/adapters/tui/adapter.ts`**
 
-Apply the same changes as Task 5 Step 3, but to the TUI adapter.
+Identical splice pattern as Task 5 Step 3, applied to `src/adapters/tui/adapter.ts`. The four pieces:
+
+1. Imports at the top:
+
+```typescript
+import { buildFetchCredentialTool, type FetchCredentialTool } from "../../context/credential-tool";
+import type { CredentialResolverConfig } from "../../config";
+```
+
+2. Extend `TUIAdapterOptions` with `credentialResolver?: CredentialResolverConfig;`.
+
+3. Add `private credentialTool: FetchCredentialTool | null;` next to the existing `readTool` field, and initialize it in the constructor after the `readTool` assignment:
+
+```typescript
+    this.credentialTool = buildFetchCredentialTool(
+      options?.contextRoot ?? "",
+      options?.credentialResolver,
+    );
+```
+
+4. In `toolDefinitions()` add the conditional append next to `readTool`'s append:
+
+```typescript
+    if (this.credentialTool) tools.push(this.credentialTool.definition);
+```
+
+5. In `executeTool(name, args, logger)`, immediately after the `read` branch, add:
+
+```typescript
+    if (name === "fetch_credential" && this.credentialTool) {
+      return this.credentialTool.execute(args, logger);
+    }
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1606,7 +1672,7 @@ async function buildDefaultAdapter(
   runId: string,
   chrome: ChromeEndpoint | undefined,
   viewport: Viewport | undefined,
-  credentialResolver: CredentialCredentialResolverConfig | undefined,
+  credentialResolver: CredentialResolverConfig | undefined,
 ): Promise<Adapter> {
   switch (type) {
     case "cli":
@@ -1633,7 +1699,7 @@ async function buildDefaultAdapter(
 Add the import at the top of the file:
 
 ```typescript
-import type { CredentialCredentialResolverConfig } from "../config";
+import type { CredentialResolverConfig } from "../config";
 ```
 
 - [ ] **Step 2: Pass `runConfig.credentialResolver` at the call site**
