@@ -1,8 +1,23 @@
 import { describe, test, expect } from "bun:test";
+import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { loadConfig, validateRunBody, mergeRunConfig, requireLlmCapable } from "../src/config";
 
 describe("loadConfig", () => {
   const emptyEnv = {} as NodeJS.ProcessEnv;
+
+  function withExecutableResolver<T>(fn: (resolverPath: string) => T): T {
+    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cfg-resolver-"));
+    const resolverPath = join(tmp, "resolver.sh");
+    writeFileSync(resolverPath, "#!/bin/sh\necho ok\n");
+    chmodSync(resolverPath, 0o755);
+    try {
+      return fn(resolverPath);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
 
   test("all defaults when no args and empty env", () => {
     const c = loadConfig({}, emptyEnv);
@@ -150,14 +165,7 @@ describe("loadConfig", () => {
   });
 
   test("GAUNTLET_CREDENTIAL_RESOLVER populates credentialResolver", () => {
-    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require("fs");
-    const { tmpdir } = require("os");
-    const { join } = require("path");
-    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cfg-resolver-"));
-    try {
-      const resolverPath = join(tmp, "resolver.sh");
-      writeFileSync(resolverPath, "#!/bin/sh\necho ok\n");
-      chmodSync(resolverPath, 0o755);
+    withExecutableResolver((resolverPath) => {
       const c = loadConfig({}, {
         GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
       } as NodeJS.ProcessEnv);
@@ -167,9 +175,7 @@ describe("loadConfig", () => {
         includeInTranscripts: false,
       });
       expect(c.sources.credentialResolver).toBe("env");
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    });
   });
 
   test("credentialResolver is undefined when env var unset", () => {
@@ -179,41 +185,32 @@ describe("loadConfig", () => {
   });
 
   test("GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS overrides default", () => {
-    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require("fs");
-    const { tmpdir } = require("os");
-    const { join } = require("path");
-    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cfg-resolver-"));
-    try {
-      const resolverPath = join(tmp, "resolver.sh");
-      writeFileSync(resolverPath, "#!/bin/sh\necho ok\n");
-      chmodSync(resolverPath, 0o755);
+    withExecutableResolver((resolverPath) => {
       const c = loadConfig({}, {
         GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
         GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS: "5000",
       } as NodeJS.ProcessEnv);
       expect(c.credentialResolver?.timeoutMs).toBe(5_000);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    });
+  });
+
+  test("invalid GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS throws", () => {
+    withExecutableResolver((resolverPath) => {
+      expect(() => loadConfig({}, {
+        GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
+        GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS: "abc",
+      } as NodeJS.ProcessEnv)).toThrow(/GAUNTLET_CREDENTIAL_RESOLVER_TIMEOUT_MS/);
+    });
   });
 
   test("GAUNTLET_CREDENTIAL_INCLUDE_IN_TRANSCRIPTS=1 sets includeInTranscripts true", () => {
-    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require("fs");
-    const { tmpdir } = require("os");
-    const { join } = require("path");
-    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cfg-resolver-"));
-    try {
-      const resolverPath = join(tmp, "resolver.sh");
-      writeFileSync(resolverPath, "#!/bin/sh\necho ok\n");
-      chmodSync(resolverPath, 0o755);
+    withExecutableResolver((resolverPath) => {
       const c = loadConfig({}, {
         GAUNTLET_CREDENTIAL_RESOLVER: resolverPath,
         GAUNTLET_CREDENTIAL_INCLUDE_IN_TRANSCRIPTS: "1",
       } as NodeJS.ProcessEnv);
       expect(c.credentialResolver?.includeInTranscripts).toBe(true);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    });
   });
 
   test("GAUNTLET_CREDENTIAL_RESOLVER pointing at nonexistent path throws", () => {
@@ -225,9 +222,6 @@ describe("loadConfig", () => {
   });
 
   test("GAUNTLET_CREDENTIAL_RESOLVER pointing at non-executable file throws", () => {
-    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require("fs");
-    const { tmpdir } = require("os");
-    const { join } = require("path");
     const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cfg-resolver-"));
     try {
       const resolverPath = join(tmp, "resolver.sh");
@@ -244,22 +238,13 @@ describe("loadConfig", () => {
   });
 
   test("relative GAUNTLET_CREDENTIAL_RESOLVER is resolved against projectRoot", () => {
-    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require("fs");
-    const { tmpdir } = require("os");
-    const { join } = require("path");
-    const tmp = mkdtempSync(join(tmpdir(), "gauntlet-cfg-resolver-"));
-    try {
-      const resolverPath = join(tmp, "resolver.sh");
-      writeFileSync(resolverPath, "#!/bin/sh\necho ok\n");
-      chmodSync(resolverPath, 0o755);
+    withExecutableResolver((resolverPath) => {
       const c = loadConfig({}, {
-        GAUNTLET_PROJECT_ROOT: tmp,
+        GAUNTLET_PROJECT_ROOT: dirname(resolverPath),
         GAUNTLET_CREDENTIAL_RESOLVER: "resolver.sh",
       } as NodeJS.ProcessEnv);
       expect(c.credentialResolver?.path).toBe(resolverPath);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    });
   });
 });
 

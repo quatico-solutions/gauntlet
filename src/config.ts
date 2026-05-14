@@ -1,3 +1,5 @@
+import { isAbsolute, resolve as resolvePath } from "node:path";
+import { statSync } from "node:fs";
 import { ADAPTER_TYPES, isAdapterType, type AdapterType } from "./adapters/adapter";
 import { parseDuration } from "./util/parse-duration";
 
@@ -360,10 +362,8 @@ function parseBoolEnv(raw: string, label: string): boolean {
 function resolveCredentialResolver(
   rawPath: string,
   projectRoot: string,
-): CredentialResolverConfig["path"] {
-  const { resolve, isAbsolute } = require("path");
-  const { statSync } = require("fs");
-  const absolute = isAbsolute(rawPath) ? rawPath : resolve(projectRoot, rawPath);
+): string {
+  const absolute = isAbsolute(rawPath) ? rawPath : resolvePath(projectRoot, rawPath);
   let stat;
   try {
     stat = statSync(absolute);
