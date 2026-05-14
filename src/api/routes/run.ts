@@ -157,6 +157,7 @@ export async function executeHttpRun(
         reflectionInterval: effective.reflectionInterval,
         chrome: effective.chrome,
         viewport: effective.viewport,
+        credentialResolver: effective.credentialResolver,
       },
       hooks,
     });

@@ -70,6 +70,7 @@ export async function runOne(opts: RunOneOptions): Promise<RunOneSummary> {
       reflectionInterval: config.defaultReflectionInterval,
       chrome,
       viewport: config.defaultViewport,
+      credentialResolver: config.credentialResolver,
     },
     hooks: opts.onLogger
       ? { onLogger: (logger) => opts.onLogger!(logger) }
