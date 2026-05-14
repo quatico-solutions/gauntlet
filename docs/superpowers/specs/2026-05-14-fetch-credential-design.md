@@ -42,19 +42,34 @@ today.
 
 ### Note on "entity"
 
-The agent and a human author both reason about characters in a story
-("Sign in as Alice…"). Gauntlet itself does not. The
-`.gauntlet/context/` tree is a flat filesystem listing with no
-enforced structure: one project organizes character information as
-`alice.md`, another as `profiles/alice.md`, another as `alice/profile.md`,
-another with completely different names. The agent figures it out from
-reading the tree.
+`.gauntlet/context/` is a flat filesystem tree with no enforced
+structure. One project organizes character information as
+`alice.md`; another splits `bio.md` from `identity.md`; another
+groups everyone under `users.md`. Files are markdown; what's inside
+them — fields like `email`, `username`, `account_id`, prose
+descriptions, sign-in instructions — is the human author's choice.
 
-The tool's first argument is called `entity` precisely to avoid
-implying structure that does not exist. From `fetch_credential`'s
-perspective, `entity` is an arbitrary short string the agent picked
-and the resolver knows how to interpret. Whether it maps to a file, a
-database row, a username, or nothing at all is the caller's choice.
+The `entity` argument is the *identifier* the agent extracted from
+those files for the user it's acting as. Concretely, the agent's
+inference chain looks like:
+
+> `sign-in-instructions.md` says users sign in with their email address.
+> `story.md` names Fred.
+> `fred.md` lists Fred's email as `fred@charlotte.manor`.
+> Agent calls `fetch_credential("fred@charlotte.manor", "otp")`.
+
+The chain is the agent's responsibility; `fetch_credential` only sees
+the result. The chain works because the context files, the
+system-under-test, and the caller's resolver all agree on what
+identifier means which user — that agreement lives in the prose the
+human author wrote.
+
+The argument is called `entity` rather than `username` / `email` /
+`account_id` because different projects identify users with
+different shapes, and the tool does not constrain that choice. From
+the agent's and the resolver's perspective, the value is meaningful;
+from `fetch_credential`'s perspective, it's a short string that gets
+handed through as argv.
 
 ### Why a tool, not a fixture file
 
@@ -86,7 +101,8 @@ for*, not where to read from. Two short string arguments
 
 ```
 fetch_credential
-  entity: string  — opaque short identifier (e.g. "alice")
+  entity: string  — identifier for the user being acted as,
+                    extracted from context (e.g. "alice", "alice@example.com")
   key:    string  — name of the credential being requested (e.g. "otp")
   returns: markdown string (the resolver's stdout)
 
@@ -157,7 +173,7 @@ anything that maps cleanly onto their auth machinery.
 
 ### Argument validation
 
-- `entity`: reject `/`, `\`, `..`, leading `.`. Empty rejected. Length-capped at 64 chars. The validation is not about filesystem indexing (Gauntlet doesn't index by entity) — it's about giving the resolver a string it can safely use as a filename component, an env-var name, or a database key without itself having to defend against surprises. Same reasoning as quoting argv: it costs nothing and prevents whole classes of resolver bugs.
+- `entity`: reject `/`, `\`, `..`, leading `.`. Empty rejected. Length-capped at 256 chars — enough for realistic email addresses, UUIDs, and account identifiers; well under RFC 5321's 320-char email maximum without unbounded growth. The validation is not about filesystem indexing (Gauntlet doesn't index by entity) — it's about handing the resolver a string safe to use as a filename component, env-var name, or shell argument without surprises. Same reasoning as quoting argv.
 - `key`: `^[a-zA-Z0-9_-]{1,64}$`. Empty rejected, length-capped.
 
 Validation failures fail before the resolver is invoked; the tool result names the offending argument and the rule it violated.
