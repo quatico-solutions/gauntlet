@@ -166,12 +166,12 @@
 /* ============================================================
    System reminder — mid-run user-role injection (reflection
    checkpoint or grace-turn deadline). Same italic body as the
-   user-message panel but amber dashed left rule + lowercase
-   mono label so the provenance is unmistakable.
+   user-message panel but amber left rule + lowercase mono
+   label so the provenance is unmistakable.
    ============================================================ */
 
 .tr-system-reminder {
-  border-left: 3px dashed var(--tr-amber);
+  border-left: 3px solid var(--tr-amber);
   padding: 6px 0 6px 20px;
   margin: 16px 0 8px;
   font-family: var(--tr-font-display);
