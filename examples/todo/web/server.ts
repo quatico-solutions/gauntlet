@@ -81,6 +81,13 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     persist();
     return jsonResponse(state);
   }
+  if (method === "POST" && path === "/api/reset") {
+    // Wipe items and reset filter. Used by per-card setup in matrix runs
+    // so the server can be long-lived without state bleeding between cards.
+    state = { items: [], filter: "all" };
+    persist();
+    return jsonResponse(state);
+  }
   return jsonResponse({ error: "not found" }, 404);
 }
 

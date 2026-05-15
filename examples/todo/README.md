@@ -48,6 +48,16 @@ gauntlet run examples/todo/.gauntlet/stories/01-add-one.md \
   --target "http://localhost:7891"
 ```
 
+When running the full matrix against Web, reset the server's state
+between cards so leftover items from one card don't poison the next:
+
+```bash
+for story in examples/todo/.gauntlet/stories/*.md; do
+  curl -s -X POST http://localhost:7891/api/reset > /dev/null
+  gauntlet run "$story" --adapter web --target "http://localhost:7891" --max-time 5m
+done
+```
+
 ## Don't use this for anything real
 
 The TODO core is a fixture — single JSON file, no locking, no auth,
