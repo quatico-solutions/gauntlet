@@ -218,8 +218,22 @@ test("orphan reap: backgrounded sleep is gone after close and event fires", asyn
 Delete the following blocks from `test/adapters/cli-adapter.test.ts`:
 
 - The `"graceful exit: \\nexit\\n triggers no SIGHUP or SIGKILL"` test (around lines 69–78). Reason: the new close() unconditionally SIGKILLs the pgrp; there is no graceful-vs-forced distinction to assert.
-- The `"half-typed line: close still exits cleanly"` test (around lines 102–112). Reason: same — no `\nexit\n` write happens, no `cli_shell_force_killed` event to *not* find.
 - The entire `describe("CLIAdapter — fallback escalation", ...)` block (around lines 115–156). Both `SIGHUP-suffices` and `SIGKILL-fallback` tests go. Reason: the escalation ladder is being removed.
+
+**Keep but simplify** the `"half-typed line: close still exits cleanly"` test. The underlying scenario (close called with a partial command in bash's input buffer) is a real production case — the agent could crash mid-`type`. The new SIGKILL-of-pgrp handles it trivially, but we still want a regression guard. Replace lines 102–112 with:
+
+```ts
+test("half-typed line: close still exits cleanly", async () => {
+  const adapter = new CLIAdapter({ contextRoot: undefined, runDir, logger });
+  await adapter.start("");
+  await new Promise((r) => setTimeout(r, 300));
+  // Type a partial command with no trailing newline.
+  await adapter.executeTool("type", { text: "echo partial" }, logger);
+  await new Promise((r) => setTimeout(r, 100));
+  // Should complete without throwing.
+  await adapter.close();
+});
+```
 
 After the deletions the file's section structure is:
 
@@ -267,10 +281,6 @@ async close(): Promise<void> {
   const descendants = listDescendants(bashPid);
 
   try { process.kill(-pgid, "SIGKILL"); } catch { /* already dead */ }
-  // SIGKILL is synchronous on Unix, but the exited promise resolves
-  // after wait4(2) — bound the wait so we don't dangle on a kernel
-  // pause. 500ms is generous; the typical case is < 5ms.
-  await this.awaitExitWithin(500);
 
   let reaped = 0;
   for (const pid of descendants) {
@@ -284,26 +294,12 @@ async close(): Promise<void> {
     });
   }
 
-  this.cleanupRefs();
-}
-
-private async awaitExitWithin(ms: number): Promise<boolean> {
-  if (!this.proc) return true;
-  const exited = this.proc.exited;
-  const result = await Promise.race([
-    exited.then(() => true),
-    new Promise<false>((r) => setTimeout(() => r(false), ms)),
-  ]);
-  return result;
-}
-
-private cleanupRefs(): void {
   this.proc = null;
   this.pgid = null;
 }
 ```
 
-Also delete the `GRACE_MS` constant (around line 54) — no longer referenced.
+Also delete the `GRACE_MS` constant (around line 54) — no longer referenced. `awaitExitWithin` and `cleanupRefs` are removed entirely; nothing else in the file references them, and after SIGKILL there is no remaining branch that needs to know whether bash has been wait4'd. Folding `cleanupRefs` inline keeps the whole flow visible in one place.
 
 - [ ] **Step 6: Run all CLI tests — expect PASS**
 
@@ -442,7 +438,7 @@ test("start() creates <runDir>/scratch and runs bash in it", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "tui-start-"));
   try {
     adapter = new TUIAdapter({ runDir });
-    await adapter.start("informational");
+    await adapter.start("");
     await new Promise((r) => setTimeout(r, 300));
     await adapter.type("pwd\n");
     await new Promise((r) => setTimeout(r, 300));
@@ -489,19 +485,22 @@ async start(_target: string): Promise<void> {
     );
   }
 
-  const pane = spawnSync(["tmux", "list-panes", "-t", id, "-F", "#{pane_pid}"]);
-  if (pane.exitCode !== 0) {
-    throw new Error(
-      `Failed to read pane pid: ${new TextDecoder().decode(pane.stderr)}`,
-    );
+  this.bashPid = await this.readPanePid(id);
+}
+
+private async readPanePid(sessionId: string): Promise<number> {
+  // tmux new-session -d should make pane_pid available immediately, but on
+  // loaded CI machines we've seen the first read race the pane setup.
+  // One short retry covers the gap cheaply.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const pane = spawnSync(["tmux", "list-panes", "-t", sessionId, "-F", "#{pane_pid}"]);
+    if (pane.exitCode === 0) {
+      const pid = Number(new TextDecoder().decode(pane.stdout).trim());
+      if (Number.isFinite(pid) && pid > 0) return pid;
+    }
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 50));
   }
-  const pid = Number(new TextDecoder().decode(pane.stdout).trim());
-  if (!Number.isFinite(pid)) {
-    throw new Error(
-      `Unparseable pane pid: ${new TextDecoder().decode(pane.stdout)}`,
-    );
-  }
-  this.bashPid = pid;
+  throw new Error(`Failed to read pane pid for session ${sessionId} after retry`);
 }
 ```
 
@@ -628,7 +627,7 @@ test("close reaps backgrounded descendants and emits an event", async () => {
   const logger = new EvidenceLogger(logDir);
   adapter = new TUIAdapter({ runDir, logger });
   try {
-    await adapter.start("informational");
+    await adapter.start("");
     await new Promise((r) => setTimeout(r, 300));
     await adapter.type("sleep 999 & echo PID=$!\n");
     await new Promise((r) => setTimeout(r, 400));
@@ -661,7 +660,7 @@ test("close emits no event when there are no descendants to reap", async () => {
   const logger = new EvidenceLogger(logDir);
   adapter = new TUIAdapter({ runDir, logger });
   try {
-    await adapter.start("informational");
+    await adapter.start("");
     await new Promise((r) => setTimeout(r, 200));
     await adapter.close();
     adapter = null;
@@ -833,7 +832,7 @@ Replace the existing test body (around lines 31–37) with:
 ```ts
 test("starts a bash session in tmux and runs a typed command", async () => {
   adapter = new TUIAdapter({ runDir });
-  await adapter.start("informational");
+  await adapter.start("");
   await new Promise((r) => setTimeout(r, 300));
   await adapter.type("echo hello from tmux\n");
   await new Promise((r) => setTimeout(r, 300));
@@ -868,7 +867,7 @@ Replace (around lines 50–58) with:
 ```ts
 test("close kills the tmux session", async () => {
   adapter = new TUIAdapter({ runDir });
-  await adapter.start("informational");
+  await adapter.start("");
   const sessionName = adapter.sessionName;
   await adapter.close();
   const result = Bun.spawnSync(["tmux", "has-session", "-t", sessionName]);
@@ -924,7 +923,7 @@ test("read_screen writes capture files and returns capturePath", async () => {
   const logDir = mkdtempSync(join(tmpdir(), "gauntlet-tui-cap-"));
   const innerLogger = new EvidenceLogger(logDir);
 
-  await adapter.start("informational");
+  await adapter.start("");
   await new Promise((r) => setTimeout(r, 300));
   await adapter.type("printf hello\n");
   await new Promise((r) => setTimeout(r, 300));
@@ -955,7 +954,7 @@ Replace the body (around lines 120–135) with:
 ```ts
 test("readScreen preserves ANSI escape sequences", async () => {
   adapter = new TUIAdapter({ runDir });
-  await adapter.start("informational");
+  await adapter.start("");
   await new Promise((r) => setTimeout(r, 300));
   // Print a red "X" and a green "Y" through bash.
   await adapter.type(`printf '\\033[31mX\\033[0m\\033[32mY\\033[0m\\n'\n`);
@@ -1036,11 +1035,7 @@ In the first test (`"pass: user can open, type, and save in nano"`, around lines
    ];
    ```
 
-3. Change `await adapter.start(\`nano ${tempFile}\`);` (line 77) to:
-   ```ts
-   await adapter.start(`nano ${tempFile}`);
-   ```
-   (No change — target string is fine as the informational value; the agent uses it via the prepended type step.)
+3. The existing `await adapter.start(\`nano ${tempFile}\`)` call (line 77) is left as-is — the target string surfaces in `describeTarget` even though `start()` no longer executes it.
 
 4. Increase the test timeout from `15_000` to `30_000` to absorb the extra round trip plus the 500ms scripted-client step delay (call_0 added; otherwise budget stays the same).
 

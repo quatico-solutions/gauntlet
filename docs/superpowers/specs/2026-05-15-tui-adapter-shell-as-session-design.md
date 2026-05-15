@@ -179,7 +179,6 @@ async close(): Promise<void> {
   const descendants = listDescendants(bashPid);
 
   try { process.kill(-pgid, "SIGKILL"); } catch { /* already dead */ }
-  await this.awaitExitWithin(500); // bound the wait; SIGKILL is fast
 
   let reaped = 0;
   for (const pid of descendants) {
@@ -190,11 +189,12 @@ async close(): Promise<void> {
       pgid, descendantCount: descendants.length, reapedCount: reaped,
     });
   }
-  this.cleanupRefs();
+  this.proc = null;
+  this.pgid = null;
 }
 ```
 
-Removed: `GRACE_MS`, the `\nexit\n` write-and-await, the SIGHUP step, `logForceKilled`, the `cli_shell_force_killed` event, and the `reapDescendants` helper (folded inline). `awaitExitWithin` and `cleanupRefs` survive.
+Removed: `GRACE_MS`, the `\nexit\n` write-and-await, the SIGHUP step, `logForceKilled`, the `cli_shell_force_killed` event, the `reapDescendants` helper, `awaitExitWithin`, and `cleanupRefs` (all folded inline; nothing branches on `proc.exited` after SIGKILL).
 
 ## Tests
 
