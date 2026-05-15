@@ -7,6 +7,9 @@ import { validateToolArgs } from "../../agent/validators";
 import type { CredentialResolverConfig, Viewport } from "../../config";
 import { defaultCaptureParser, type CaptureParser } from "./capture-parser";
 import { spawnSync } from "../../runtime/spawn";
+import { mkdirSync } from "fs";
+import { join } from "path";
+import { listDescendants } from "../../runtime/process-tree";
 
 /**
  * tmux pane dimensions in character cells. Hardcoded for now — resize
@@ -93,27 +96,44 @@ export class TUIAdapter implements Adapter {
     return this._sessionName;
   }
 
-  async start(command: string): Promise<void> {
+  async start(_target: string): Promise<void> {
+    if (!this.runDir) {
+      throw new Error("TUIAdapter: runDir is required to start a session");
+    }
     const id = `gauntlet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this._sessionName = id;
+    const scratch = join(this.runDir, "scratch");
+    mkdirSync(scratch, { recursive: true });
 
-    const result = spawnSync([
-      "tmux",
-      "new-session",
-      "-d",
-      "-s",
-      id,
-      "-x",
-      String(TUI_GRID.width),
-      "-y",
-      String(TUI_GRID.height),
-      command,
+    const create = spawnSync([
+      "tmux", "new-session", "-d", "-s", id,
+      "-x", String(TUI_GRID.width),
+      "-y", String(TUI_GRID.height),
+      "-c", scratch,
+      "bash", "--norc", "--noprofile", "-i",
     ]);
-
-    if (result.exitCode !== 0) {
-      const stderr = new TextDecoder().decode(result.stderr);
-      throw new Error(`Failed to start tmux session: ${stderr}`);
+    if (create.exitCode !== 0) {
+      throw new Error(
+        `Failed to start tmux session: ${new TextDecoder().decode(create.stderr)}`,
+      );
     }
+
+    this.bashPid = await this.readPanePid(id);
+  }
+
+  private async readPanePid(sessionId: string): Promise<number> {
+    // tmux new-session -d should make pane_pid available immediately, but on
+    // loaded CI machines we've seen the first read race the pane setup.
+    // One short retry covers the gap cheaply.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const pane = spawnSync(["tmux", "list-panes", "-t", sessionId, "-F", "#{pane_pid}"]);
+      if (pane.exitCode === 0) {
+        const pid = Number(new TextDecoder().decode(pane.stdout).trim());
+        if (Number.isFinite(pid) && pid > 0) return pid;
+      }
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`Failed to read pane pid for session ${sessionId} after retry`);
   }
 
   async readScreen(): Promise<string> {

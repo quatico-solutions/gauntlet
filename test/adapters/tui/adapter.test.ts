@@ -28,6 +28,26 @@ describe.skipIf(!tmuxAvailable)("TUIAdapter", () => {
     adapter = null;
   });
 
+  test("start() requires runDir", async () => {
+    adapter = new TUIAdapter();
+    await expect(adapter.start("anything")).rejects.toThrow(/runDir/);
+  });
+
+  test("start() creates <runDir>/scratch and runs bash in it", async () => {
+    const localRunDir = mkdtempSync(join(tmpdir(), "tui-start-"));
+    try {
+      adapter = new TUIAdapter({ runDir: localRunDir });
+      await adapter.start("informational");
+      await new Promise((r) => setTimeout(r, 300));
+      await adapter.type("pwd\n");
+      await new Promise((r) => setTimeout(r, 300));
+      const screen = await adapter.readScreen();
+      expect(screen).toContain(join(localRunDir, "scratch"));
+    } finally {
+      rmSync(localRunDir, { recursive: true, force: true });
+    }
+  });
+
   test("starts process in tmux and reads output", async () => {
     adapter = new TUIAdapter();
     await adapter.start("sh -c \"echo 'hello from tmux'; sleep 10\"");
