@@ -34,13 +34,14 @@ So: no new tools, no new adapter, no `invoke`. Same surface; different relations
 ```
 start(target):
   spawn bash --norc --noprofile -i  (with setsid → fresh pgrp)
-  cwd: per-run scratch dir
+  cwd: <runDir>/scratch  (created by the adapter at start; see below)
   remember pgid (= bash's pid, since it's the session leader)
   store target as informational (used by describeTarget)
 
 close():
   if no proc: return
-  write "exit\n" to stdin              # polite
+  write "\nexit\n" to stdin            # polite — leading newline flushes
+                                        # any half-typed line first
   await up to GRACE_MS                  # give bash a beat to exit
   if still alive: kill(-pgid, "SIGHUP") # interactive bash exits on SIGHUP
   await up to GRACE_MS
@@ -48,7 +49,27 @@ close():
   await proc.exited
 ```
 
-`GRACE_MS` is short — 500ms each step, ~1.5s worst case. Long enough that a healthy `exit` lands, short enough not to drag every run by a noticeable tail.
+`GRACE_MS` is short — 500ms each step, ~1.5s worst case. Long enough that a healthy `\nexit\n` lands, short enough not to drag every run by a noticeable tail.
+
+**Steady-state path is the graceful one.** `close()` always sends `\nexit\n` first. Healthy bash responds within a few ms, never reaching SIGHUP. The SIGHUP and SIGKILL legs are *fallback* — they fire only when bash is wedged. When they fire, that's worth knowing (see "Process-group cleanup invariant" below); when they don't, there's no event and no log.
+
+### Cwd / scratch dir
+
+The adapter creates and owns `<runDir>/scratch/` at `start()` and uses it as the shell's working directory. `runDir` is already plumbed to the adapter via `executeRunCore` (`src/runs/orchestrator.ts`); the adapter constructor or `start()` reads it.
+
+This is a deliberate shift from the current tutorial pattern, where `--target` itself contained `mkdir -p scratch-npm && cd scratch-npm && …` to create a project-root scratch subdir. Under the new model:
+
+- Scratch lives under `.gauntlet/results/<runId>/scratch/`, not the project root. Goes away when results are reaped.
+- Nothing the agent does pollutes the project root by default. `npm init`'s `package.json` lands in scratch.
+- The current tutorial doc example and `examples/tutorial/README.md:43` need their `mkdir -p scratch-npm && …` examples rewritten to drop the prefix — that's a real doc rewrite, not a one-line tweak. Plan should call it out.
+
+### Tools
+
+Unchanged. `type`, `press`, `read_output`, plus the optional `read` from `contextRoot`. No new tools. `defaultViewport()` still returns `null`. `isMutatingTool()` still classifies `type` and `press` as mutating.
+
+### Interactive bash over pipes
+
+The shell runs on pipes, not a PTY. That means `isatty(stdin)` returns false inside bash, job control prints `bash: cannot set terminal process group` once on startup (harmless), and `set -m` is partial. None of this matters for our usage — we drive line-oriented commands, and child processes inherit the pipe as stdin just fine (npm-init style prompt-response works; tutorial cards already proved that empirically with the launcher prototype). If a future fixture genuinely needs PTY semantics (true `isatty`, terminal resize signals), that's a separate ticket and likely means `node-pty` or platform-specific code.
 
 ### Tools
 
@@ -68,14 +89,23 @@ If `<target>` is empty (`--target ""`), drop the "command you are exercising" se
 
 ### Spawn primitive
 
-`src/runtime/spawn.ts` needs two small additions:
+`src/runtime/spawn.ts` needs:
 
-1. **`SpawnOptions { detached?: boolean; cwd?: string }`** — passed to `spawn()`.
-2. **`SpawnedProcess { pid: number; exited: Promise<number> }`** — exposes what we need for pgrp kills + clean `await`.
+1. **`SpawnOptions { detached?: boolean; cwd?: string }`** — second arg to `spawn()`.
+2. **`SpawnedProcess { pid: number; exited: Promise<number> }`** — new fields on the returned object.
 
-Bun path: `Bun.spawn(argv, { ..., cwd, detached: true })`. Bun calls `setsid()` in the child for `detached: true` on POSIX. We don't `unref()`.
+Bun path: `Bun.spawn(argv, { ..., cwd, detached: true })`. Bun calls `setsid()` in the child for `detached: true` on POSIX. `pid` and `exited` already exist on `Bun.Subprocess`; surface them unchanged. We don't `unref()`.
 
-Node path: `nodeSpawn(..., { ..., cwd, detached: true })`. Same syscall, same semantics. We don't `unref()`.
+Node path: `nodeSpawn(argv[0], argv.slice(1), { ..., cwd, detached: true })`. Same syscall, same semantics. `pid` is on `ChildProcess` directly. `exited` is the not-already-there bit and must be a `Promise<number>` resolved by the `'exit'` event handler:
+
+```ts
+const exited = new Promise<number>((resolve) => {
+  if (proc.exitCode !== null) { resolve(proc.exitCode); return; }
+  proc.once("exit", (code, _signal) => resolve(code ?? -1));
+});
+```
+
+The `proc.exitCode !== null` guard handles the race where the child exited *before* the wrapper attached the listener — Node's `'exit'` event won't re-fire for an already-exited process. `-1` is the placeholder for "killed by signal" (signal info isn't part of the contract; callers that care can check the signal separately).
 
 `kill(-pgid, signal)` is `process.kill(-pgid, signal)` in both runtimes.
 
@@ -83,17 +113,15 @@ Node path: `nodeSpawn(..., { ..., cwd, detached: true })`. Same syscall, same se
 
 After `close()` returns, **no process from the agent's session is still running**. The escalation guarantees it (SIGKILL on the pgrp can't be ignored). Tests should pin this with a "spawn a `sleep 999`, close, assert the sleep is dead" case.
 
-If the SIGKILL leg fires in production we want to know — log a `cli_shell_force_killed` evidence event with `{ pgid, durationMs, escalationStep }`. Fields kept narrow because the event is operator-facing, not auditor-facing.
+**If SIGHUP or SIGKILL fires, we want to know.** When the graceful `\nexit\n` leg doesn't land bash within `GRACE_MS`, log via `logger.logEvent("cli_shell_force_killed", { pgid, escalationStep, durationMs })` where `escalationStep` is `"sighup"` or `"sigkill"`. The event name is operator-facing (read via `run.jsonl`), kept narrow because no auditor needs it. It fires on the fallback paths only — healthy graceful exits emit nothing.
 
 ### Existing tutorial cards
 
 `tutorial-01-npm-init` is currently invoked with `--target "mkdir -p scratch-npm && cd scratch-npm && npm init"`. Under the new model:
 
-- Card content unchanged.
-- Doc example in `docs/tutorial.md` updates the invocation: `--target "npm init"` (or just `"npm"` — both work). The agent reads the card, types `npm init` into the shell, and the existing prompt-response flow proceeds as today.
-- The harness creates the per-run scratch dir and sets it as cwd; the `mkdir -p scratch-npm && cd scratch-npm` part is no longer the agent's or the user's problem.
-
-That's a doc tweak, not a card move.
+- Card content (`examples/tutorial/.gauntlet/stories/01-npm-init.md`) unchanged. The card never assumed the program was pre-spawned — it tells the agent to "Run `npm init`," and the agent types that into the shell.
+- Invocations in `docs/tutorial.md` and `examples/tutorial/README.md` update to `--target "npm init"` (or just `"npm"`). Both files have the chained-shell example; both need rewriting. That's a real doc edit — the paragraph in `docs/tutorial.md` also explains *why* the scratch dir matters and points at project-root subdirs, all of which gets rewritten to say "the adapter creates `<runDir>/scratch/` for you."
+- The adapter creates the per-run scratch dir and sets it as cwd; the `mkdir -p scratch-npm && cd scratch-npm` part is no longer the user's problem.
 
 ## Out of scope (v1)
 
@@ -105,13 +133,14 @@ That's a doc tweak, not a card move.
 
 ## Test plan
 
-- Spawn-close roundtrip: start adapter, close immediately, no orphan processes (check via `pgrep -g`).
-- `exit\n` path: agent sends `type "exit\n"`, close completes via the graceful leg without SIGHUP.
-- SIGHUP path: `trap '' SIGTERM` inside the shell can't happen (we send SIGHUP, not SIGTERM, and bash exits on SIGHUP); pin behavior with a synthetic child that ignores SIGTERM, confirm cleanup still completes.
-- SIGKILL path: shell that ignores SIGHUP — confirm escalation reaches SIGKILL within ~1.5s.
-- Orphan reap: start adapter, `type "sleep 999 &\n"`, close, assert sleep is gone.
-- Cwd correctness: start adapter, `type "pwd\n"`, read output, assert it's the scratch dir.
-- npm-init compatibility: end-to-end run against a stubbed `npm` script that prompts and reads answers, drive it via `type`/`press` exactly as the current card does, assert it still works.
+- **Spawn-close roundtrip.** start adapter, close immediately, no orphan processes from the pgrp (check via `pgrep -g <pgid>` or by remembering pgid + polling `/proc` / `ps`).
+- **Graceful exit path.** start adapter, close (which sends `\nexit\n`); assert no `cli_shell_force_killed` event fired, `exited` resolved promptly.
+- **Half-typed-line robustness.** start adapter, `type("partial")` *without* trailing newline, then close. The leading newline in `\nexit\n` terminates the partial line so bash sees `partial` then `exit`, not `partialexit`. Assert clean exit.
+- **SIGHUP path.** A synthetic shell that traps SIGHUP and ignores it (`trap '' HUP`); close, assert escalation reaches SIGKILL within ~1.5s, and `cli_shell_force_killed` fires with `escalationStep: "sigkill"`.
+- **SIGHUP-suffices path.** Synthetic shell that ignores `\nexit\n` (e.g. trap on the readline) but exits cleanly on SIGHUP; assert `cli_shell_force_killed` fires with `escalationStep: "sighup"` and exit completes within ~1s.
+- **Orphan reap.** start adapter, `type "sleep 999 &\n"`, capture the child's pid via `read_output` (`$!`), close, assert that pid is gone.
+- **Cwd correctness.** start adapter, `type "pwd\n"`, read output, assert it equals `<runDir>/scratch`. Also assert the dir exists on disk.
+- **npm-init compatibility.** end-to-end run against a stubbed `npm` script that prompts and reads answers; drive via `type`/`press` exactly as the current card does; assert it still works under the new adapter.
 
 ## Open questions
 
