@@ -30,13 +30,15 @@
     }
     li.done .text { text-decoration: line-through; color: #999; }
     .text { flex: 1; }
-    .delete {
+    .destroy {
       background: none;
       border: none;
       color: #c44;
-      font-size: 1.25rem;
+      font-size: 1.5rem;
+      line-height: 1;
       cursor: pointer;
-      padding: 0 0.25rem;
+      padding: 0.5rem 0.75rem;
+      min-width: 2.5rem;
     }
     footer {
       display: flex;
@@ -120,8 +122,12 @@
         text.className = "text";
         text.textContent = item.text;
         const del = document.createElement("button");
-        del.className = "delete";
-        del.textContent = "✕";
+        // Match TodoMVC conventions: class "destroy", aria-label
+        // "Delete todo", × (U+00D7). The agent's training reaches for
+        // these specific selectors; matching them saves discovery turns.
+        del.className = "destroy";
+        del.setAttribute("aria-label", "Delete todo");
+        del.textContent = "×";
         del.addEventListener("click", async () => {
           state = await api("/api/delete", { id: item.id });
           render();
