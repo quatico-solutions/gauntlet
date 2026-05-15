@@ -44,9 +44,22 @@ const AVAILABLE_KEYS = Object.keys(KEY_MAP).join(", ");
 
 export interface TUIAdapterOptions {
   contextRoot?: string;
+  /**
+   * Per-run directory; adapter creates `<runDir>/scratch` as bash cwd.
+   * Required at start(); optional only so the registry's
+   * tool-introspection construction (which never starts a session) still
+   * works. In production, always set.
+   */
+  runDir?: string;
+  /**
+   * Logger used by the adapter to emit cleanup events
+   * (`tui_session_descendants_reaped`). Optional for the same registry
+   * reason.
+   */
+  logger?: EvidenceLogger;
   credentialResolver?: CredentialResolverConfig;
   /** Override the capture parser (differential testing, future ghostty
-   * selection). Defaults to xterm. */
+   *  selection). Defaults to xterm. */
   captureParser?: CaptureParser;
 }
 
@@ -58,6 +71,9 @@ export class TUIAdapter implements Adapter {
   private captureParser: CaptureParser;
   /** Lazy cache of tool name → parameter schema for O(1) validation. */
   private toolSchemas: Map<string, ToolDefinition["parameters"]> | null = null;
+  private runDir: string | undefined;
+  private logger: EvidenceLogger | undefined;
+  private bashPid: number | null = null;
 
   constructor(options?: TUIAdapterOptions) {
     this.readTool = options?.contextRoot
@@ -68,6 +84,8 @@ export class TUIAdapter implements Adapter {
       options?.credentialResolver,
     );
     this.captureParser = options?.captureParser ?? defaultCaptureParser;
+    this.runDir = options?.runDir;
+    this.logger = options?.logger;
   }
 
   get sessionName(): string {
