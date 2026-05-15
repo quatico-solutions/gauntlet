@@ -189,11 +189,14 @@ export class TUIAdapter implements Adapter {
   }
 
   describeTarget(target: string): string {
-    return (
-      `A terminal application is already running in a tmux session. Its command ` +
-      `line was: ${target}. Keystrokes you send go to the running program — ` +
-      `do not retype the command.`
-    );
+    const base =
+      `You are at an interactive bash shell rendered inside a tmux pane ` +
+      `(${TUI_GRID.width}×${TUI_GRID.height}). Use \`type\` and \`press\` to ` +
+      `issue shell commands and answer any prompts. The shell is your ` +
+      `durable session — many commands can run through it during the run. ` +
+      `When you are finished, type \`exit\` to close the shell cleanly.`;
+    if (!target) return base;
+    return `${base} The command you are exercising is \`${target}\`.`;
   }
 
   defaultViewport(): Viewport {

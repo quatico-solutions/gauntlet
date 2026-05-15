@@ -165,12 +165,19 @@ describe.skipIf(!tmuxAvailable)("TUIAdapter", () => {
 });
 
 describe("TUIAdapter describeTarget", () => {
-  test("frames the target as an already-running program and warns against retyping", () => {
+  test("frames the agent as inside a bash shell in a tmux pane", () => {
     const adapter = new TUIAdapter();
     const msg = adapter.describeTarget("nano /tmp/foo.txt");
+    expect(msg).toContain("bash");
     expect(msg).toContain("nano /tmp/foo.txt");
-    expect(msg.toLowerCase()).toContain("already running");
-    expect(msg.toLowerCase()).toContain("do not retype");
+    expect(msg.toLowerCase()).toContain("exit");
+  });
+
+  test("omits the target sentence when target is empty", () => {
+    const adapter = new TUIAdapter();
+    const msg = adapter.describeTarget("");
+    expect(msg).toContain("bash");
+    expect(msg).not.toMatch(/command you are exercising/i);
   });
 });
 
