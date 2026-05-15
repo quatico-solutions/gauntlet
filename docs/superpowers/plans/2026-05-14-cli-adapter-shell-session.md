@@ -331,6 +331,8 @@ import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
 import { buildReadTool, type ReadTool } from "../../context/read-tool";
+import { buildFetchCredentialTool, type FetchCredentialTool } from "../../context/credential-tool";
+import type { CredentialResolverConfig } from "../../config";
 import { validateToolArgs } from "../../agent/validators";
 import { spawn, type SpawnedProcess } from "../../runtime/spawn";
 
@@ -360,6 +362,11 @@ export interface CLIAdapterOptions {
    * (`cli_shell_force_killed`). Optional for the same registry reason.
    */
   logger?: EvidenceLogger;
+  /**
+   * Forwarded to the fetch_credential tool — unchanged from the
+   * pre-PRI-1608 adapter. Orthogonal to shell-as-session.
+   */
+  credentialResolver?: CredentialResolverConfig;
 }
 
 export class CLIAdapter implements Adapter {
@@ -368,15 +375,19 @@ export class CLIAdapter implements Adapter {
   private pgid: number | null = null;
   private buffer = "";
   private readTool: ReadTool | null;
+  private credentialTool: FetchCredentialTool | null;
   private toolSchemas: Map<string, ToolDefinition["parameters"]> | null = null;
   private runDir: string | undefined;
   private logger: EvidenceLogger | undefined;
-  private scratchDir: string | null = null;
 
   constructor(options?: CLIAdapterOptions) {
     this.readTool = options?.contextRoot
       ? buildReadTool(options.contextRoot)
       : null;
+    this.credentialTool = buildFetchCredentialTool(
+      options?.contextRoot ?? "",
+      options?.credentialResolver,
+    );
     this.runDir = options?.runDir;
     this.logger = options?.logger;
   }
@@ -390,7 +401,6 @@ export class CLIAdapter implements Adapter {
     }
     const scratch = join(this.runDir, "scratch");
     mkdirSync(scratch, { recursive: true });
-    this.scratchDir = scratch;
 
     this.proc = spawn(
       ["bash", "--norc", "--noprofile", "-i"],
@@ -512,7 +522,6 @@ export class CLIAdapter implements Adapter {
   private cleanupRefs(): void {
     this.proc = null;
     this.pgid = null;
-    this.scratchDir = null;
   }
 
   isMutatingTool(name: string): boolean {
@@ -557,6 +566,9 @@ export class CLIAdapter implements Adapter {
     if (this.readTool) {
       tools.push(this.readTool.definition);
     }
+    if (this.credentialTool) {
+      tools.push(this.credentialTool.definition);
+    }
     return tools;
   }
 
@@ -565,6 +577,8 @@ export class CLIAdapter implements Adapter {
     args: Record<string, unknown>,
     logger: EvidenceLogger,
   ): Promise<ToolResult> {
+    // Validate the LLM's argument shape once, upfront. Same pattern as
+    // WebAdapter — see its executeTool for rationale.
     if (!this.toolSchemas) {
       this.toolSchemas = new Map(
         this.toolDefinitions().map((t) => [t.name, t.parameters] as const),
@@ -580,6 +594,9 @@ export class CLIAdapter implements Adapter {
 
     if (name === "read" && this.readTool) {
       return this.readTool.execute(args);
+    }
+    if (name === "fetch_credential" && this.credentialTool) {
+      return this.credentialTool.execute(args, logger);
     }
 
     switch (name) {
@@ -601,25 +618,9 @@ export class CLIAdapter implements Adapter {
 }
 ```
 
-- [ ] **Step 4: Plumb runDir and logger into `buildDefaultAdapter`**
+- [ ] **Step 4: Plumb runDir into `buildDefaultAdapter`**
 
-Edit `src/runs/orchestrator.ts` line 157. Change:
-
-```ts
-    case "cli":
-      return new CLIAdapter({ contextRoot, credentialResolver });
-```
-
-to:
-
-```ts
-    case "cli":
-      return new CLIAdapter({ contextRoot, runDir: outDir, logger });
-```
-
-Wait — `outDir` and `logger` aren't currently in scope inside `buildDefaultAdapter`. They are in scope at the call site (`executeRunCore`, line 200-208). Add them to `buildDefaultAdapter`'s parameter list:
-
-Edit `src/runs/orchestrator.ts` lines 146–174. Replace:
+`buildDefaultAdapter` doesn't currently take `outDir`; it needs to, because `CLIAdapter` now wants `runDir`. Edit `src/runs/orchestrator.ts` lines 146–174 to add a `runDir: string` parameter and pass it to the CLI case. Replace:
 
 ```ts
 async function buildDefaultAdapter(
@@ -668,7 +669,7 @@ async function buildDefaultAdapter(
 ): Promise<Adapter> {
   switch (type) {
     case "cli":
-      return new CLIAdapter({ contextRoot, runDir, logger });
+      return new CLIAdapter({ contextRoot, runDir, logger, credentialResolver });
     case "tui": {
       const { TUIAdapter } = await import("../adapters/tui/adapter");
       return new TUIAdapter({ contextRoot, credentialResolver });
@@ -721,22 +722,92 @@ with:
       ));
 ```
 
-Note: the existing CLI adapter took `credentialResolver`. The new one drops it because shell-as-session doesn't need credential injection at the adapter layer — that's a context-tree concern. Verify no other test or code paths depend on the credential resolver being on the CLI adapter (a grep of `CLIAdapter` will tell you). If they do, keep the option, just don't use it inside the adapter.
+**Note on `credentialResolver`.** The new adapter *keeps* this option and the `fetch_credential` tool registration unchanged — it's orthogonal to shell-as-session and the credential-tool tests in `test/adapters/cli/adapter.test.ts` rely on it.
 
-- [ ] **Step 5: Run the CLI adapter test suite**
+**Note on `registry.ts` and `show-prompt.ts`.** Both construct `new CLIAdapter({ contextRoot: undefined })` for tool introspection (never call `start()`). The new constructor's `runDir` is optional precisely so those introspection paths still work. Leave those call sites alone.
 
-Run: `bun test test/adapters/cli-adapter.test.ts`
-Expected: PASS — three tests.
+- [ ] **Step 5: Update the existing `test/adapters/cli/adapter.test.ts`**
 
-- [ ] **Step 6: Run the full project tests**
+This is the pre-existing 152-line CLI adapter test file. After T2 it no longer compiles or passes against the new contract. Edit `test/adapters/cli/adapter.test.ts`:
+
+**Tests to keep unchanged (still valid under shell-as-session):**
+- `exposes tool definitions for the agent` (lines 36–43) — type/press/read_output still exist.
+- `includes \`read\` tool when context root is non-empty` (lines 45–58) — unchanged.
+- `executeTool(read) returns file contents via the \`read\` tool` (lines 60–81) — unchanged.
+- `defaultViewport returns null` (lines 83–86) — unchanged.
+- The three `fetch_credential` tests (lines 96–151) — preserved by the decision to keep `credentialResolver` on the options. The `start()`-related tests aren't called in these, so they don't need `runDir`. **However**, the constructor calls in lines 50–52, 68–70, 107–110, 125, 142–145 don't pass `runDir`. That's fine — `runDir` is optional and these tests don't call `start()`.
+
+**Tests to rewrite (assume old single-program-spawn semantics):**
+
+Replace lines 18–34 (the two tests):
+
+```ts
+  test("starts a shell and reads output", async () => {
+    adapter = new CLIAdapter({ runDir });
+    await adapter.start("echo");
+    await new Promise((r) => setTimeout(r, 300));
+    // Type a command into the shell.
+    await adapter.type("echo 'hello gauntlet'\n");
+    await new Promise((r) => setTimeout(r, 300));
+    const output = adapter.readOutput();
+    expect(output).toContain("hello gauntlet");
+  });
+
+  test("sends input and reads response", async () => {
+    adapter = new CLIAdapter({ runDir });
+    await adapter.start("cat");
+    // Start cat via the shell, then type into it.
+    await adapter.type("cat\n");
+    await new Promise((r) => setTimeout(r, 200));
+    await adapter.type("ping\n");
+    await new Promise((r) => setTimeout(r, 300));
+    const output = adapter.readOutput();
+    expect(output).toContain("ping");
+  });
+```
+
+Both tests need `runDir` defined. Add to the top of the `describe` block:
+
+```ts
+  let runDir: string;
+  beforeEach(() => {
+    runDir = mkdtempSync(join(tmpdir(), "cli-adapter-legacy-"));
+  });
+  afterEach(() => {
+    if (adapter) await adapter.close();
+    adapter = null;
+    rmSync(runDir, { recursive: true, force: true });
+  });
+```
+
+(Replacing the existing `afterEach` — the new one combines cleanup of the adapter and the runDir.)
+
+Replace lines 88–94 (`describeTarget` test):
+
+```ts
+  test("describeTarget frames the agent as inside a bash shell", () => {
+    const adapter = new CLIAdapter();
+    const msg = adapter.describeTarget("bc -q");
+    expect(msg).toContain("bash");
+    expect(msg).toContain("bc -q");
+    expect(msg.toLowerCase()).toContain("exit");
+  });
+```
+
+- [ ] **Step 6: Run the CLI adapter test suite**
+
+Run: `bun test test/adapters/cli-adapter.test.ts test/adapters/cli/adapter.test.ts`
+Expected: PASS — new tests from this plan + legacy tests after revision.
+
+- [ ] **Step 7: Run the full project tests**
 
 Run: `bun test`
-Expected: PASS. Watch for any test that constructs `CLIAdapter` directly without `runDir` and fails — likely candidates: `test/adapters/is-mutating-tool.test.ts`, `test/e2e/cli-smoke.test.ts`, `test/e2e/cli-bc.test.ts`. If any fail because they call `adapter.start()` without `runDir`, update them to pass a tempdir.
+Expected: PASS. If anything else fails because it constructs `CLIAdapter` and calls `start()` without `runDir`, update the call site to pass a tempdir. Likely candidates to grep: `test/e2e/cli-smoke.test.ts`, `test/e2e/cli-bc.test.ts`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/adapters/cli/adapter.ts src/runs/orchestrator.ts test/adapters/cli-adapter.test.ts
+git add src/adapters/cli/adapter.ts src/runs/orchestrator.ts test/adapters/cli-adapter.test.ts test/adapters/cli/adapter.test.ts
 git commit -m "adapters/cli: shell-as-session (bash + scratch + setsid) (PRI-1608)"
 ```
 
@@ -768,7 +839,10 @@ describe("CLIAdapter — close escalation", () => {
     const adapter = new CLIAdapter({ contextRoot: undefined, runDir, logger });
     await adapter.start("");
     // Read any startup banner before close so we measure the close path.
-    await new Promise((r) => setTimeout(r, 100));
+    // 300ms is generous insurance against slow CI runners — startup
+    // races shouldn't cause the leading \n of \nexit\n to land before
+    // bash has initialised its readline prompt.
+    await new Promise((r) => setTimeout(r, 300));
     await adapter.close();
     // run.jsonl shouldn't contain a force-killed event.
     const fs = await import("fs");
@@ -838,7 +912,7 @@ git commit -m "adapters/cli: tests pin close escalation paths (PRI-1608)"
 **Files:**
 - Modify: `test/adapters/cli-adapter.test.ts`
 
-These exercise the fallback legs by using a shell that traps `\nexit\n` (silently ignores it) or both `\nexit\n` and `SIGHUP`. We can't actually trap "the agent typed exit" inside bash itself, but we can make the shell ignore SIGHUP and SIGTERM via `trap`. To trigger the SIGHUP leg we need bash to *not* respond to `\nexit\n` within `GRACE_MS` — easy: have it `sleep` first.
+These exercise the fallback legs. The trick is to make bash *unable to respond* to `\nexit\n` — `exec 0</dev/null` from inside bash detaches its stdin from the pipe, so the adapter's subsequent writes go into the void. The graceful leg then times out. Adding `trap '' HUP` on top makes SIGHUP ineffective too, forcing SIGKILL.
 
 - [ ] **Step 1: Write the SIGHUP-suffices test**
 
@@ -846,39 +920,38 @@ Append to `test/adapters/cli-adapter.test.ts`:
 
 ```ts
 describe("CLIAdapter — fallback escalation", () => {
-  test("SIGHUP-suffices: bash that ignores \\nexit\\n exits on SIGHUP", async () => {
+  test("SIGHUP-suffices: bash with detached stdin exits on SIGHUP", async () => {
     const adapter = new CLIAdapter({ contextRoot: undefined, runDir, logger });
     await adapter.start("");
-    // Install a trap that makes bash sleep on every command rather than
-    // act on `exit` — but not on SIGHUP (default action: terminate).
-    // The simplest way is to put bash into a long `read` so the `exit`
-    // we send becomes pending input on the line that the read is consuming.
+    // Give bash a beat to fully start (CI machines can be slow).
+    await new Promise((r) => setTimeout(r, 300));
+    // Detach bash's stdin so the adapter's \nexit\n goes into the void.
+    // Bash will not see the graceful exit and the close() timeout fires,
+    // then SIGHUP (default action: terminate) actually kills it.
     await adapter.executeTool(
       "type",
-      { text: "read -r blocking_input\n" },
+      { text: "exec 0</dev/null\n" },
       logger,
     );
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 200));
 
-    // Now close. \nexit\n becomes input to `read`, not a command — bash
-    // doesn't exit gracefully. SIGHUP terminates bash (default action).
     await adapter.close();
 
-    // Verify the force-killed event fired with step "sighup".
     const fs = await import("fs");
     const jsonl = fs.readFileSync(join(runDir, "run.jsonl"), "utf8");
     expect(jsonl).toContain("cli_shell_force_killed");
     expect(jsonl).toContain('"escalationStep":"sighup"');
   });
 
-  test("SIGKILL fallback: shell that ignores SIGHUP gets SIGKILL", async () => {
+  test("SIGKILL fallback: bash that traps SIGHUP gets SIGKILL", async () => {
     const adapter = new CLIAdapter({ contextRoot: undefined, runDir, logger });
     await adapter.start("");
-    // Install a SIGHUP trap that ignores the signal AND put bash in a
-    // pending `read` so `\nexit\n` is consumed as input.
+    await new Promise((r) => setTimeout(r, 300));
+    // Trap SIGHUP to ignore, then detach stdin. Now neither graceful
+    // exit nor SIGHUP gets a response — only SIGKILL works.
     await adapter.executeTool(
       "type",
-      { text: "trap '' HUP\nread -r blocking_input\n" },
+      { text: "trap '' HUP\nexec 0</dev/null\n" },
       logger,
     );
     await new Promise((r) => setTimeout(r, 200));
@@ -898,7 +971,7 @@ describe("CLIAdapter — fallback escalation", () => {
 Run: `bun test test/adapters/cli-adapter.test.ts`
 Expected: PASS. The SIGHUP test exercises the first fallback; the SIGKILL test exercises the second.
 
-If a fallback test takes the wrong leg (e.g. SIGKILL test reports `escalationStep:"sighup"`), the trap isn't sticking — verify the `trap '' HUP` lands by typing `trap -p\n` before `read` and inspecting `read_output`.
+If a fallback test takes the wrong leg (e.g. SIGKILL test reports `escalationStep:"sighup"`), the trap isn't sticking — verify by adding `trap -p HUP\n` before `exec 0</dev/null` and reading the buffer to confirm the trap installed.
 
 - [ ] **Step 3: Commit**
 
@@ -1027,11 +1100,7 @@ gauntlet run .gauntlet/stories/01-npm-init.md \
   --max-time 3m
 ```
 
-And the surrounding paragraph that explains the scratch dir (around lines 115–120 in `docs/tutorial.md`) needs to be rewritten. The old paragraph said:
-
-> The scratch dir matters: `npm init` writes `package.json` into the current directory, and we don't want it landing on top of the tutorial fixtures. Each setup-creating story uses its own `scratch-<tool>/` subdirectory (gitignored). Delete those dirs to reset.
-
-Replace with:
+Then find the paragraph that begins with **"The scratch dir matters:"** (the one explaining why npm init's `package.json` shouldn't land in the tutorial fixtures). Replace that whole paragraph with:
 
 > The CLI adapter creates a per-run scratch directory under `.gauntlet/results/<runId>/scratch/` and uses it as the shell's working directory. Anything the agent writes (e.g. `package.json` from `npm init`) lands there and is cleaned up with the rest of the run's evidence. You no longer need to wrap the target in `mkdir`/`cd` — just give it the command you want the agent to exercise.
 
