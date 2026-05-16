@@ -69,4 +69,42 @@ describe("buildBashTool", () => {
     );
     expect(result.text).toContain("stderr truncated at cap");
   });
+
+  test("timeout kills the command and sets timed_out flag", async () => {
+    const tool = buildBashTool({ cwd: freshCwd() });
+    const start = Date.now();
+    const result = await tool.execute(
+      { command: "sleep 30", timeout_ms: 200 },
+      noopLogger(),
+    );
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(2500);
+    expect(result.text).toContain("timed_out: true");
+    expect(result.text).toContain("exit_code: null");
+  });
+
+  test("timeout reaps background children spawned by the command", async () => {
+    const cwd = freshCwd();
+    const { join } = await import("path");
+    const { readFileSync } = await import("fs");
+    const pidFile = join(cwd, "child.pid");
+
+    const tool = buildBashTool({ cwd });
+    await tool.execute(
+      {
+        command: `sleep 30 & echo $! > ${pidFile}; sleep 30`,
+        timeout_ms: 300,
+      },
+      noopLogger(),
+    );
+
+    const childPid = Number(readFileSync(pidFile, "utf-8").trim());
+    expect(childPid).toBeGreaterThan(0);
+
+    // Give SIGKILL a moment to land
+    await new Promise((r) => setTimeout(r, 100));
+    let alive = true;
+    try { process.kill(childPid, 0); } catch { alive = false; }
+    expect(alive).toBe(false);
+  });
 });

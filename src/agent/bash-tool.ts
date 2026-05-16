@@ -2,6 +2,7 @@ import { mkdirSync } from "fs";
 import type { ToolDefinition, ToolResult } from "../models/provider";
 import type { EvidenceLogger } from "../evidence/logger";
 import { spawn } from "../runtime/spawn";
+import { killProcessTree, listDescendants } from "../runtime/process-tree";
 
 export const BASH_TOOL_DESCRIPTION =
   "The best interface for inspecting logs and files on the host via " +
@@ -33,6 +34,12 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
           type: "string",
           description: "The shell command to run via `bash -c`.",
         },
+        timeout_ms: {
+          type: "integer",
+          description: `Per-call timeout in milliseconds. Default ${DEFAULT_TIMEOUT_MS}, range ${MIN_TIMEOUT_MS}–${MAX_TIMEOUT_MS}. On timeout, the process tree is SIGKILLed and partial output is returned.`,
+          minimum: MIN_TIMEOUT_MS,
+          maximum: MAX_TIMEOUT_MS,
+        },
       },
       required: ["command"],
     },
@@ -50,22 +57,39 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
     mkdirSync(opts.cwd, { recursive: true });
     const start = Date.now();
 
-    const proc = spawn(["bash", "-c", command], { cwd: opts.cwd });
+    const timeoutMs =
+      typeof args.timeout_ms === "number" && Number.isFinite(args.timeout_ms)
+        ? Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, Math.floor(args.timeout_ms)))
+        : DEFAULT_TIMEOUT_MS;
+
+    // detached: true makes proc.pid serve as pgid (setsid).
+    const proc = spawn(["bash", "-c", command], {
+      cwd: opts.cwd,
+      detached: true,
+    });
+
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      const descendants = listDescendants(proc.pid);
+      killProcessTree(proc.pid, descendants);
+    }, timeoutMs);
 
     const [stdoutResult, stderrResult] = await Promise.all([
       drainStreamCapped(proc.stdout, STDOUT_CAP_BYTES),
       drainStreamCapped(proc.stderr, STDERR_CAP_BYTES),
     ]);
     const code = await proc.exited;
+    clearTimeout(timeoutHandle);
     const elapsedMs = Date.now() - start;
 
     return {
       text: formatResult({
         stdout: stdoutResult.text,
         stderr: stderrResult.text,
-        exit_code: code < 0 ? null : code,
+        exit_code: timedOut || code < 0 ? null : code,
         truncated: { stdout: stdoutResult.truncated, stderr: stderrResult.truncated },
-        timed_out: false,
+        timed_out: timedOut,
         elapsed_ms: elapsedMs,
       }),
     };
@@ -76,6 +100,9 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
 
 const STDOUT_CAP_BYTES = 64 * 1024;
 const STDERR_CAP_BYTES = 16 * 1024;
+const DEFAULT_TIMEOUT_MS = 10_000;
+const MIN_TIMEOUT_MS = 100;
+const MAX_TIMEOUT_MS = 60_000;
 
 async function drainStreamCapped(
   stream: ReadableStream<Uint8Array>,
