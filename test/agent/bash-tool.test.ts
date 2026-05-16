@@ -13,6 +13,15 @@ function freshCwd(): string {
   return mkdtempSync(join(tmpdir(), "gauntlet-bash-test-"));
 }
 
+interface CapturedEvent { name: string; payload: Record<string, unknown> }
+function recordingLogger(events: CapturedEvent[]): EvidenceLogger {
+  return {
+    logEvent: (name: string, payload: Record<string, unknown>) => {
+      events.push({ name, payload });
+    },
+  } as unknown as EvidenceLogger;
+}
+
 describe("buildBashTool", () => {
   test("runs a simple command and captures stdout", async () => {
     const tool = buildBashTool({ cwd: freshCwd() });
@@ -141,5 +150,28 @@ describe("buildBashTool", () => {
     const result = await tool.execute({ command: "echo \"P=${PATH:+set} H=${HOME:+set}\"" }, noopLogger());
     expect(result.text).toContain("P=set");
     expect(result.text).toContain("H=set");
+  });
+
+  test("emits bash_call event with metadata on successful run", async () => {
+    const tool = buildBashTool({ cwd: freshCwd() });
+    const events: CapturedEvent[] = [];
+    await tool.execute({ command: "echo hello" }, recordingLogger(events));
+    const call = events.find((e) => e.name === "bash_call");
+    expect(call).toBeDefined();
+    expect(call!.payload.command).toBe("echo hello");
+    expect(call!.payload.exit_code).toBe(0);
+    expect(call!.payload.timed_out).toBe(false);
+    expect(call!.payload.stdout_bytes).toBeGreaterThan(0);
+    expect(typeof call!.payload.elapsed_ms).toBe("number");
+  });
+
+  test("emits bash_call event for non-zero exit (not bash_spawn_failed)", async () => {
+    const tool = buildBashTool({ cwd: freshCwd() });
+    const events: CapturedEvent[] = [];
+    await tool.execute({ command: "exit 7" }, recordingLogger(events));
+    const call = events.find((e) => e.name === "bash_call");
+    expect(call).toBeDefined();
+    expect(call!.payload.exit_code).toBe(7);
+    expect(events.find((e) => e.name === "bash_spawn_failed")).toBeUndefined();
   });
 });

@@ -47,7 +47,7 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
 
   const execute = async (
     args: Record<string, unknown>,
-    _logger: EvidenceLogger,
+    logger: EvidenceLogger,
   ): Promise<ToolResult> => {
     const command = typeof args.command === "string" ? args.command : "";
     if (!command) {
@@ -63,11 +63,18 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
         : DEFAULT_TIMEOUT_MS;
 
     // detached: true makes proc.pid serve as pgid (setsid).
-    const proc = spawn(["bash", "-c", command], {
-      cwd: opts.cwd,
-      detached: true,
-      env: buildScrubbedEnv(process.env),
-    });
+    let proc;
+    try {
+      proc = spawn(["bash", "-c", command], {
+        cwd: opts.cwd,
+        detached: true,
+        env: buildScrubbedEnv(process.env),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.logEvent("bash_spawn_failed", { command, error: msg });
+      return { text: `Error: bash spawn failed: ${msg}` };
+    }
 
     let timedOut = false;
     const timeoutHandle = setTimeout(() => {
@@ -83,6 +90,18 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
     const code = await proc.exited;
     clearTimeout(timeoutHandle);
     const elapsedMs = Date.now() - start;
+
+    logger.logEvent("bash_call", {
+      command,
+      cwd: opts.cwd,
+      timeout_ms: timeoutMs,
+      stdout_bytes: stdoutResult.text.length,
+      stderr_bytes: stderrResult.text.length,
+      exit_code: timedOut || code < 0 ? null : code,
+      timed_out: timedOut,
+      truncated: { stdout: stdoutResult.truncated, stderr: stderrResult.truncated },
+      elapsed_ms: elapsedMs,
+    });
 
     return {
       text: formatResult({
