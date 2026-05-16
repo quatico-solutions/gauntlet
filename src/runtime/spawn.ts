@@ -22,6 +22,17 @@ export interface SpawnOptions {
    * the whole tree at cleanup time (e.g. `src/adapters/cli/adapter.ts`).
    */
   detached?: boolean;
+  /**
+   * When provided, **replaces** the child's environment (not merged with
+   * parent). Callers that want inheritance should pass `process.env`.
+   */
+  env?: Record<string, string>;
+  /**
+   * When provided, the child is SIGKILLed if it hasn't exited within the
+   * window. Implemented uniformly via setTimeout + proc.kill so the
+   * caller's `exited` Promise resolves consistently across Bun and Node.
+   */
+  timeout_ms?: number;
 }
 
 export interface SpawnedProcess {
@@ -63,8 +74,9 @@ function spawnViaBun(argv: string[], options?: SpawnOptions): SpawnedProcess {
     // Bun.spawn calls setsid() in the child on POSIX when detached: true.
     // We don't `unref` — we want to await proc.exited at close time.
     ...(options?.detached ? { detached: true } : {}),
+    ...(options?.env ? { env: options.env } : {}),
   }) as Bun.Subprocess<"pipe", "pipe", "pipe">;
-  return {
+  return withTimeout({
     pid: proc.pid,
     stdin: {
       write: (d) => { proc.stdin.write(d as string); },
@@ -73,8 +85,8 @@ function spawnViaBun(argv: string[], options?: SpawnOptions): SpawnedProcess {
     stdout: proc.stdout,
     stderr: proc.stderr,
     kill: () => { proc.kill(); },
-    exited: proc.exited.then((code) => code ?? -1),
-  };
+    exited: proc.exited.then((code) => proc.signalCode ? -1 : (code ?? -1)),
+  }, options?.timeout_ms);
 }
 
 function spawnViaNode(argv: string[], options?: SpawnOptions): SpawnedProcess {
@@ -82,6 +94,7 @@ function spawnViaNode(argv: string[], options?: SpawnOptions): SpawnedProcess {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: options?.cwd,
     detached: options?.detached === true,
+    ...(options?.env ? { env: options.env } : {}),
   });
   if (!proc.stdin || !proc.stdout || !proc.stderr) {
     throw new Error("Node spawn returned a process with missing stdio");
@@ -96,7 +109,7 @@ function spawnViaNode(argv: string[], options?: SpawnOptions): SpawnedProcess {
     }
     proc.once("exit", (code, _signal) => resolve(code ?? -1));
   });
-  return {
+  return withTimeout({
     pid: proc.pid,
     stdin: {
       write: (d) => { proc.stdin!.write(d); },
@@ -108,7 +121,18 @@ function spawnViaNode(argv: string[], options?: SpawnOptions): SpawnedProcess {
     stderr: Readable.toWeb(proc.stderr) as unknown as ReadableStream<Uint8Array>,
     kill: () => { proc.kill(); },
     exited,
-  };
+  }, options?.timeout_ms);
+}
+
+function withTimeout(proc: SpawnedProcess, timeoutMs: number | undefined): SpawnedProcess {
+  if (!timeoutMs) return proc;
+  const handle = setTimeout(() => {
+    try { proc.kill(); } catch { /* already dead */ }
+  }, timeoutMs);
+  proc.exited.finally(() => {
+    clearTimeout(handle);
+  });
+  return proc;
 }
 
 function spawnSyncViaBun(argv: string[]): SpawnSyncResult {

@@ -1264,4 +1264,12 @@ describe("takeReturnScreenshot via WebAdapter (PRI-1517)", () => {
       rmSync(outDir, { recursive: true, force: true });
     }
   });
+
+  test("toolDefinitions includes bash", () => {
+    const adapter = new WebAdapter({
+      runDir: mkdtempSync(join(tmpdir(), "gauntlet-bash-adapter-")),
+    });
+    const names = adapter.toolDefinitions().map((d) => d.name);
+    expect(names).toContain("bash");
+  });
 });

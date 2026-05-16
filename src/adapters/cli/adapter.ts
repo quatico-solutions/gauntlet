@@ -1,14 +1,14 @@
-import { mkdirSync } from "fs";
+import { mkdirSync, mkdtempSync } from "fs";
 import { join } from "path";
+import { tmpdir } from "os";
 import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
-import { buildReadTool, type ReadTool } from "../../context/read-tool";
-import { buildFetchCredentialTool, type FetchCredentialTool } from "../../context/credential-tool";
+import { buildSharedTools, type SharedTools } from "../../agent/shared-tools";
 import type { CredentialResolverConfig } from "../../config";
 import { validateToolArgs } from "../../agent/validators";
 import { spawn, spawnSync, type SpawnedProcess } from "../../runtime/spawn";
-import { listDescendants } from "../../runtime/process-tree";
+import { listDescendants, killProcessTree } from "../../runtime/process-tree";
 
 const KEY_MAP: Record<string, string> = {
   Enter: "\n",
@@ -47,21 +47,21 @@ export class CLIAdapter implements Adapter {
   private proc: SpawnedProcess | null = null;
   private pgid: number | null = null;
   private buffer = "";
-  private readTool: ReadTool | null;
-  private credentialTool: FetchCredentialTool | null;
+  private shared: SharedTools;
   /** Lazy cache of tool name → parameter schema for O(1) validation. */
   private toolSchemas: Map<string, ToolDefinition["parameters"]> | null = null;
   private runDir: string | undefined;
   private logger: EvidenceLogger | undefined;
 
   constructor(options?: CLIAdapterOptions) {
-    this.readTool = options?.contextRoot
-      ? buildReadTool(options.contextRoot)
-      : null;
-    this.credentialTool = buildFetchCredentialTool(
-      options?.contextRoot ?? "",
-      options?.credentialResolver,
-    );
+    const scratch = options?.runDir
+      ? join(options.runDir, "scratch")
+      : mkdtempSync(join(tmpdir(), "gauntlet-bash-noruncwd-"));
+    this.shared = buildSharedTools({
+      contextRoot: options?.contextRoot,
+      credentialResolver: options?.credentialResolver,
+      cwd: scratch,
+    });
     this.runDir = options?.runDir;
     this.logger = options?.logger;
   }
@@ -139,12 +139,8 @@ export class CLIAdapter implements Adapter {
     const bashPid = this.proc.pid;
     const descendants = listDescendants(bashPid);
 
-    try { process.kill(-pgid, "SIGKILL"); } catch { /* already dead */ }
+    const { reaped } = killProcessTree(pgid, descendants);
 
-    let reaped = 0;
-    for (const pid of descendants) {
-      try { process.kill(pid, "SIGKILL"); reaped++; } catch { /* already dead */ }
-    }
     if (reaped > 0 && this.logger) {
       this.logger.logEvent("cli_shell_descendants_reaped", {
         pgid,
@@ -196,12 +192,7 @@ export class CLIAdapter implements Adapter {
         },
       },
     ];
-    if (this.readTool) {
-      tools.push(this.readTool.definition);
-    }
-    if (this.credentialTool) {
-      tools.push(this.credentialTool.definition);
-    }
+    tools.push(...this.shared.definitions());
     return tools;
   }
 
@@ -225,11 +216,8 @@ export class CLIAdapter implements Adapter {
       }
     }
 
-    if (name === "read" && this.readTool) {
-      return this.readTool.execute(args);
-    }
-    if (name === "fetch_credential" && this.credentialTool) {
-      return this.credentialTool.execute(args, logger);
+    if (this.shared.canExecute(name)) {
+      return this.shared.execute(name, args, logger);
     }
 
     switch (name) {
