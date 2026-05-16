@@ -107,4 +107,39 @@ describe("buildBashTool", () => {
     try { process.kill(childPid, 0); } catch { alive = false; }
     expect(alive).toBe(false);
   });
+
+  test("env is scrubbed: random parent vars do not leak", async () => {
+    process.env.GAUNTLET_BASH_LEAK_TEST = "should-not-appear";
+    try {
+      const tool = buildBashTool({ cwd: freshCwd() });
+      const result = await tool.execute(
+        { command: "echo \"LEAK=${GAUNTLET_BASH_LEAK_TEST:-clean}\"" },
+        noopLogger(),
+      );
+      expect(result.text).toContain("LEAK=clean");
+    } finally {
+      delete process.env.GAUNTLET_BASH_LEAK_TEST;
+    }
+  });
+
+  test("env passes through ANTHROPIC_API_KEY when set in parent", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-test-passthrough";
+    try {
+      const tool = buildBashTool({ cwd: freshCwd() });
+      const result = await tool.execute(
+        { command: "echo \"K=$ANTHROPIC_API_KEY\"" },
+        noopLogger(),
+      );
+      expect(result.text).toContain("K=sk-test-passthrough");
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
+
+  test("env includes minimal base vars", async () => {
+    const tool = buildBashTool({ cwd: freshCwd() });
+    const result = await tool.execute({ command: "echo \"P=${PATH:+set} H=${HOME:+set}\"" }, noopLogger());
+    expect(result.text).toContain("P=set");
+    expect(result.text).toContain("H=set");
+  });
 });

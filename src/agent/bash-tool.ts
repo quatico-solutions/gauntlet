@@ -66,6 +66,7 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
     const proc = spawn(["bash", "-c", command], {
       cwd: opts.cwd,
       detached: true,
+      env: buildScrubbedEnv(process.env),
     });
 
     let timedOut = false;
@@ -103,6 +104,25 @@ const STDERR_CAP_BYTES = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MIN_TIMEOUT_MS = 100;
 const MAX_TIMEOUT_MS = 60_000;
+
+const BASE_ENV_KEYS = [
+  "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL", "TERM", "TMPDIR", "TZ",
+] as const;
+
+const SDK_PASSTHROUGH_KEYS = [
+  "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_LOG",
+  "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT",
+  "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+] as const;
+
+function buildScrubbedEnv(parent: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of [...BASE_ENV_KEYS, ...SDK_PASSTHROUGH_KEYS]) {
+    const v = parent[key];
+    if (typeof v === "string") out[key] = v;
+  }
+  return out;
+}
 
 async function drainStreamCapped(
   stream: ReadableStream<Uint8Array>,
