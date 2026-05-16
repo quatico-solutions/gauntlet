@@ -169,6 +169,7 @@ async function buildDefaultAdapter(
         chromeProfileName: `gauntlet-run-${runId}`,
         viewport,
         credentialResolver,
+        runDir,
       });
     }
   }

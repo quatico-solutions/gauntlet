@@ -7,8 +7,7 @@ import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger, BrowserEventCategory } from "../../evidence/logger";
 import { DEFAULT_VIEWPORT, type ChromeEndpoint, type Viewport } from "../../config";
 import type { CredentialResolverConfig } from "../../config";
-import { buildReadTool, type ReadTool } from "../../context/read-tool";
-import { buildFetchCredentialTool, type FetchCredentialTool } from "../../context/credential-tool";
+import { buildSharedTools, type SharedTools } from "../../agent/shared-tools";
 import {
   buildInstallPasskeyTool,
   type PasskeyTool,
@@ -138,6 +137,12 @@ export interface WebAdapterOptions {
    * contextRoot, the WebAdapter registers fetch_credential. PRI-1605.
    */
   credentialResolver?: CredentialResolverConfig;
+  /**
+   * Per-run directory. Used in Task 11 to derive the bash tool's cwd.
+   * Optional only so the registry's tool-introspection construction
+   * (which never executes tools) still works.
+   */
+  runDir?: string;
 }
 
 export interface ScreenshotResult {
@@ -170,11 +175,11 @@ export function composeResult(
 export class WebAdapter implements Adapter {
   readonly name = "web";
   private remote: boolean;
-  private readTool: ReadTool | null;
+  private shared: SharedTools;
   private passkeyTool: PasskeyTool | null;
   private cookiesTool: CookiesTool | null;
-  private credentialTool: FetchCredentialTool | null;
   private logger: EvidenceLogger | null;
+  private runDir: string | undefined;
   private observerSession: ObserverSession | null = null;
   private chromeProfileName: string | null;
   private viewport: Viewport | null;
@@ -239,9 +244,11 @@ export class WebAdapter implements Adapter {
     this.logger = options?.logger ?? null;
     this.chromeProfileName = options?.chromeProfileName ?? null;
     this.viewport = options?.viewport ?? null;
-    this.readTool = options?.contextRoot
-      ? buildReadTool(options.contextRoot)
-      : null;
+    this.runDir = options?.runDir;
+    this.shared = buildSharedTools({
+      contextRoot: options?.contextRoot,
+      credentialResolver: options?.credentialResolver,
+    });
     this.passkeyTool = options?.contextRoot
       ? buildInstallPasskeyTool(
           options.contextRoot,
@@ -258,10 +265,6 @@ export class WebAdapter implements Adapter {
           this.logger,
         )
       : null;
-    this.credentialTool = buildFetchCredentialTool(
-      options?.contextRoot ?? "",
-      options?.credentialResolver,
-    );
   }
 
   /**
@@ -874,16 +877,13 @@ export class WebAdapter implements Adapter {
         },
       },
     ];
-    if (this.readTool) {
-      tools.push(this.readTool.definition);
-    }
     if (this.passkeyTool) {
       tools.push(this.passkeyTool.definition);
     }
     if (this.cookiesTool) {
       tools.push(this.cookiesTool.definition);
     }
-    if (this.credentialTool) tools.push(this.credentialTool.definition);
+    tools.push(...this.shared.definitions());
     return tools;
   }
 
@@ -909,8 +909,8 @@ export class WebAdapter implements Adapter {
       }
     }
 
-    if (name === "read" && this.readTool) {
-      return this.readTool.execute(args);
+    if (this.shared.canExecute(name)) {
+      return this.shared.execute(name, args, logger);
     }
 
     // PRI-1439: install_passkey / install_cookies target tab index 0
@@ -941,10 +941,6 @@ export class WebAdapter implements Adapter {
         });
       }
       return this.cookiesTool.execute(args);
-    }
-
-    if (name === "fetch_credential" && this.credentialTool) {
-      return this.credentialTool.execute(args, logger);
     }
 
     const tab = this.activeTab();
