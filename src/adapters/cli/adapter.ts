@@ -1,5 +1,6 @@
-import { mkdirSync } from "fs";
+import { mkdirSync, mkdtempSync } from "fs";
 import { join } from "path";
+import { tmpdir } from "os";
 import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
@@ -53,9 +54,13 @@ export class CLIAdapter implements Adapter {
   private logger: EvidenceLogger | undefined;
 
   constructor(options?: CLIAdapterOptions) {
+    const scratch = options?.runDir
+      ? join(options.runDir, "scratch")
+      : mkdtempSync(join(tmpdir(), "gauntlet-bash-noruncwd-"));
     this.shared = buildSharedTools({
       contextRoot: options?.contextRoot,
       credentialResolver: options?.credentialResolver,
+      cwd: scratch,
     });
     this.runDir = options?.runDir;
     this.logger = options?.logger;

@@ -3,10 +3,13 @@ import type { EvidenceLogger } from "../evidence/logger";
 import type { CredentialResolverConfig } from "../config";
 import { buildReadTool, type ReadTool } from "../context/read-tool";
 import { buildFetchCredentialTool, type FetchCredentialTool } from "../context/credential-tool";
+import { buildBashTool, type BashTool } from "./bash-tool";
 
 export interface SharedToolsOptions {
   contextRoot?: string;
   credentialResolver?: CredentialResolverConfig;
+  /** Working directory for the bash tool. Required because bash is always mounted. */
+  cwd: string;
 }
 
 export interface SharedTools {
@@ -27,17 +30,20 @@ export function buildSharedTools(opts: SharedToolsOptions): SharedTools {
     opts.contextRoot ?? "",
     opts.credentialResolver,
   );
+  const bashTool: BashTool = buildBashTool({ cwd: opts.cwd });
 
   const definitions = (): ToolDefinition[] => {
     const defs: ToolDefinition[] = [];
     if (readTool) defs.push(readTool.definition);
     if (credentialTool) defs.push(credentialTool.definition);
+    defs.push(bashTool.definition);
     return defs;
   };
 
   const canExecute = (name: string): boolean => {
     if (name === "read") return readTool !== null;
     if (name === "fetch_credential") return credentialTool !== null;
+    if (name === "bash") return true;
     return false;
   };
 
@@ -50,6 +56,7 @@ export function buildSharedTools(opts: SharedToolsOptions): SharedTools {
     if (name === "fetch_credential" && credentialTool) {
       return credentialTool.execute(args, logger);
     }
+    if (name === "bash") return bashTool.execute(args, logger);
     throw new Error(`SharedTools: unknown or unmounted tool: ${name}`);
   };
 

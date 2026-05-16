@@ -17,19 +17,36 @@ function populatedContextRoot(): string {
 
 describe("buildSharedTools", () => {
   test("mounts read when context root populated", () => {
-    const bundle = buildSharedTools({ contextRoot: populatedContextRoot() });
+    const bundle = buildSharedTools({ contextRoot: populatedContextRoot(), cwd: emptyContextRoot() });
     const names = bundle.definitions().map((d) => d.name);
     expect(names).toContain("read");
     expect(bundle.canExecute("read")).toBe(true);
   });
 
   test("does not mount read when context root empty", () => {
-    const bundle = buildSharedTools({ contextRoot: emptyContextRoot() });
+    const bundle = buildSharedTools({ contextRoot: emptyContextRoot(), cwd: emptyContextRoot() });
     expect(bundle.definitions().map((d) => d.name)).not.toContain("read");
   });
 
   test("does not mount read when no context root provided", () => {
-    const bundle = buildSharedTools({});
+    const bundle = buildSharedTools({ cwd: emptyContextRoot() });
     expect(bundle.canExecute("read")).toBe(false);
+  });
+
+  test("always mounts bash regardless of context", () => {
+    const bundle = buildSharedTools({ cwd: emptyContextRoot() });
+    const names = bundle.definitions().map((d) => d.name);
+    expect(names).toContain("bash");
+    expect(bundle.canExecute("bash")).toBe(true);
+  });
+
+  test("dispatches bash to the underlying tool", async () => {
+    const bundle = buildSharedTools({ cwd: emptyContextRoot() });
+    const result = await bundle.execute(
+      "bash",
+      { command: "echo from-bundle" },
+      { logEvent: () => {} } as any,
+    );
+    expect((result as { text: string }).text).toContain("from-bundle");
   });
 });

@@ -160,4 +160,12 @@ describe("CLIAdapter", () => {
       rmSync(resTmp, { recursive: true, force: true });
     }
   });
+
+  test("toolDefinitions includes bash", () => {
+    const adapter = new CLIAdapter({
+      runDir: mkdtempSync(join(tmpdir(), "gauntlet-bash-adapter-")),
+    });
+    const names = adapter.toolDefinitions().map((d) => d.name);
+    expect(names).toContain("bash");
+  });
 });
