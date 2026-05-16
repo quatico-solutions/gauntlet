@@ -93,9 +93,13 @@ describe("buildSystemPrompt", () => {
       expect(prompt).toContain(EXPECTED_CONTEXT_SECTION);
     });
 
-    test("section is the last block in the prompt", () => {
+    test("section appears before the Shell access section", () => {
+      // Context is no longer last — Shell access always follows it.
       const prompt = buildSystemPrompt(baseCard, SAMPLE_TREE, undefined, undefined, 5);
-      expect(prompt.endsWith(EXPECTED_CONTEXT_SECTION)).toBe(true);
+      const contextIdx = prompt.indexOf("## Context");
+      const shellIdx = prompt.indexOf("## Shell access");
+      expect(contextIdx).toBeGreaterThan(0);
+      expect(shellIdx).toBeGreaterThan(contextIdx);
     });
 
     test("section is omitted when contextTree is undefined", () => {
@@ -123,6 +127,23 @@ describe("buildSystemPrompt", () => {
       const prompt = buildSystemPrompt(baseCard, SAMPLE_TREE, undefined, undefined, 5);
       expect(prompt).not.toContain(".gauntlet/context/");
     });
+  });
+
+  // PRI-1615 — the bash tool is always mounted; the prompt must tell the
+  // agent it is available and what it is for.
+  test("system prompt includes Shell access section", () => {
+    const card: StoryCard = {
+      id: "story-001",
+      title: "Test",
+      status: "ready",
+      tags: [],
+      description: "Do the thing.",
+      acceptanceCriteria: [],
+      raw: "",
+    };
+    const prompt = buildSystemPrompt(card, undefined, undefined, undefined);
+    expect(prompt).toContain("## Shell access");
+    expect(prompt).toContain("`bash` tool");
   });
 
   // PRI-1439 — side-trip guidance is web-only. The prompt must teach the
