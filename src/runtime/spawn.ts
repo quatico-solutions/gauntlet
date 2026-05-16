@@ -22,6 +22,11 @@ export interface SpawnOptions {
    * the whole tree at cleanup time (e.g. `src/adapters/cli/adapter.ts`).
    */
   detached?: boolean;
+  /**
+   * When provided, **replaces** the child's environment (not merged with
+   * parent). Callers that want inheritance should pass `process.env`.
+   */
+  env?: Record<string, string>;
 }
 
 export interface SpawnedProcess {
@@ -63,6 +68,7 @@ function spawnViaBun(argv: string[], options?: SpawnOptions): SpawnedProcess {
     // Bun.spawn calls setsid() in the child on POSIX when detached: true.
     // We don't `unref` — we want to await proc.exited at close time.
     ...(options?.detached ? { detached: true } : {}),
+    ...(options?.env ? { env: options.env } : {}),
   }) as Bun.Subprocess<"pipe", "pipe", "pipe">;
   return {
     pid: proc.pid,
@@ -82,6 +88,7 @@ function spawnViaNode(argv: string[], options?: SpawnOptions): SpawnedProcess {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: options?.cwd,
     detached: options?.detached === true,
+    ...(options?.env ? { env: options.env } : {}),
   });
   if (!proc.stdin || !proc.stdout || !proc.stderr) {
     throw new Error("Node spawn returned a process with missing stdio");

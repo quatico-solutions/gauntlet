@@ -101,4 +101,41 @@ describe("spawn options + new fields", () => {
     expect(childPgid).toBe(proc.pid);
     await proc.exited;
   });
+
+  test("spawn replaces child env when env option provided", async () => {
+    const proc = spawn(["bash", "-c", "echo \"FOO=$FOO PATH_PRESENT=${PATH:+yes}\""], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", FOO: "bar" },
+    });
+    const reader = proc.stdout.getReader();
+    let out = "";
+    const dec = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += dec.decode(value, { stream: true });
+    }
+    await proc.exited;
+    expect(out.trim()).toBe("FOO=bar PATH_PRESENT=yes");
+  });
+
+  test("spawn drops parent env vars not in env option", async () => {
+    process.env.GAUNTLET_TEST_LEAK = "leaked";
+    try {
+      const proc = spawn(["bash", "-c", "echo \"LEAK=${GAUNTLET_TEST_LEAK:-clean}\""], {
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      });
+      const reader = proc.stdout.getReader();
+      let out = "";
+      const dec = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        out += dec.decode(value, { stream: true });
+      }
+      await proc.exited;
+      expect(out.trim()).toBe("LEAK=clean");
+    } finally {
+      delete process.env.GAUNTLET_TEST_LEAK;
+    }
+  });
 });
