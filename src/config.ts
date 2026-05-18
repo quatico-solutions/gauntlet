@@ -575,17 +575,15 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const agentModel = agentR.value;
   const agentSource = agentR.source;
 
-  // models.fanout
-  let fanoutModel: string | undefined;
-  let fanoutSource: "default" | "env" | "flag" | "unset" = "unset";
-  if (env.GAUNTLET_FANOUT_MODEL) {
-    fanoutModel = env.GAUNTLET_FANOUT_MODEL;
-    fanoutSource = "env";
-  }
-  if (args.models?.fanout) {
-    fanoutModel = args.models.fanout;
-    fanoutSource = "flag";
-  }
+  // models.fanout — no in-code default, so source starts as "unset".
+  const fanoutR = resolveSetting<string | undefined, "unset">({
+    default: undefined,
+    noValueSource: "unset",
+    env: { name: "GAUNTLET_FANOUT_MODEL", parse: (s) => s },
+    arg: { value: args.models?.fanout },
+  }, env);
+  const fanoutModel = fanoutR.value;
+  const fanoutSource = fanoutR.source;
 
   // models.available — operator-controlled allow-list. Empty means "no
   // restriction": per-request body model overrides flow through unchecked.
