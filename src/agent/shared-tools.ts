@@ -8,8 +8,13 @@ import { buildBashTool, type BashTool } from "./bash-tool";
 export interface SharedToolsOptions {
   contextRoot?: string;
   credentialResolver?: CredentialResolverConfig;
-  /** Working directory for the bash tool. Required because bash is always mounted. */
-  cwd: string;
+  /**
+   * Working directory for the bash tool. Optional: if omitted, the bash
+   * tool's `execute()` errors. Adapters constructed only to enumerate
+   * tool definitions (registry introspection) should omit this; real
+   * runs always supply a `<runDir>/scratch` path.
+   */
+  cwd?: string;
 }
 
 export interface SharedTools {

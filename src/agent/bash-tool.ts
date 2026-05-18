@@ -14,8 +14,14 @@ export const BASH_TOOL_DESCRIPTION =
   "between calls.";
 
 export interface BashToolOptions {
-  /** Working directory for every bash call. Created lazily on first call. */
-  cwd: string;
+  /**
+   * Working directory for every bash call. Optional at construction so
+   * the registry tool-introspection path can build a tool definition
+   * without committing to a runtime cwd. If `execute()` is called when
+   * `cwd` is absent, it errors — introspection-only construction is not
+   * supposed to execute.
+   */
+  cwd?: string;
 }
 
 export interface BashTool {
@@ -53,8 +59,12 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
     if (!command) {
       return { text: `Error: bash requires a non-empty "command" argument.` };
     }
+    if (!opts.cwd) {
+      return { text: `Error: bash tool has no cwd configured (adapter was constructed without runDir; this path is for tool-definition introspection, not execution).` };
+    }
 
-    mkdirSync(opts.cwd, { recursive: true });
+    const cwd = opts.cwd;
+    mkdirSync(cwd, { recursive: true });
     const start = Date.now();
 
     const timeoutMs =
@@ -66,7 +76,7 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
     let proc;
     try {
       proc = spawn(["bash", "-c", command], {
-        cwd: opts.cwd,
+        cwd,
         detached: true,
         env: buildScrubbedEnv(process.env),
       });
@@ -93,7 +103,7 @@ export function buildBashTool(opts: BashToolOptions): BashTool {
 
     logger.logEvent("bash_call", {
       command,
-      cwd: opts.cwd,
+      cwd,
       timeout_ms: timeoutMs,
       stdout_bytes: stdoutResult.text.length,
       stderr_bytes: stderrResult.text.length,

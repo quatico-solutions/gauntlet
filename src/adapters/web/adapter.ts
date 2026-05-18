@@ -1,4 +1,4 @@
-import { readFileSync, unlinkSync, mkdtempSync } from "fs";
+import { readFileSync, unlinkSync } from "fs";
 import { rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -245,13 +245,10 @@ export class WebAdapter implements Adapter {
     this.chromeProfileName = options?.chromeProfileName ?? null;
     this.viewport = options?.viewport ?? null;
     this.runDir = options?.runDir;
-    const scratch = options?.runDir
-      ? join(options.runDir, "scratch")
-      : mkdtempSync(join(tmpdir(), "gauntlet-bash-noruncwd-"));
     this.shared = buildSharedTools({
       contextRoot: options?.contextRoot,
       credentialResolver: options?.credentialResolver,
-      cwd: scratch,
+      cwd: options?.runDir ? join(options.runDir, "scratch") : undefined,
     });
     this.passkeyTool = options?.contextRoot
       ? buildInstallPasskeyTool(

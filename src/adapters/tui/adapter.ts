@@ -6,9 +6,8 @@ import { validateToolArgs } from "../../agent/validators";
 import type { CredentialResolverConfig, Viewport } from "../../config";
 import { defaultCaptureParser, type CaptureParser } from "./capture-parser";
 import { spawnSync } from "../../runtime/spawn";
-import { mkdirSync, mkdtempSync } from "fs";
+import { mkdirSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 import { listDescendants } from "../../runtime/process-tree";
 
 /**
@@ -78,13 +77,10 @@ export class TUIAdapter implements Adapter {
   private bashPid: number | null = null;
 
   constructor(options?: TUIAdapterOptions) {
-    const scratch = options?.runDir
-      ? join(options.runDir, "scratch")
-      : mkdtempSync(join(tmpdir(), "gauntlet-bash-noruncwd-"));
     this.shared = buildSharedTools({
       contextRoot: options?.contextRoot,
       credentialResolver: options?.credentialResolver,
-      cwd: scratch,
+      cwd: options?.runDir ? join(options.runDir, "scratch") : undefined,
     });
     this.captureParser = options?.captureParser ?? defaultCaptureParser;
     this.runDir = options?.runDir;
