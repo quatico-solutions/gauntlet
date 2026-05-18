@@ -32,6 +32,12 @@ import {
 } from "./tools/pointer";
 import { executeType, executePress } from "./tools/keyboard";
 import { executeNavigate, executeEval, executeFileUpload } from "./tools/page-actions";
+import {
+  executeNewTab,
+  executeCloseTab,
+  MAX_TAB_DEPTH,
+  type WebTabsCtx,
+} from "./tools/tabs";
 import type { WebToolCtx } from "./tools/types";
 
 // The forked CDP library is CommonJS JS — use require for bun compatibility.
@@ -56,12 +62,6 @@ const { createSession } = require("./lib/chrome-ws-lib") as {
 // tab state. They are unaffected by the side-trip focus stack (PRI-1439).
 const PASSKEY_TAB = 0;
 const COOKIES_TAB = 0;
-
-// PRI-1439: cap on side-trip nesting depth. 1 = original tab only;
-// each `new_tab` pushes; each `close_tab` pops. Typical use is 1–2 levels
-// (signin → email; signin → password manager → 2FA portal). The cap is
-// a guardrail against runaway tab creation, not a tuning knob.
-const MAX_TAB_DEPTH = 5;
 
 // Tools whose successful invocation changes browser/application state.
 // Used by isMutatingTool() to decide which calls land in the reflection
@@ -619,6 +619,12 @@ export class WebAdapter implements Adapter {
       takeReturnScreenshot,
     };
 
+    const tabsCtx: WebTabsCtx = {
+      ...ctx,
+      tabStack: this.tabStack,
+      recomputeActiveTab: () => this.activeTab(),
+    };
+
     switch (name) {
       case "screenshot":
         return executeScreenshot(ctx, args);
@@ -650,93 +656,10 @@ export class WebAdapter implements Adapter {
         return executeEval(ctx, args);
       case "wait_for":
         return executeWaitFor(ctx, args);
-      case "new_tab": {
-        // The cap is on total stack depth (1 original + N side trips).
-        // Frame the user-facing error in side-trip terms so the agent
-        // can plan against the number it cares about.
-        if (this.tabStack.length >= MAX_TAB_DEPTH) {
-          return {
-            text:
-              `Error: too many side-trip tabs (max ${MAX_TAB_DEPTH - 1}; ` +
-              `close one with close_tab before opening another)`,
-          };
-        }
-        const targetUrl = args.url as string | undefined;
-        // Empty / non-http URLs would otherwise become about:blank and
-        // silently consume a stack slot — refuse explicitly so the
-        // agent doesn't waste turns.
-        if (
-          typeof targetUrl !== "string" ||
-          !/^(https?:|file:|about:)/i.test(targetUrl)
-        ) {
-          return {
-            text:
-              "Error: new_tab requires an absolute URL (http://, https://, " +
-              "file://, or about:)",
-          };
-        }
-        try {
-          const created = await this.chrome.newTab(targetUrl);
-          const wsUrl = created?.webSocketDebuggerUrl as string | undefined;
-          if (!wsUrl) {
-            return { text: "Error: chrome did not return a tab WebSocket URL" };
-          }
-          this.tabStack.push({ wsUrl, url: targetUrl });
-          logger.logEvent("tab_focus_changed", {
-            action: "push",
-            depth: this.tabStack.length,
-            ws_url: wsUrl,
-            url: targetUrl,
-          });
-          // Recompute against the now-pushed tab so return_screenshot
-          // captures the *new* tab, not the one we just left.
-          const newActive = this.activeTab();
-          return composeResult(
-            `opened tab (depth ${this.tabStack.length})`,
-            await takeReturnScreenshot(newActive)
-          );
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          return { text: `Error: ${reason}` };
-        }
-      }
-      case "close_tab": {
-        if (this.tabStack.length <= 1) {
-          return {
-            text: "Error: cannot close the original tab — use navigate to change the page",
-          };
-        }
-        const popped = this.tabStack.pop()!;
-        logger.logEvent("tab_focus_changed", {
-          action: "pop",
-          depth: this.tabStack.length,
-          ws_url: popped.wsUrl,
-          url: popped.url,
-        });
-        let closeWarning = "";
-        try {
-          await this.chrome.closeTab(popped.wsUrl);
-        } catch (err) {
-          // Surface the chrome-side failure so the agent knows the tab
-          // *might* still exist in Chrome (its stack-mutation already
-          // happened — focus has moved). Worst case the orphan is GC'd
-          // when the run ends.
-          const reason = err instanceof Error ? err.message : String(err);
-          closeWarning = ` (warning: chrome closeTab failed — ${reason})`;
-          logger.logEvent("tab_force_close_failed", {
-            ws_url: popped.wsUrl,
-            url: popped.url,
-            reason,
-          });
-        }
-        // Same fix as new_tab: return_screenshot must hit the *now-active*
-        // tab (the one we popped back to), not the just-closed tab.
-        const newActive = this.activeTab();
-        return composeResult(
-          `closed tab (depth ${this.tabStack.length})${closeWarning}`,
-          await takeReturnScreenshot(newActive)
-        );
-      }
+      case "new_tab":
+        return executeNewTab(tabsCtx, args);
+      case "close_tab":
+        return executeCloseTab(tabsCtx, args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
