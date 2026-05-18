@@ -194,23 +194,38 @@ export async function runAgent(
    * Build a terminal VetResult with shared scaffolding (schema, evidence,
    * duration, usage). Used by every early-exit: report_result, max_tokens
    * truncation, empty response, and the max-turns fallthrough.
+   *
+   * Overloaded so the discriminated union is compiler-enforced: the
+   * "errored" variant requires an `error` object; other statuses must
+   * omit it.
    */
-  const buildResult = (partial: {
+  function buildResult(partial: {
+    status: "pass" | "fail" | "investigate";
+    summary: string;
+    reasoning: string;
+    observations?: VetResult["observations"];
+  }): VetResult;
+  function buildResult(partial: {
+    status: "errored";
+    summary: string;
+    reasoning: string;
+    observations?: VetResult["observations"];
+    error: { type: string; message: string };
+  }): VetResult;
+  function buildResult(partial: {
     status: VetStatus;
     summary: string;
     reasoning: string;
     observations?: VetResult["observations"];
-    error?: VetResult["error"];
-  }): VetResult => {
-    const result: VetResult = {
+    error?: { type: string; message: string };
+  }): VetResult {
+    const base = {
       schemaVersion: RESULT_SCHEMA_VERSION,
       runId,
       scenario: card.id,
-      status: partial.status,
       summary: partial.summary,
       reasoning: partial.reasoning,
       observations: partial.observations ?? [],
-      ...(partial.error ? { error: partial.error } : {}),
       evidence: {
         screenshots: logger.screenshots,
         log: logger.logPath,
@@ -226,6 +241,9 @@ export async function runAgent(
         turns,
       },
     };
+    const result: VetResult = partial.status === "errored"
+      ? { ...base, status: "errored", error: partial.error! }
+      : { ...base, status: partial.status };
     logger.logRunEnd({
       status: result.status,
       summary: result.summary,
@@ -243,7 +261,7 @@ export async function runAgent(
       outDir: options.outDir,
     });
     return result;
-  };
+  }
 
   const isAborted = (): boolean => options.abortSignal?.aborted === true;
   const abortedResult = (): VetResult => {

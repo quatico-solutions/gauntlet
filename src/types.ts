@@ -57,7 +57,16 @@ export interface Observation {
   evidence?: string[];
 }
 
-export interface VetResult {
+/**
+ * Base shape — the fields shared by every VetResult variant. `VetResult`
+ * itself is a discriminated union on `status`: "errored" variants carry
+ * a required `error` object; non-errored variants don't have the field.
+ *
+ * The JSON on disk is unchanged — an "errored" result already has an
+ * `error` field; a non-errored result already omits it. No
+ * RESULT_SCHEMA_VERSION bump.
+ */
+interface VetResultBase {
   schemaVersion: number;
   /**
    * Self-describing primary key for the run, set by the caller (route or
@@ -66,19 +75,9 @@ export interface VetResult {
    */
   runId: string;
   scenario: string;
-  status: VetStatus;
   summary: string;
   reasoning: string;
   observations: Observation[];
-  /**
-   * Set when `status === "errored"`. Categorizes the cause so consumers
-   * can distinguish shutdown interruption from other future error
-   * surfaces. `type` is open-typed (string) so additive new categories
-   * don't require a schema bump or TypeScript type widening — consumers
-   * MUST tolerate unknown `type` values. Today the only emitted type is
-   * `"shutdown_interrupted"` (PRI-1507).
-   */
-  error?: { type: string; message: string };
   evidence: {
     screenshots: string[];
     log: string;
@@ -118,6 +117,21 @@ export interface VetResult {
   config?: RunConfigSnapshot;
   runSet?: RunSetCtx;
 }
+
+export type VetResult =
+  | (VetResultBase & { status: "pass" | "fail" | "investigate" })
+  | (VetResultBase & {
+      status: "errored";
+      /**
+       * Categorizes the cause so consumers can distinguish shutdown
+       * interruption from other future error surfaces. `type` is
+       * open-typed (string) so additive new categories don't require a
+       * schema bump or TypeScript type widening — consumers MUST
+       * tolerate unknown `type` values. Today the only emitted type is
+       * `"shutdown_interrupted"` (PRI-1507).
+       */
+      error: { type: string; message: string };
+    });
 
 export interface ModelConfig {
   agent: string;
