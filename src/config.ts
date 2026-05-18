@@ -448,16 +448,13 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const targetSource = targetR.source;
 
   // defaultViewport
-  let defaultViewport: Viewport = DEFAULT_VIEWPORT;
-  let viewportSource: "default" | "env" | "flag" = "default";
-  if (env.GAUNTLET_VIEWPORT) {
-    defaultViewport = parseViewportString(env.GAUNTLET_VIEWPORT, "GAUNTLET_VIEWPORT");
-    viewportSource = "env";
-  }
-  if (args.viewport !== undefined) {
-    defaultViewport = parseViewportString(args.viewport, "--viewport");
-    viewportSource = "flag";
-  }
+  const viewportR = resolveSetting({
+    default: DEFAULT_VIEWPORT,
+    env: { name: "GAUNTLET_VIEWPORT", parse: (s) => parseViewportString(s, "GAUNTLET_VIEWPORT") },
+    arg: { value: args.viewport !== undefined ? parseViewportString(args.viewport, "--viewport") : undefined },
+  }, env);
+  const defaultViewport = viewportR.value;
+  const viewportSource = viewportR.source;
 
   // defaultSaveScreencast — opt-in persistence of screencast frames.
   // Defaults off because per-run screencast files are 100MB–1GB and
