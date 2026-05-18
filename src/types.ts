@@ -23,6 +23,7 @@
 export const RESULT_SCHEMA_VERSION = 5;
 
 import type { RunSetCtx } from "./runs/run-set-types";
+import type { ResolvedRunConfig, Viewport } from "./config";
 
 export interface RunConfigSnapshot {
   target: string;
@@ -121,4 +122,28 @@ export interface VetResult {
 export interface ModelConfig {
   agent: string;
   fanout?: string;
+}
+
+/**
+ * Derive a `RunConfigSnapshot` (versioned wire format stamped into
+ * result.json) from the in-memory `ResolvedRunConfig`. Single-sources
+ * the field set so the snapshot can't drift from the resolved config.
+ *
+ * `viewport` is passed in separately because the snapshot viewport
+ * comes from the started adapter (via `snapshotViewport(adapter)`),
+ * not the config's intended viewport — adapters may report something
+ * different from what was requested (e.g., cli has no viewport).
+ */
+export function snapshotRunConfig(
+  rc: ResolvedRunConfig,
+  viewport: Viewport | undefined,
+): RunConfigSnapshot {
+  return {
+    target: rc.target,
+    model: rc.model,
+    adapter: rc.adapter,
+    chrome: rc.chrome ? `${rc.chrome.host}:${rc.chrome.port}` : undefined,
+    budgetMs: rc.budgetMs,
+    viewport,
+  };
 }

@@ -70,6 +70,7 @@ export async function runOne(opts: RunOneOptions): Promise<RunOneSummary> {
       reflectionInterval: config.defaultReflectionInterval,
       chrome,
       viewport: config.defaultViewport,
+      saveScreencast: config.defaultSaveScreencast,
       credentialResolver: config.credentialResolver,
     },
     hooks: opts.onLogger

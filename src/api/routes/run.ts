@@ -148,17 +148,7 @@ export async function executeHttpRun(
       runSetCtx,
       adapterFactory: opts.adapterFactory,
       abortSignal: opts.abortSignal,
-      runConfig: {
-        projectRoot,
-        model: effective.model,
-        adapter: effective.adapter,
-        target: effective.target,
-        budgetMs: effective.budgetMs,
-        reflectionInterval: effective.reflectionInterval,
-        chrome: effective.chrome,
-        viewport: effective.viewport,
-        credentialResolver: effective.credentialResolver,
-      },
+      runConfig: effective,
       hooks,
     });
     terminal = { type: "complete", result: result.result };

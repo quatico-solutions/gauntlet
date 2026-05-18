@@ -155,7 +155,7 @@ export interface RunRequestBody {
   passes?: number;
 }
 
-export interface EffectiveRunConfig {
+export interface ResolvedRunConfig {
   target: string;
   model: string;
   /**
@@ -273,7 +273,7 @@ export function validateRunBody(body: unknown, opts: Record<string, never> = {})
   };
 }
 
-export function mergeRunConfig(app: AppConfig, body: RunRequestBody): EffectiveRunConfig {
+export function mergeRunConfig(app: AppConfig, body: RunRequestBody): ResolvedRunConfig {
   // Precedence: explicit body > explicit server config (env/flag) > undefined (auto-launch).
   // Source attribution is the tiebreaker — if the user never specified a
   // chrome endpoint anywhere, leave it undefined so WebAdapter falls back
