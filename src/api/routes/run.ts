@@ -77,7 +77,7 @@ export async function executeHttpRun(
     onLogger: (logger) => {
       const detachers: Array<() => void> = [];
       if (broadcaster || registry) {
-        detachers.push(logger.addObserver((action, params) => {
+        detachers.push(logger.addProgressObserver((action, params) => {
           const message = `[${action}] ${JSON.stringify(params)}`;
           broadcaster?.send(runId, {
             type: "progress",
