@@ -552,13 +552,12 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const activeRunTargetMaxBytesSource = activeRunTargetMaxBytesR.source;
 
   // PRI-1483 WebSocket hygiene knobs.
-  const wsIdleTimeoutSec = parseNonNegIntEnv(
-    env.GAUNTLET_WS_IDLE_TIMEOUT_SEC,
-    "GAUNTLET_WS_IDLE_TIMEOUT_SEC",
-    DEFAULT_WS_IDLE_TIMEOUT_SEC,
-  );
-  const wsIdleTimeoutSecSource: "default" | "env" =
-    env.GAUNTLET_WS_IDLE_TIMEOUT_SEC ? "env" : "default";
+  const wsIdleTimeoutSecR = resolveEnvOnlySetting({
+    default: DEFAULT_WS_IDLE_TIMEOUT_SEC,
+    env: { name: "GAUNTLET_WS_IDLE_TIMEOUT_SEC", parse: (s) => parseNonNegInt(s, "GAUNTLET_WS_IDLE_TIMEOUT_SEC") },
+  }, env);
+  const wsIdleTimeoutSec = wsIdleTimeoutSecR.value;
+  const wsIdleTimeoutSecSource = wsIdleTimeoutSecR.source;
 
   const wsOriginAllowlist = env.GAUNTLET_WS_ORIGIN_ALLOWLIST
     ? env.GAUNTLET_WS_ORIGIN_ALLOWLIST.split(",").map((s) => s.trim()).filter(Boolean)
