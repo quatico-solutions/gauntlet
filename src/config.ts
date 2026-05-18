@@ -567,16 +567,13 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const wsOriginAllowlistSource = wsOriginAllowlistR.source;
 
   // models.agent
-  let agentModel = DEFAULT_AGENT_MODEL;
-  let agentSource: "default" | "env" | "flag" = "default";
-  if (env.GAUNTLET_AGENT_MODEL) {
-    agentModel = env.GAUNTLET_AGENT_MODEL;
-    agentSource = "env";
-  }
-  if (args.models?.agent) {
-    agentModel = args.models.agent;
-    agentSource = "flag";
-  }
+  const agentR = resolveSetting({
+    default: DEFAULT_AGENT_MODEL,
+    env: { name: "GAUNTLET_AGENT_MODEL", parse: (s) => s },
+    arg: { value: args.models?.agent },
+  }, env);
+  const agentModel = agentR.value;
+  const agentSource = agentR.source;
 
   // models.fanout
   let fanoutModel: string | undefined;
