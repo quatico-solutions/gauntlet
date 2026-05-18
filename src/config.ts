@@ -436,17 +436,16 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const defaultChrome = chromeR.value;
   const chromeSource = chromeR.source;
 
-  // defaultTarget
-  let defaultTarget: string | undefined;
-  let targetSource: "default" | "env" | "flag" | "unset" = "unset";
-  if (env.GAUNTLET_TARGET) {
-    defaultTarget = env.GAUNTLET_TARGET;
-    targetSource = "env";
-  }
-  if (args.target !== undefined) {
-    defaultTarget = args.target;
-    targetSource = "flag";
-  }
+  // defaultTarget — source widens to include "unset" because there is no
+  // in-code default value (sources.defaultTarget cascades unset→env→flag).
+  const targetR = resolveSetting<string | undefined, "unset">({
+    default: undefined,
+    noValueSource: "unset",
+    env: { name: "GAUNTLET_TARGET", parse: (s) => s },
+    arg: { value: args.target },
+  }, env);
+  const defaultTarget = targetR.value;
+  const targetSource = targetR.source;
 
   // defaultViewport
   let defaultViewport: Viewport = DEFAULT_VIEWPORT;
