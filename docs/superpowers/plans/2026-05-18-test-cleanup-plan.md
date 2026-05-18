@@ -1205,3 +1205,29 @@ Net: `cli/adapter.test.ts` becomes a pure API-contract suite (tool-set compositi
 **Test count delta if approved:** −3.
 
 This is the survey's recommended action. The executor will not apply it without Susan's sign-off.
+
+---
+
+## Test-tier rename decision (Phase 5, PRI-1630)
+
+**Surveyor:** Surgeon@daef2708 · **Date:** 2026-05-18.
+
+### Current state
+
+`test/e2e/` contains 11 test files (`chrome-profile-rotation`, `cli-batch`, `cli-bc`, `cli-fanout`, `cli-smoke`, `tui-colored-alphabet`, `tui-nano`, `web-form-post-nav`, `web-smoke`, `web-todomvc`, plus shared `helpers.ts`). Every one of them imports adapters and agents directly and runs scripted multi-turn LLM loops in-process. None of them spawns the compiled gauntlet binary. They are long-form integration tests.
+
+`test/cli/binary-smoke.test.ts` is the only test in the suite that compiles the gauntlet binary (`bun build --compile`) and spawns it from a foreign cwd. It catches asset-bundling regressions that in-process tests cannot. It is the closest thing to a real black-box e2e test the repo has.
+
+### Options
+
+**Option (a) — simple rename.** `git mv test/e2e test/integration`. `binary-smoke.test.ts` stays in `test/cli/`. No `test/e2e/` directory after this change. Future real e2e tests would either live alongside `binary-smoke.test.ts` in `test/cli/` or `test/e2e/` would be reintroduced when there are enough to justify it.
+
+**Option (b) — rename + relocate.** `git mv test/e2e test/integration` AND `git mv test/cli/binary-smoke.test.ts test/e2e/binary-smoke.test.ts`. The `test/e2e/` directory exists post-rename with one file in it. Cleaner taxonomy (the one true e2e lives in the e2e tier), but creates a near-empty directory.
+
+### Recommendation
+
+**Option (b).** The whole point of the rename is to make the tiering honest. Leaving the one true e2e test mis-tiered in `test/cli/` reproduces the original problem in miniature. A directory with one file is not a real cost — anyone adding a black-box test in the future will land in the right place by name. The alternative — letting `test/e2e/` cease to exist — invites a future regression where someone reintroduces `test/e2e/` for the next mis-tiered integration suite.
+
+**Test count delta:** 0 (pure rename + move, no test changes).
+
+This is a hard gate. The executor will not run `git mv` without Susan's sign-off.
