@@ -591,6 +591,11 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   };
 
   // credentialResolver — caller-provided fetch_credential backend (PRI-1605).
+  // Not migrated to resolveEnvOnlySetting because the resolved value is a
+  // composed record built from THREE env vars (resolver path + timeout + the
+  // transcripts toggle), gated by the primary env var. The helper shape
+  // assumes one env var → one parsed value; emulating the composition
+  // through it would be noisier than the explicit block.
   let credentialResolver: CredentialResolverConfig | undefined;
   let credentialResolverSource: "default" | "env" = "default";
   if (env.GAUNTLET_CREDENTIAL_RESOLVER) {
