@@ -30,6 +30,7 @@ import {
   executeMouseMove,
   executeScroll,
 } from "./tools/pointer";
+import { executeType, executePress } from "./tools/keyboard";
 import type { WebToolCtx } from "./tools/types";
 
 // The forked CDP library is CommonJS JS — use require for bun compatibility.
@@ -622,23 +623,10 @@ export class WebAdapter implements Adapter {
         return executeScreenshot(ctx, args);
       case "click":
         return executeClick(ctx, args);
-      case "type": {
-        const selector = args.selector as string | undefined;
-        const text = args.text as string;
-        if (selector) {
-          await this.chrome.fill(tab, selector, text);
-        } else {
-          // No selector — type via keyboard
-          for (const char of text) {
-            await this.chrome.keyboardPress(tab, char);
-          }
-        }
-        return composeResult("typed", await takeReturnScreenshot());
-      }
-      case "press": {
-        await this.chrome.keyboardPress(tab, args.key as string);
-        return composeResult("pressed", await takeReturnScreenshot());
-      }
+      case "type":
+        return executeType(ctx, args);
+      case "press":
+        return executePress(ctx, args);
       case "hover":
         return executeHover(ctx, args);
       case "double_click":
