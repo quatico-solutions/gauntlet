@@ -544,13 +544,12 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const maxConcurrentRuns = maxConcurrentRunsR.value;
   const maxConcurrentRunsSource = maxConcurrentRunsR.source;
 
-  const activeRunTargetMaxBytes = parseNonNegIntEnv(
-    env.GAUNTLET_ACTIVE_RUN_TARGET_MAX_BYTES,
-    "GAUNTLET_ACTIVE_RUN_TARGET_MAX_BYTES",
-    DEFAULT_ACTIVE_RUN_TARGET_MAX_BYTES,
-  );
-  const activeRunTargetMaxBytesSource: "default" | "env" =
-    env.GAUNTLET_ACTIVE_RUN_TARGET_MAX_BYTES ? "env" : "default";
+  const activeRunTargetMaxBytesR = resolveEnvOnlySetting({
+    default: DEFAULT_ACTIVE_RUN_TARGET_MAX_BYTES,
+    env: { name: "GAUNTLET_ACTIVE_RUN_TARGET_MAX_BYTES", parse: (s) => parseNonNegInt(s, "GAUNTLET_ACTIVE_RUN_TARGET_MAX_BYTES") },
+  }, env);
+  const activeRunTargetMaxBytes = activeRunTargetMaxBytesR.value;
+  const activeRunTargetMaxBytesSource = activeRunTargetMaxBytesR.source;
 
   // PRI-1483 WebSocket hygiene knobs.
   const wsIdleTimeoutSec = parseNonNegIntEnv(
