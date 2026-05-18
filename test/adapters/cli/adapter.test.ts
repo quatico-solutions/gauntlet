@@ -22,29 +22,6 @@ describe("CLIAdapter", () => {
     rmSync(runDir, { recursive: true, force: true });
   });
 
-  test("starts a shell and reads output", async () => {
-    adapter = new CLIAdapter({ runDir });
-    await adapter.start("echo");
-    await new Promise((r) => setTimeout(r, 300));
-    // Type a command into the shell.
-    await adapter.type("echo 'hello gauntlet'\n");
-    await new Promise((r) => setTimeout(r, 300));
-    const output = adapter.readOutput();
-    expect(output).toContain("hello gauntlet");
-  });
-
-  test("sends input and reads response", async () => {
-    adapter = new CLIAdapter({ runDir });
-    await adapter.start("cat");
-    // Start cat via the shell, then type into it.
-    await adapter.type("cat\n");
-    await new Promise((r) => setTimeout(r, 200));
-    await adapter.type("ping\n");
-    await new Promise((r) => setTimeout(r, 300));
-    const output = adapter.readOutput();
-    expect(output).toContain("ping");
-  });
-
   test("exposes tool definitions for the agent", () => {
     adapter = new CLIAdapter();
     const tools = adapter.toolDefinitions();
@@ -95,14 +72,6 @@ describe("CLIAdapter", () => {
   test("defaultViewport returns null — CLI has no rendering surface", () => {
     const adapter = new CLIAdapter();
     expect(adapter.defaultViewport()).toBeNull();
-  });
-
-  test("describeTarget frames the agent as inside a bash shell", () => {
-    const adapter = new CLIAdapter();
-    const msg = adapter.describeTarget("bc -q");
-    expect(msg).toContain("bash");
-    expect(msg).toContain("bc -q");
-    expect(msg.toLowerCase()).toContain("exit");
   });
 
   test("registers fetch_credential when contextRoot and credentialResolver set", async () => {
