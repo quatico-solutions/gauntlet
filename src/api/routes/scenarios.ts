@@ -5,7 +5,7 @@ import { serializeStoryCard } from "../../format/story-card";
 import type { StoryCard } from "../../format/story-card";
 import { loadAllCards, findCard } from "../../cards/store";
 import { isSafePath, gauntletPath } from "../../paths";
-import type { ErrorLog } from "./errors";
+import type { ErrorLog } from "../../util/error-log";
 
 /**
  * Type-checked subset of StoryCard fields that scenario create/update bodies

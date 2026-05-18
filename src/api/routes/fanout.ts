@@ -9,7 +9,7 @@ import type { LLMClient } from "../../models/provider";
 import type { VetResult } from "../../types";
 import type { AppConfig } from "../../config";
 import { findCard } from "../../cards/store";
-import type { ErrorLog } from "./errors";
+import type { ErrorLog } from "../../util/error-log";
 
 function resolveClient(config: AppConfig, clientFactory?: () => LLMClient): LLMClient | { error: string } {
   if (clientFactory) return clientFactory();

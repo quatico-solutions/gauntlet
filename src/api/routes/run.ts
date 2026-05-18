@@ -22,7 +22,7 @@ import type { ActiveRunRegistry } from "../active-runs";
 import type { RunSetBroadcaster } from "../run-set-broadcaster";
 import type { CancelTokenRegistry } from "../run-cancel";
 import type { ScreencastStreamer as ScreencastStreamerType } from "../../streaming/screencast";
-import type { ErrorLog } from "./errors";
+import type { ErrorLog } from "../../util/error-log";
 import type { StoryCard } from "../../format/story-card";
 import type { LLMClient } from "../../models/provider";
 import type { RunSetCtx } from "../../runs/run-set-types";
