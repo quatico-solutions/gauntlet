@@ -1,6 +1,6 @@
 import { join } from "path";
 import type { Adapter } from "../adapter";
-import type { ToolDefinition, ToolResult } from "../../models/provider";
+import { textResult, type ToolDefinition, type ToolResult } from "../../models/provider";
 import type { EvidenceLogger } from "../../evidence/logger";
 import { DEFAULT_VIEWPORT, type ChromeEndpoint, type Viewport } from "../../config";
 import type { CredentialResolverConfig } from "../../config";
@@ -157,7 +157,7 @@ export interface WebAdapterOptions {
 }
 
 export interface ScreenshotResult {
-  image?: ToolResult["image"];
+  image?: { data: string; mediaType: string };
   imagePath?: string;
   screenshotSkipped?: string;
 }
@@ -167,19 +167,21 @@ export function composeResult(
   screenshot: ScreenshotResult
 ): ToolResult {
   if (screenshot.screenshotSkipped) {
-    return {
-      text: `${text} (screenshot unavailable: ${screenshot.screenshotSkipped})`,
-    };
+    return textResult(
+      `${text} (screenshot unavailable: ${screenshot.screenshotSkipped})`,
+    );
   }
   // Always pass image + imagePath together — takeReturnScreenshot sets
   // them as a unit. If imagePath is set without image, that would be a
   // bug worth surfacing rather than silently dropping.
+  if (screenshot.image === undefined) {
+    return textResult(text);
+  }
   return {
+    kind: "image",
     text,
-    ...(screenshot.image !== undefined && {
-      image: screenshot.image,
-      imagePath: screenshot.imagePath,
-    }),
+    image: screenshot.image,
+    imagePath: screenshot.imagePath,
   };
 }
 
@@ -422,7 +424,7 @@ export class WebAdapter implements Adapter {
     if (schema) {
       const check = validateToolArgs(name, args, schema);
       if (!check.ok) {
-        return { text: `Error: invalid args for ${name}: ${check.reason}` };
+        return textResult(`Error: invalid args for ${name}: ${check.reason}`);
       }
     }
 

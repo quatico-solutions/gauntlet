@@ -1,7 +1,7 @@
 import { readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { ToolResult } from "../../../models/provider";
+import { textResult, type ToolResult } from "../../../models/provider";
 import { composeResult } from "../adapter";
 import type { WebToolCtx } from "./types";
 
@@ -34,6 +34,7 @@ export async function executeScreenshot(
     // temp file cleanup is best-effort
   }
   return {
+    kind: "image",
     text: `Screenshot saved to ${saved}`,
     image: { data: Buffer.from(data).toString("base64"), mediaType: "image/png" },
     imagePath: saved,
@@ -47,7 +48,7 @@ export async function executeExtract(
   const selector = args.selector as string | undefined;
   if (selector) {
     const text = await ctx.chrome.extractText(ctx.tab, selector);
-    return { text };
+    return textResult(text);
   }
   // Return the full markdown inline so the model can read it. The
   // logger will spill to artifacts/N.txt for run.jsonl readability
@@ -55,7 +56,7 @@ export async function executeExtract(
   // reviewer-facing concern — the model has already consumed the
   // content by the time logging happens.
   const markdown = await ctx.chrome.generateMarkdown(ctx.tab);
-  return { text: markdown };
+  return textResult(markdown);
 }
 
 export async function executeWaitFor(
@@ -71,5 +72,5 @@ export async function executeWaitFor(
     await ctx.chrome.waitForText(ctx.tab, args.text as string, timeout);
     return composeResult("text found", await ctx.takeReturnScreenshot());
   }
-  return { text: "nothing to wait for — provide selector or text" };
+  return textResult("nothing to wait for — provide selector or text");
 }

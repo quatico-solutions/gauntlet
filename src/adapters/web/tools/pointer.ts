@@ -1,4 +1,4 @@
-import type { ToolResult } from "../../../models/provider";
+import { textResult, type ToolResult } from "../../../models/provider";
 import { composeResult } from "../adapter";
 import type { WebToolCtx } from "./types";
 
@@ -90,9 +90,9 @@ export async function executeDrag(
   } else if (typeof targetX === "number" && typeof targetY === "number") {
     target = { x: targetX, y: targetY };
   } else {
-    return {
-      text: "Error: drag requires either target_selector or both target_x and target_y",
-    };
+    return textResult(
+      "Error: drag requires either target_selector or both target_x and target_y",
+    );
   }
   try {
     await ctx.chrome.drag(ctx.tab, sourceSelector, target);

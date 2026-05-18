@@ -1,5 +1,5 @@
 import type { LLMClient, ToolDefinition, ToolResult } from "../models/provider";
-import { pushAssistantTurn } from "../models/provider";
+import { pushAssistantTurn, textResult } from "../models/provider";
 import type { Adapter } from "../adapters/adapter";
 import type { EvidenceLogger } from "../evidence/logger";
 import type { StoryCard } from "../format/story-card";
@@ -401,7 +401,7 @@ export async function runAgent(
         } catch (error) {
           errored = true;
           const message = error instanceof Error ? error.message : String(error);
-          result = { text: `Error: ${message}` };
+          result = textResult(`Error: ${message}`);
         } finally {
           if (timeoutHandle) clearTimeout(timeoutHandle);
         }
@@ -411,12 +411,12 @@ export async function runAgent(
           toolUseId: tc.id,
           name: tc.name,
           durationMs: Date.now() - started,
-          text: result.text ?? "",
+          text: result.text,
           transcriptText: result.transcriptText,
-          image: (result as any).imagePath,       // populated by T6; undefined today
-          mediaType: (result as any).image?.mediaType, // pairs with imagePath; needed by revival image rehydration
-          artifact: (result as any).artifactPath, // populated by T6/T7
-          capturePath: (result as any).capturePath, // populated by TUIAdapter read_screen
+          image: result.kind === "image" ? result.imagePath : undefined,
+          mediaType: result.kind === "image" ? result.image.mediaType : undefined,
+          artifact: result.kind === "artifact" ? result.artifactPath : undefined,
+          capturePath: result.kind === "capture" ? result.capturePath : undefined,
           error: errored,
         });
       }

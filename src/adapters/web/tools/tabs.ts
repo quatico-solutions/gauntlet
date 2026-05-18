@@ -1,4 +1,4 @@
-import type { ToolResult } from "../../../models/provider";
+import { textResult, type ToolResult } from "../../../models/provider";
 import { composeResult } from "../adapter";
 import type { WebToolCtx } from "./types";
 
@@ -33,11 +33,10 @@ export async function executeNewTab(
   // Frame the user-facing error in side-trip terms so the agent
   // can plan against the number it cares about.
   if (ctx.tabStack.length >= MAX_TAB_DEPTH) {
-    return {
-      text:
-        `Error: too many side-trip tabs (max ${MAX_TAB_DEPTH - 1}; ` +
+    return textResult(
+      `Error: too many side-trip tabs (max ${MAX_TAB_DEPTH - 1}; ` +
         `close one with close_tab before opening another)`,
-    };
+    );
   }
   const targetUrl = args.url as string | undefined;
   // Empty / non-http URLs would otherwise become about:blank and
@@ -47,17 +46,16 @@ export async function executeNewTab(
     typeof targetUrl !== "string" ||
     !/^(https?:|file:|about:)/i.test(targetUrl)
   ) {
-    return {
-      text:
-        "Error: new_tab requires an absolute URL (http://, https://, " +
+    return textResult(
+      "Error: new_tab requires an absolute URL (http://, https://, " +
         "file://, or about:)",
-    };
+    );
   }
   try {
     const created = await ctx.chrome.newTab(targetUrl);
     const wsUrl = created?.webSocketDebuggerUrl as string | undefined;
     if (!wsUrl) {
-      return { text: "Error: chrome did not return a tab WebSocket URL" };
+      return textResult("Error: chrome did not return a tab WebSocket URL");
     }
     ctx.tabStack.push({ wsUrl, url: targetUrl });
     ctx.logger.logEvent("tab_focus_changed", {
@@ -75,7 +73,7 @@ export async function executeNewTab(
     );
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    return { text: `Error: ${reason}` };
+    return textResult(`Error: ${reason}`);
   }
 }
 
@@ -84,9 +82,9 @@ export async function executeCloseTab(
   _args: Record<string, unknown>,
 ): Promise<ToolResult> {
   if (ctx.tabStack.length <= 1) {
-    return {
-      text: "Error: cannot close the original tab — use navigate to change the page",
-    };
+    return textResult(
+      "Error: cannot close the original tab — use navigate to change the page",
+    );
   }
   const popped = ctx.tabStack.pop()!;
   ctx.logger.logEvent("tab_focus_changed", {
