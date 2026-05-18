@@ -21,6 +21,15 @@ import {
 import { validateToolArgs } from "../../agent/validators";
 import { webToolDefinitions } from "./tool-defs";
 import { executeScreenshot, executeExtract, executeWaitFor } from "./tools/visual";
+import {
+  executeClick,
+  executeHover,
+  executeDoubleClick,
+  executeRightClick,
+  executeDrag,
+  executeMouseMove,
+  executeScroll,
+} from "./tools/pointer";
 import type { WebToolCtx } from "./tools/types";
 
 // The forked CDP library is CommonJS JS — use require for bun compatibility.
@@ -611,27 +620,8 @@ export class WebAdapter implements Adapter {
     switch (name) {
       case "screenshot":
         return executeScreenshot(ctx, args);
-      case "click": {
-        try {
-          const result = await this.chrome.click(tab, args.selector as string);
-          const note = result?.fallback
-            ? ` (fallback: ${result.fallback})`
-            : "";
-          return composeResult(
-            `clicked ${args.selector}${note}`,
-            await takeReturnScreenshot()
-          );
-        } catch (err) {
-          // Make failures visible to the agent. A silent "clicked" when
-          // nothing actually got clicked is a classic way to waste 40
-          // turns.
-          const reason = err instanceof Error ? err.message : String(err);
-          return composeResult(
-            `Error: ${reason}`,
-            await takeReturnScreenshot()
-          );
-        }
-      }
+      case "click":
+        return executeClick(ctx, args);
       case "type": {
         const selector = args.selector as string | undefined;
         const text = args.text as string;
@@ -649,77 +639,18 @@ export class WebAdapter implements Adapter {
         await this.chrome.keyboardPress(tab, args.key as string);
         return composeResult("pressed", await takeReturnScreenshot());
       }
-      case "hover": {
-        try {
-          await this.chrome.hover(tab, args.selector as string);
-          return composeResult(`hovered ${args.selector}`, await takeReturnScreenshot());
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          return composeResult(`Error: ${reason}`, await takeReturnScreenshot());
-        }
-      }
-      case "double_click": {
-        try {
-          await this.chrome.doubleClick(tab, args.selector as string);
-          return composeResult(`double-clicked ${args.selector}`, await takeReturnScreenshot());
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          return composeResult(`Error: ${reason}`, await takeReturnScreenshot());
-        }
-      }
-      case "right_click": {
-        try {
-          await this.chrome.rightClick(tab, args.selector as string);
-          return composeResult(`right-clicked ${args.selector}`, await takeReturnScreenshot());
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          return composeResult(`Error: ${reason}`, await takeReturnScreenshot());
-        }
-      }
-      case "drag": {
-        const sourceSelector = args.source_selector as string;
-        const targetSelector = args.target_selector as string | undefined;
-        const targetX = args.target_x as number | undefined;
-        const targetY = args.target_y as number | undefined;
-        // Agent supplies target_selector XOR (target_x AND target_y).
-        // A real validation error — not something the lib will diagnose
-        // helpfully — so catch it here with a pointer back to the schema.
-        let target: string | { x: number; y: number };
-        if (targetSelector) {
-          target = targetSelector;
-        } else if (typeof targetX === "number" && typeof targetY === "number") {
-          target = { x: targetX, y: targetY };
-        } else {
-          return {
-            text: "Error: drag requires either target_selector or both target_x and target_y",
-          };
-        }
-        try {
-          await this.chrome.drag(tab, sourceSelector, target);
-          return composeResult(`dragged ${sourceSelector}`, await takeReturnScreenshot());
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          return composeResult(`Error: ${reason}`, await takeReturnScreenshot());
-        }
-      }
-      case "mouse_move": {
-        await this.chrome.mouseMove(tab, args.x as number, args.y as number);
-        return composeResult(`moved mouse to (${args.x}, ${args.y})`, await takeReturnScreenshot());
-      }
-      case "scroll": {
-        const direction = args.direction as "up" | "down" | "left" | "right";
-        const amount = (args.amount as number) ?? 300;
-        // Map direction → wheel delta. Chrome's mouseWheel uses +y=down,
-        // +x=right, which matches intuitive direction names.
-        const deltaX = direction === "left" ? -amount : direction === "right" ? amount : 0;
-        const deltaY = direction === "up" ? -amount : direction === "down" ? amount : 0;
-        await this.chrome.scroll(tab, {
-          deltaX,
-          deltaY,
-          selector: (args.selector as string) ?? undefined,
-        });
-        return composeResult(`scrolled ${direction} ${amount}px`, await takeReturnScreenshot());
-      }
+      case "hover":
+        return executeHover(ctx, args);
+      case "double_click":
+        return executeDoubleClick(ctx, args);
+      case "right_click":
+        return executeRightClick(ctx, args);
+      case "drag":
+        return executeDrag(ctx, args);
+      case "mouse_move":
+        return executeMouseMove(ctx, args);
+      case "scroll":
+        return executeScroll(ctx, args);
       case "file_upload": {
         try {
           const result = await this.chrome.fileUpload(
