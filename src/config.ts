@@ -460,16 +460,13 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   // Defaults off because per-run screencast files are 100MB–1GB and
   // rarely consulted post-run; the live WS stream to UI clients is
   // unaffected either way.
-  let defaultSaveScreencast = false;
-  let saveScreencastSource: "default" | "env" | "flag" = "default";
-  if (env.GAUNTLET_SAVE_SCREENCAST !== undefined) {
-    defaultSaveScreencast = parseBoolEnv(env.GAUNTLET_SAVE_SCREENCAST, "GAUNTLET_SAVE_SCREENCAST");
-    saveScreencastSource = "env";
-  }
-  if (args.saveScreencast !== undefined) {
-    defaultSaveScreencast = args.saveScreencast;
-    saveScreencastSource = "flag";
-  }
+  const saveScreencastR = resolveSetting({
+    default: false,
+    env: { name: "GAUNTLET_SAVE_SCREENCAST", parse: (s) => parseBoolEnv(s, "GAUNTLET_SAVE_SCREENCAST") },
+    arg: { value: args.saveScreencast },
+  }, env);
+  const defaultSaveScreencast = saveScreencastR.value;
+  const saveScreencastSource = saveScreencastR.source;
 
   // defaultBudgetMs — wall-clock budget for the agent loop.
   let defaultBudgetMs = DEFAULT_BUDGET_MS;
