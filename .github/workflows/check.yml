@@ -1,0 +1,21 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+      - name: Install ui dependencies
+        run: cd ui && bun install --frozen-lockfile
+      - name: bun run check
+        run: bun run check

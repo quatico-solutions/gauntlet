@@ -223,6 +223,7 @@ export async function runBatch(
         case "pass": pass++; break;
         case "fail": fail++; break;
         case "investigate": investigate++; break;
+        case "errored": errored++; break;
         default: {
           const _exhaustive: never = s;
           throw new Error(`unexpected VetStatus: ${JSON.stringify(_exhaustive)}`);
