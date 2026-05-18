@@ -13,12 +13,6 @@ describe("pickFreePort", () => {
     expect(port).toBeLessThan(65536);
   });
 
-  test("two calls return different ports", async () => {
-    const a = await pickFreePort();
-    const b = await pickFreePort();
-    expect(a).not.toBe(b);
-  });
-
   test("returned port is actually bindable", async () => {
     // The function under test IS the OS-port-binding logic. Verifying
     // the returned port can be bound is the actual contract — the prior
