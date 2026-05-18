@@ -468,25 +468,22 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const defaultSaveScreencast = saveScreencastR.value;
   const saveScreencastSource = saveScreencastR.source;
 
-  // defaultBudgetMs — wall-clock budget for the agent loop.
-  let defaultBudgetMs = DEFAULT_BUDGET_MS;
-  let budgetSource: "default" | "env" | "flag" = "default";
-  if (env.GAUNTLET_MAX_TIME) {
+  // defaultBudgetMs — wall-clock budget for the agent loop. Both env and
+  // flag wrap parseDuration's error to label the source.
+  const parseBudget = (raw: string, label: string): number => {
     try {
-      defaultBudgetMs = parseDuration(env.GAUNTLET_MAX_TIME);
+      return parseDuration(raw);
     } catch (err) {
-      throw new Error(`Invalid GAUNTLET_MAX_TIME "${env.GAUNTLET_MAX_TIME}": ${(err as Error).message}`);
+      throw new Error(`Invalid ${label} "${raw}": ${(err as Error).message}`);
     }
-    budgetSource = "env";
-  }
-  if (args.maxTime !== undefined) {
-    try {
-      defaultBudgetMs = parseDuration(args.maxTime);
-    } catch (err) {
-      throw new Error(`Invalid --max-time "${args.maxTime}": ${(err as Error).message}`);
-    }
-    budgetSource = "flag";
-  }
+  };
+  const budgetR = resolveSetting({
+    default: DEFAULT_BUDGET_MS,
+    env: { name: "GAUNTLET_MAX_TIME", parse: (s) => parseBudget(s, "GAUNTLET_MAX_TIME") },
+    arg: { value: args.maxTime !== undefined ? parseBudget(args.maxTime, "--max-time") : undefined },
+  }, env);
+  const defaultBudgetMs = budgetR.value;
+  const budgetSource = budgetR.source;
 
   // defaultReflectionInterval — turns between reflection checkpoints.
   // 0 disables. Prompt-only nudge, not enforced.
