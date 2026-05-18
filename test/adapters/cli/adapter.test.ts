@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { CLIAdapter } from "../../../src/adapters/cli/adapter";
 import type { EvidenceLogger } from "../../../src/evidence/logger";
+import { withCredentialFixture } from "../../helpers/credential-fixture";
 
 const mockLogger = { logAction: () => {} } as unknown as EvidenceLogger;
 
@@ -104,61 +105,43 @@ describe("CLIAdapter", () => {
     expect(msg.toLowerCase()).toContain("exit");
   });
 
-  test("registers fetch_credential when contextRoot and credentialResolver set", () => {
-    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require("fs");
-    const { tmpdir } = require("os");
-    const { join } = require("path");
-    const ctxTmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-cred-ctx-"));
-    const resTmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-cred-res-"));
-    try {
-      writeFileSync(join(ctxTmp, "alice.md"), "anything");
-      const resolverPath = join(resTmp, "r.sh");
-      writeFileSync(resolverPath, "#!/bin/sh\necho ok\n");
-      chmodSync(resolverPath, 0o755);
-      const adapter = new CLIAdapter({
-        contextRoot: ctxTmp,
-        credentialResolver: { path: resolverPath, timeoutMs: 1000, includeInTranscripts: false },
-      });
-      expect(adapter.toolDefinitions().map((t) => t.name)).toContain("fetch_credential");
-    } finally {
-      rmSync(ctxTmp, { recursive: true, force: true });
-      rmSync(resTmp, { recursive: true, force: true });
-    }
+  test("registers fetch_credential when contextRoot and credentialResolver set", async () => {
+    await withCredentialFixture(
+      {
+        contextFiles: { "alice.md": "anything" },
+        resolverScript: "#!/bin/sh\necho ok\n",
+      },
+      ({ contextDir, resolverPath }) => {
+        const adapter = new CLIAdapter({
+          contextRoot: contextDir,
+          credentialResolver: { path: resolverPath!, timeoutMs: 1000, includeInTranscripts: false },
+        });
+        expect(adapter.toolDefinitions().map((t) => t.name)).toContain("fetch_credential");
+      },
+    );
   });
 
-  test("omits fetch_credential when credentialResolver is undefined", () => {
-    const { mkdtempSync, writeFileSync, rmSync } = require("fs");
-    const { tmpdir } = require("os");
-    const { join } = require("path");
-    const ctxTmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-cred-ctx-"));
-    try {
-      writeFileSync(join(ctxTmp, "alice.md"), "anything");
-      const adapter = new CLIAdapter({ contextRoot: ctxTmp });
-      expect(adapter.toolDefinitions().map((t) => t.name)).not.toContain("fetch_credential");
-    } finally {
-      rmSync(ctxTmp, { recursive: true, force: true });
-    }
+  test("omits fetch_credential when credentialResolver is undefined", async () => {
+    await withCredentialFixture(
+      { contextFiles: { "alice.md": "anything" } },
+      ({ contextDir }) => {
+        const adapter = new CLIAdapter({ contextRoot: contextDir });
+        expect(adapter.toolDefinitions().map((t) => t.name)).not.toContain("fetch_credential");
+      },
+    );
   });
 
-  test("omits fetch_credential when contextRoot is empty even if resolver is set", () => {
-    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require("fs");
-    const { tmpdir } = require("os");
-    const { join } = require("path");
-    const ctxTmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-cred-ctx-empty-"));
-    const resTmp = mkdtempSync(join(tmpdir(), "gauntlet-cli-cred-res-"));
-    try {
-      const resolverPath = join(resTmp, "r.sh");
-      writeFileSync(resolverPath, "#!/bin/sh\necho ok\n");
-      chmodSync(resolverPath, 0o755);
-      const adapter = new CLIAdapter({
-        contextRoot: ctxTmp,
-        credentialResolver: { path: resolverPath, timeoutMs: 1000, includeInTranscripts: false },
-      });
-      expect(adapter.toolDefinitions().map((t) => t.name)).not.toContain("fetch_credential");
-    } finally {
-      rmSync(ctxTmp, { recursive: true, force: true });
-      rmSync(resTmp, { recursive: true, force: true });
-    }
+  test("omits fetch_credential when contextRoot is empty even if resolver is set", async () => {
+    await withCredentialFixture(
+      { resolverScript: "#!/bin/sh\necho ok\n" },
+      ({ contextDir, resolverPath }) => {
+        const adapter = new CLIAdapter({
+          contextRoot: contextDir,
+          credentialResolver: { path: resolverPath!, timeoutMs: 1000, includeInTranscripts: false },
+        });
+        expect(adapter.toolDefinitions().map((t) => t.name)).not.toContain("fetch_credential");
+      },
+    );
   });
 
   test("toolDefinitions includes bash", () => {
