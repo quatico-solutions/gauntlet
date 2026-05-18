@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { run } from "../../src/cli/run";
 import type { AppConfig } from "../../src/config";
-import { report, makeScriptedClient } from "../e2e/helpers";
+import { report, makeScriptedClient } from "../integration/helpers";
 
 function makeConfig(projectRoot: string): AppConfig {
   return {

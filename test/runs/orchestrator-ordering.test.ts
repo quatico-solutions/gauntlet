@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { parseStoryCard } from "../../src/format/story-card";
-import { report, makeScriptedClient } from "../e2e/helpers";
+import { report, makeScriptedClient } from "../integration/helpers";
 import { executeRunCore } from "../../src/runs/orchestrator";
 import { writeResultFiles as realWriteResultFiles } from "../../src/evidence/writer";
 

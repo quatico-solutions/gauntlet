@@ -5,7 +5,7 @@ import { join } from "path";
 import { runOne } from "../../src/cli/run-one";
 import type { AppConfig } from "../../src/config";
 import type { RunSetCtx } from "../../src/runs/run-set-types";
-import { report, makeScriptedClient } from "../e2e/helpers";
+import { report, makeScriptedClient } from "../integration/helpers";
 
 function makeConfig(projectRoot: string): AppConfig {
   return {
