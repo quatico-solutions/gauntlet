@@ -509,14 +509,25 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const defaultReflectionInterval = reflectionR.value;
   const reflectionSource = reflectionR.source;
 
+  // Shared parser for env-only non-negative integer knobs (PRI-1477, PRI-1478).
+  // The helper already filters empty/undefined; this parses a guaranteed
+  // non-empty raw string.
+  const parseNonNegInt = (raw: string, label: string): number => {
+    const parsed = parseInt(raw, 10);
+    if (Number.isNaN(parsed) || parsed < 0) {
+      throw new Error(`Invalid ${label} "${raw}": expected a non-negative integer`);
+    }
+    return parsed;
+  };
+
   // shutdownGraceMs — drain window for graceful shutdown (PRI-1477).
   // No flag override; this is an operator-level knob (env only).
-  const shutdownGraceMs = parseNonNegIntEnv(
-    env.GAUNTLET_SHUTDOWN_GRACE_MS,
-    "GAUNTLET_SHUTDOWN_GRACE_MS",
-    DEFAULT_SHUTDOWN_GRACE_MS,
-  );
-  const shutdownGraceMsSource: "default" | "env" = env.GAUNTLET_SHUTDOWN_GRACE_MS ? "env" : "default";
+  const shutdownGraceR = resolveEnvOnlySetting({
+    default: DEFAULT_SHUTDOWN_GRACE_MS,
+    env: { name: "GAUNTLET_SHUTDOWN_GRACE_MS", parse: (s) => parseNonNegInt(s, "GAUNTLET_SHUTDOWN_GRACE_MS") },
+  }, env);
+  const shutdownGraceMs = shutdownGraceR.value;
+  const shutdownGraceMsSource = shutdownGraceR.source;
 
   // PRI-1478 caps — operator-level knobs (env only). Each parses a
   // non-negative integer or throws with a uniform shape.
