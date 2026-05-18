@@ -529,15 +529,13 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const shutdownGraceMs = shutdownGraceR.value;
   const shutdownGraceMsSource = shutdownGraceR.source;
 
-  // PRI-1478 caps — operator-level knobs (env only). Each parses a
-  // non-negative integer or throws with a uniform shape.
-  const maxRequestBodySize = parseNonNegIntEnv(
-    env.GAUNTLET_MAX_REQUEST_BODY_SIZE,
-    "GAUNTLET_MAX_REQUEST_BODY_SIZE",
-    DEFAULT_MAX_REQUEST_BODY_SIZE,
-  );
-  const maxRequestBodySizeSource: "default" | "env" =
-    env.GAUNTLET_MAX_REQUEST_BODY_SIZE ? "env" : "default";
+  // PRI-1478 caps — operator-level knobs (env only).
+  const maxRequestBodySizeR = resolveEnvOnlySetting({
+    default: DEFAULT_MAX_REQUEST_BODY_SIZE,
+    env: { name: "GAUNTLET_MAX_REQUEST_BODY_SIZE", parse: (s) => parseNonNegInt(s, "GAUNTLET_MAX_REQUEST_BODY_SIZE") },
+  }, env);
+  const maxRequestBodySize = maxRequestBodySizeR.value;
+  const maxRequestBodySizeSource = maxRequestBodySizeR.source;
 
   const maxConcurrentRuns = parseNonNegIntEnv(
     env.GAUNTLET_MAX_CONCURRENT_RUNS,
