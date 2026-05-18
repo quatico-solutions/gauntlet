@@ -31,6 +31,7 @@ import {
   executeScroll,
 } from "./tools/pointer";
 import { executeType, executePress } from "./tools/keyboard";
+import { executeNavigate, executeEval, executeFileUpload } from "./tools/page-actions";
 import type { WebToolCtx } from "./tools/types";
 
 // The forked CDP library is CommonJS JS — use require for bun compatibility.
@@ -639,33 +640,14 @@ export class WebAdapter implements Adapter {
         return executeMouseMove(ctx, args);
       case "scroll":
         return executeScroll(ctx, args);
-      case "file_upload": {
-        try {
-          const result = await this.chrome.fileUpload(
-            tab,
-            args.selector as string,
-            args.file_paths as string[],
-          );
-          return composeResult(
-            `uploaded ${result.files} file(s) to ${args.selector}`,
-            await takeReturnScreenshot()
-          );
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          return composeResult(`Error: ${reason}`, await takeReturnScreenshot());
-        }
-      }
-      case "navigate": {
-        await this.chrome.navigate(tab, args.url as string);
-        return composeResult("navigated", await takeReturnScreenshot());
-      }
+      case "file_upload":
+        return executeFileUpload(ctx, args);
+      case "navigate":
+        return executeNavigate(ctx, args);
       case "extract":
         return executeExtract(ctx, args);
-      case "eval": {
-        const result = await this.chrome.evaluate(tab, args.expression as string);
-        const text = result === undefined ? "undefined" : (typeof result === "string" ? result : JSON.stringify(result));
-        return composeResult(text, await takeReturnScreenshot());
-      }
+      case "eval":
+        return executeEval(ctx, args);
       case "wait_for":
         return executeWaitFor(ctx, args);
       case "new_tab": {
