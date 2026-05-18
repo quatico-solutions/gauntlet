@@ -487,23 +487,27 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
 
   // defaultReflectionInterval — turns between reflection checkpoints.
   // 0 disables. Prompt-only nudge, not enforced.
-  let defaultReflectionInterval = DEFAULT_REFLECTION_INTERVAL;
-  let reflectionSource: "default" | "env" | "flag" = "default";
-  if (env.GAUNTLET_REFLECTION_INTERVAL) {
-    const raw = env.GAUNTLET_REFLECTION_INTERVAL;
-    if (!/^\d+$/.test(raw)) {
-      throw new Error(`Invalid GAUNTLET_REFLECTION_INTERVAL "${raw}": expected non-negative integer (0 disables)`);
+  const validateReflection = (n: number): number => {
+    if (!Number.isInteger(n) || n < 0) {
+      throw new Error(`Invalid --reflection-interval ${n}: expected non-negative integer (0 disables)`);
     }
-    defaultReflectionInterval = parseInt(raw, 10);
-    reflectionSource = "env";
-  }
-  if (args.reflectionInterval !== undefined) {
-    if (!Number.isInteger(args.reflectionInterval) || args.reflectionInterval < 0) {
-      throw new Error(`Invalid --reflection-interval ${args.reflectionInterval}: expected non-negative integer (0 disables)`);
-    }
-    defaultReflectionInterval = args.reflectionInterval;
-    reflectionSource = "flag";
-  }
+    return n;
+  };
+  const reflectionR = resolveSetting({
+    default: DEFAULT_REFLECTION_INTERVAL,
+    env: {
+      name: "GAUNTLET_REFLECTION_INTERVAL",
+      parse: (raw) => {
+        if (!/^\d+$/.test(raw)) {
+          throw new Error(`Invalid GAUNTLET_REFLECTION_INTERVAL "${raw}": expected non-negative integer (0 disables)`);
+        }
+        return parseInt(raw, 10);
+      },
+    },
+    arg: { value: args.reflectionInterval !== undefined ? validateReflection(args.reflectionInterval) : undefined },
+  }, env);
+  const defaultReflectionInterval = reflectionR.value;
+  const reflectionSource = reflectionR.source;
 
   // shutdownGraceMs — drain window for graceful shutdown (PRI-1477).
   // No flag override; this is an operator-level knob (env only).
