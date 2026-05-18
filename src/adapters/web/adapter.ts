@@ -1,10 +1,7 @@
-import { readFileSync, unlinkSync } from "fs";
-import { rm } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
 import type { Adapter } from "../adapter";
 import type { ToolDefinition, ToolResult } from "../../models/provider";
-import type { EvidenceLogger, BrowserEventCategory } from "../../evidence/logger";
+import type { EvidenceLogger } from "../../evidence/logger";
 import { DEFAULT_VIEWPORT, type ChromeEndpoint, type Viewport } from "../../config";
 import type { CredentialResolverConfig } from "../../config";
 import { buildSharedTools, type SharedTools } from "../../agent/shared-tools";
@@ -32,6 +29,12 @@ import {
 } from "./tools/pointer";
 import { executeType, executePress } from "./tools/keyboard";
 import { executeNavigate, executeEval, executeFileUpload } from "./tools/page-actions";
+import {
+  startWebAdapter,
+  closeWebAdapter,
+  type WebLifecycleState,
+} from "./lifecycle";
+import { buildReturnScreenshot } from "./tools/return-screenshot";
 import {
   executeNewTab,
   executeCloseTab,
@@ -74,12 +77,6 @@ const WEB_MUTATING_TOOLS = new Set([
   "drag", "mouse_move", "scroll", "file_upload", "navigate", "eval",
   "new_tab", "close_tab",
 ]);
-
-// Hard cap on how long a `return_screenshot` capture is allowed to take.
-// The pre-fix observed failure mode was a 30s hang when the capture was
-// issued mid-navigation; this cap turns that into a fast skip-with-reason
-// instead (see PRI-1517).
-const RETURN_SCREENSHOT_TIMEOUT_MS = 5000;
 
 // The default driver opens a dedicated CDP session (pinned WebSocket) for
 // WebAuthn. See chrome-ws-lib's webAuthnOpenSession comment for why we
@@ -346,72 +343,31 @@ export class WebAdapter implements Adapter {
   }
 
   async start(url: string): Promise<void> {
-    if (!this.remote) {
-      // Pass the per-run profile name (spec §5.1) so each run gets its
-      // own --user-data-dir. Falls back to chrome-ws-lib's default when
-      // the runner did not provide one (kept for test backwards-compat).
-      await this.chrome.startChrome(true, this.chromeProfileName ?? null); // headless
-    }
+    const state = this.lifecycleState();
+    await startWebAdapter(state, url);
+    // Copy mutated fields back to the class instance.
+    this.context = state.context;
+    this.observerSession = state.observerSession;
+  }
 
-    // PRI-1535: one BrowserContext per WebAdapter — atomic isolation primitive
-    // replacing the per-launch --user-data-dir for cleanup. createBrowserContext
-    // lazy-opens the browser-WS under the hood. createPage navigates the new
-    // page to the target URL, so no separate navigate(0, url) is needed.
-    const ctx = await this.chrome.createBrowserContext();
-    this.context = ctx;
-    const page = await ctx.createPage(url);
-
-    // Seed the focus stack with the page's WS URL (PRI-1439).
-    this.tabStack.push({
-      wsUrl: page.webSocketDebuggerUrl,
-      url: page.url ?? url,
-    });
-
-    // Pin the viewport against this specific page's WS URL — under
-    // BrowserContext-per-adapter, getTabs()[0] is no longer guaranteed to
-    // be our page. Best-effort: a failed viewport override does not fail
-    // the run, since --window-size already gives a reasonable default.
-    if (this.viewport) {
-      try {
-        await this.chrome.setViewport(page.webSocketDebuggerUrl, {
-          width: this.viewport.width,
-          height: this.viewport.height,
-          deviceScaleFactor: 1,
-          mobile: false,
-        });
-      } catch (err) {
-        this.logger?.logEvent("set_viewport_failed", {
-          reason: err instanceof Error ? err.message : String(err),
-          requested: this.viewport,
-        });
-      }
-    }
-
-    // PRI-1535: the previous remote-only `clearBrowserData(0)` call is gone —
-    // a fresh BrowserContext starts clean by construction.
-
-    // Open the observer session against the page's WS URL (not numeric 0).
-    // Runs *after* the page is created so the initial load and LiveSocket
-    // handshake are captured as the first events we see.
-    if (this.logger) {
-      const logger = this.logger;
-      try {
-        this.observerSession = await this.chrome.openObserverSession(
-          page.webSocketDebuggerUrl,
-          (category: BrowserEventCategory, payload: Record<string, unknown>) => {
-            try {
-              logger.logBrowserEvent(category, payload);
-            } catch {
-              // evidence writes are best-effort; never let them break a run
-            }
-          },
-        );
-      } catch (err) {
-        // Observer is supplementary. If it fails to start, log and continue.
-        const reason = err instanceof Error ? err.message : String(err);
-        logger.logEvent("observer_session_failed", { reason });
-      }
-    }
+  /**
+   * Build a mutable lifecycle-state view over this adapter's fields.
+   * The lifecycle helpers mutate `tabStack` in place and reassign
+   * `context` / `observerSession` on the struct; the caller copies
+   * those reassignments back onto `this` after the call.
+   */
+  private lifecycleState(): WebLifecycleState {
+    return {
+      remote: this.remote,
+      chrome: this.chrome,
+      chromeProfileName: this.chromeProfileName,
+      viewport: this.viewport,
+      logger: this.logger,
+      passkeyTool: this.passkeyTool,
+      tabStack: this.tabStack,
+      context: this.context,
+      observerSession: this.observerSession,
+    };
   }
 
   describeTarget(target: string): string {
@@ -426,87 +382,10 @@ export class WebAdapter implements Adapter {
   }
 
   async close(): Promise<void> {
-    // Close the observer first so it stops trying to drain events from
-    // a dying target.
-    if (this.observerSession) {
-      try {
-        this.observerSession.close();
-      } catch {
-        // best-effort
-      }
-      this.observerSession = null;
-    }
-    // PRI-1439: pop and close any side-trip tabs the agent left open
-    // (anything pushed above the original). The original tab is left
-    // alone — it'll go away when killChrome() runs (local) or be reset
-    // by the next run via clearBrowserData (remote). Each force-close
-    // emits a `tab_focus_changed` pop so the run.jsonl timeline shows
-    // every push paired with a pop.
-    while (this.tabStack.length > 1) {
-      const popped = this.tabStack.pop()!;
-      this.logger?.logEvent("tab_focus_changed", {
-        action: "pop",
-        depth: this.tabStack.length,
-        ws_url: popped.wsUrl,
-        url: popped.url,
-        reason: "adapter_close",
-      });
-      try {
-        await this.chrome.closeTab(popped.wsUrl);
-      } catch (err) {
-        this.logger?.logEvent("tab_force_close_failed", {
-          ws_url: popped.wsUrl,
-          url: popped.url,
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    // Drop the original tab from the stack so a reused adapter would
-    // start clean. Reuse isn't a current code path, but the inconsistent
-    // post-close state is an easy footgun.
-    this.tabStack = [];
-
-    // PRI-1535: dispose the BrowserContext atomically. Runs AFTER the
-    // side-trip pop loop (which relies on per-page WS being usable for
-    // closeTab) and BEFORE killChrome / passkey teardown. Chrome tears
-    // down cookies/storage/IDB/SW for the context in one call, replacing
-    // the inline clearBrowserData sweep that used to live in start().
-    if (this.context) {
-      try {
-        await this.context.dispose();
-      } catch (err) {
-        this.logger?.logEvent("browser_context_dispose_failed", {
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
-      this.context = null;
-    }
-    // Tear the virtual authenticator down before killing Chrome so that
-    // remote Chrome sessions (where we didn't start the process) don't
-    // leak state across runs. For locally-spawned Chrome, killChrome
-    // makes this a best-effort no-op — errors are swallowed inside.
-    if (this.passkeyTool) {
-      await this.passkeyTool.teardown();
-    }
-    if (!this.remote) {
-      await this.chrome.killChrome();
-      // Recursively delete the per-run Chrome profile directory (spec
-      // §5.1). Best-effort: failures are logged as an action-log entry
-      // but never thrown — a leftover stale dir is preferable to
-      // failing the close path. Skipped when no profile name was
-      // provided (e.g., legacy/test usage without a runner).
-      if (this.chromeProfileName) {
-        const dir = this.chrome.getChromeProfileDir(this.chromeProfileName);
-        try {
-          await rm(dir, { recursive: true, force: true });
-        } catch (err) {
-          this.logger?.logEvent("chrome_profile_cleanup_failed", {
-            dir,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-    }
+    const state = this.lifecycleState();
+    await closeWebAdapter(state);
+    this.context = state.context;
+    this.observerSession = state.observerSession;
   }
 
   isMutatingTool(name: string): boolean {
@@ -582,35 +461,13 @@ export class WebAdapter implements Adapter {
     }
 
     const tab = this.activeTab();
-
-    const takeReturnScreenshot = async (
-      tabOverride?: typeof tab
-    ): Promise<ScreenshotResult> => {
-      if (!args.return_screenshot) return {};
-      const targetTab = tabOverride ?? tab;
-      const t0 = Date.now();
-      const tmpFile = join(tmpdir(), `gauntlet-screenshot-${Date.now()}.png`);
-      try {
-        await this.chrome.screenshot(targetTab, tmpFile, null, false, {
-          timeoutMs: RETURN_SCREENSHOT_TIMEOUT_MS,
-        });
-        const data = readFileSync(tmpFile);
-        const imagePath = logger.saveScreenshot(Buffer.from(data));
-        try { unlinkSync(tmpFile); } catch { /* best-effort */ }
-        return {
-          image: { data: Buffer.from(data).toString("base64"), mediaType: "image/png" },
-          imagePath,
-        };
-      } catch (err) {
-        try { unlinkSync(tmpFile); } catch { /* best-effort */ }
-        const reason = err instanceof Error ? err.message : String(err);
-        const elapsed = Date.now() - t0;
-        console.warn(
-          `[gauntlet] return_screenshot skipped (${name}, ${elapsed}ms): ${reason}`
-        );
-        return { screenshotSkipped: reason };
-      }
-    };
+    const takeReturnScreenshot = buildReturnScreenshot({
+      chrome: this.chrome,
+      defaultTab: tab,
+      logger,
+      toolName: name,
+      args,
+    });
 
     const ctx: WebToolCtx = {
       chrome: this.chrome,
