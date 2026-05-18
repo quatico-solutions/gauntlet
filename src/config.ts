@@ -417,16 +417,13 @@ export function loadConfig(args: CliArgsInput, env: NodeJS.ProcessEnv): AppConfi
   const projectRootSource = projectRootR.source;
 
   // port
-  let port = DEFAULT_PORT;
-  let portSource: "default" | "env" | "flag" = "default";
-  if (env.GAUNTLET_PORT) {
-    port = parsePortNumber(env.GAUNTLET_PORT, "GAUNTLET_PORT");
-    portSource = "env";
-  }
-  if (args.port !== undefined) {
-    port = args.port;
-    portSource = "flag";
-  }
+  const portR = resolveSetting({
+    default: DEFAULT_PORT,
+    env: { name: "GAUNTLET_PORT", parse: (s) => parsePortNumber(s, "GAUNTLET_PORT") },
+    arg: { value: args.port },
+  }, env);
+  const port = portR.value;
+  const portSource = portR.source;
 
   // defaultChrome
   let defaultChrome: ChromeEndpoint = DEFAULT_CHROME;
