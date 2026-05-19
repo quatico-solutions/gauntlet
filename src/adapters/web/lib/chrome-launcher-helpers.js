@@ -50,8 +50,16 @@ function getXdgCacheHome() {
   }
 }
 
-function getChromeProfileDir(profileName = 'gauntlet') {
-  return path.join(getXdgCacheHome(), 'superpowers', 'browser-profiles', profileName);
+function getChromeProfileDir(profileName) {
+  // Explicit nullish-coalesce instead of `profileName = 'gauntlet'` —
+  // JS default-params only fire on `undefined`, not `null`. WebAdapter
+  // defaults `chromeProfileName` to `null` when no option is passed
+  // (`src/adapters/web/adapter.ts:258`), so a default-param would have
+  // let `null` reach `path.join` and (in Bun) produce a literal "null"
+  // segment, creating a `./null/` directory next to the spawn cwd
+  // populated with Chrome state. See PRI-1639.
+  const name = profileName ?? 'gauntlet';
+  return path.join(getXdgCacheHome(), 'superpowers', 'browser-profiles', name);
 }
 
 // --- Per-profile meta.json ---
