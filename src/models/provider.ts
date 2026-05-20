@@ -136,11 +136,11 @@ export interface AgentResponse {
    * Model's reasoning content for this turn. OpenAI populates with
    * the joined text from `ResponseReasoningItem.summary[]` (a model-
    * authored summary, not raw chain-of-thought — OpenAI does not
-   * expose raw thoughts). Anthropic will populate with extended-
-   * thinking text once the separate Anthropic ticket lands; today
-   * it leaves this undefined. Distinct from the verdict's
-   * `reasoning` field on RunEndFields, which is the agent's
-   * justification for its pass/fail/investigate verdict.
+   * expose raw thoughts). Anthropic populates with the joined text
+   * of any thinking blocks in `response.content` (adaptive thinking
+   * is on by default). Undefined on turns with no thinking. Distinct
+   * from the verdict's `reasoning` field on RunEndFields, which is
+   * the agent's justification for its pass/fail/investigate verdict.
    */
   reasoning?: string;
   toolCalls: ToolCall[];

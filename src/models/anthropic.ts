@@ -48,6 +48,11 @@ export function createAnthropicClient(model: string): LLMClient {
           // recommended default for most apps and the right floor for an
           // observe-and-report tester role. Opus 4.6/4.7 honor this too.
           output_config: { effort: "medium" },
+          // Adaptive thinking lets the model decide depth per turn. Thinking
+          // blocks are returned in response.content alongside text/tool_use;
+          // they round-trip via rawAssistantMessage (signatures intact), so
+          // multi-turn loops and session revival pick them up automatically.
+          thinking: { type: "adaptive" },
         }),
       );
 
@@ -154,6 +159,11 @@ export function convertResponse(response: Anthropic.Message): AgentResponse {
     .map((b) => b.text)
     .join("");
 
+  const reasoning = response.content
+    .filter((b): b is Anthropic.ThinkingBlock => b.type === "thinking")
+    .map((b) => b.thinking)
+    .join("\n\n") || undefined;
+
   const toolCalls = response.content
     .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
     .map((b) => ({
@@ -179,6 +189,7 @@ export function convertResponse(response: Anthropic.Message): AgentResponse {
 
   return {
     text,
+    reasoning,
     toolCalls,
     stopReason,
     rawAssistantMessage: { role: "assistant", content: response.content },
