@@ -64,6 +64,12 @@ function attachNavigation({ state, getPageSession, capturePageArtifacts, evaluat
     // loading pages (data: URLs) can't fire loadEventFired before we're
     // listening. waitForEvent's promise is registered synchronously.
     const loadP = ps.waitForEvent('Page.loadEventFired', { timeoutMs: NAVIGATE_TIMEOUT_MS });
+    // Mark loadP as observed up-front so its eventual timeout rejection
+    // can never escape as an unhandled rejection if ps.send below throws
+    // before we ever reach `await loadP`. The await path still sees the
+    // rejection normally — .catch attaches a handler without consuming
+    // the original promise's rejection from other awaiters. PRI-1690.
+    loadP.catch(() => {});
 
     let navigateResult;
     try {
