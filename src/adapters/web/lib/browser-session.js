@@ -44,6 +44,12 @@ function createBrowserSession({ host, port, rewriteWsUrl, chromeHttp }) {
 
   async function ensureConnected() {
     if (ws && ws.isConnected()) return;
+    // WS is dead (closed or errored). Drop the stale socket and the
+    // resolved connectPromise so the lazy-open branch below actually
+    // opens a fresh socket instead of awaiting the prior promise (a
+    // no-op, which would leave the dead ws in place and make ws.send
+    // throw "WebSocket not connected"). PRI-1690.
+    if (ws) { ws = null; connectPromise = null; }
     if (connectPromise) { await connectPromise; return; }
     connectPromise = (async () => {
       const versionInfo = await chromeHttp('/json/version');
