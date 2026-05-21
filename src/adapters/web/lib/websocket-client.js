@@ -25,7 +25,13 @@ class WebSocketClient {
 
   connect() {
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.url);
+      // perMessageDeflate: false opts out of WebSocket compression
+      // negotiation. Chrome's CDP intermittently sends frames whose
+      // permessage-deflate payloads close the connection with
+      // code=1002 "Invalid compressed data" — wedging the browser-WS
+      // mid-run. Opting out avoids the bug at the source. Requires
+      // Bun >= 1.3.14 (Bun PR #29685). PRI-1690.
+      this.ws = new WebSocket(this.url, { perMessageDeflate: false });
 
       this.ws.addEventListener('open', () => {
         this.connected = true;
