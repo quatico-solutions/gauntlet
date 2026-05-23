@@ -46,11 +46,19 @@ describe("renderRunFromTemplate", () => {
       JSON.stringify({ eventId: "e1", type: "user_message", content: "evil </script><script>alert(1)</script>" }) + "\n");
     const outPath = await renderRunFromTemplate({ runDir, templatePath });
     const html = readFileSync(outPath, "utf-8");
-    // No raw closing-script tag should appear inside the data block.
-    const dataBlockStart = html.indexOf('id="__GAUNTLET_RUN__"');
-    const dataBlockEnd = html.indexOf("</script>", dataBlockStart);
-    const dataBlockText = html.slice(dataBlockStart, dataBlockEnd);
-    expect(dataBlockText).not.toContain("</script>");
+
+    // Positive: the escaped form must appear, proving .replace() actually fired
+    // on the injected </script sequence.
+    expect(html).toContain("<\\/script");
+
+    // Negative: scan only the JSON region — between the end of the opening
+    // <script ...> tag and the start of the legitimate closing </script>.
+    // No raw </script must appear inside that region.
+    const idIdx = html.indexOf('id="__GAUNTLET_RUN__"');
+    const openEnd = html.indexOf(">", idIdx) + 1;          // end of opening <script ...>
+    const closeStart = html.indexOf("</script>", openEnd); // legit closing tag
+    const jsonRegion = html.slice(openEnd, closeStart);
+    expect(jsonRegion).not.toMatch(/<\/script/i);
   });
 
   test("throws if result.json is missing", async () => {
@@ -65,5 +73,23 @@ describe("renderRunFromTemplate", () => {
     const outPath = await renderRunFromTemplate({ runDir, templatePath, outputName: "report.html" });
     expect(outPath).toBe(join(runDir, "report.html"));
     expect(existsSync(outPath)).toBe(true);
+  });
+
+  test("accepts placeholder with id before type (reversed attribute order)", async () => {
+    const { runDir, base } = makeFixtureRun();
+    const altTemplate = join(base, "alt-template.html");
+    writeFileSync(altTemplate,
+      `<!doctype html><html><head><script id="__GAUNTLET_RUN__" type="application/json">{}</script></head><body></body></html>`);
+    const outPath = await renderRunFromTemplate({ runDir, templatePath: altTemplate });
+    const html = readFileSync(outPath, "utf-8");
+    expect(html).toContain('"runId":"card_2026T000000Z_aaaa"');
+  });
+
+  test("throws if template is missing the placeholder script tag", async () => {
+    const { runDir, base } = makeFixtureRun();
+    const noPlaceholder = join(base, "no-placeholder.html");
+    writeFileSync(noPlaceholder,
+      `<!doctype html><html><head></head><body></body></html>`);
+    await expect(renderRunFromTemplate({ runDir, templatePath: noPlaceholder })).rejects.toThrow(/__GAUNTLET_RUN__/);
   });
 });

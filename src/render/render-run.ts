@@ -40,7 +40,8 @@ export async function renderRunFromTemplate(opts: RenderRunOptions): Promise<str
   // surrounding <script> tag. JSON.stringify handles other concerns.
   const json = JSON.stringify(payload).replace(/<\/script/gi, "<\\/script");
 
-  const re = /(<script\s+type="application\/json"\s+id="__GAUNTLET_RUN__">)([\s\S]*?)(<\/script>)/i;
+  // Lookaheads confirm both attributes are present without prescribing order.
+  const re = /(<script\b(?=[^>]*\btype="application\/json")(?=[^>]*\bid="__GAUNTLET_RUN__")[^>]*>)([\s\S]*?)(<\/script>)/i;
   if (!re.test(template)) {
     throw new Error("renderRun: template is missing the __GAUNTLET_RUN__ script tag");
   }
