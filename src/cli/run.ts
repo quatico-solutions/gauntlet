@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import { runOne } from "./run-one";
+import { safeEmitIndexHtml } from "./auto-emit-html";
 import { attachRenderer } from "./stream/attach";
 import { resolveStreamOptions } from "./stream/format";
 import { runRunSet } from "../runs/run-set";
@@ -86,7 +87,7 @@ export async function run(opts: RunCommandOptions): Promise<void> {
     });
     const sink = { write: (s: string) => process.stdout.write(s) };
 
-    const { runId } = await runOne({
+    const { runId, outDir } = await runOne({
       scenarioPath: opts.scenarioPath,
       target: opts.target,
       outDir: opts.outDir,
@@ -96,6 +97,8 @@ export async function run(opts: RunCommandOptions): Promise<void> {
       clientFactory: opts.clientFactory,
       projectPromptPath: opts.projectPromptPath,
     });
+
+    await safeEmitIndexHtml(outDir);
 
     if (streamOpts.silent) {
       console.error(`runId: ${runId}`);
@@ -154,7 +157,7 @@ export async function run(opts: RunCommandOptions): Promise<void> {
           runSetCtx,
         );
         try {
-          return await runOne({
+          const summary = await runOne({
             scenarioPath: opts.scenarioPath,
             target: opts.target,
             adapterType: opts.adapterType,
@@ -165,6 +168,8 @@ export async function run(opts: RunCommandOptions): Promise<void> {
             clientFactory: opts.clientFactory,
             projectPromptPath: opts.projectPromptPath,
           });
+          await safeEmitIndexHtml(summary.outDir);
+          return summary;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (table) table.setErrored(cardId, null, msg, runSetCtx.attemptNumber);
