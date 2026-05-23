@@ -118,6 +118,12 @@ async function main() {
       const code = await ask(args, config);
       process.exit(code);
     }
+    case "render": {
+      const config = await loadConfigOrThrow(args.cli);
+      const { render } = await import("./cli/render");
+      await render(args, config);
+      break;
+    }
     case "serve": {
       const { createApp } = await import("./api/server");
       const { RunBroadcaster } = await import("./api/ws");
