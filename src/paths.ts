@@ -18,6 +18,14 @@ export function gauntletPath(projectRoot: string, stateDirName: string, ...sub: 
   return join(projectRoot, stateDirName, ...sub);
 }
 
+/**
+ * Absolute path to a run's results directory: `<stateDir>/results/<runId>`.
+ * The run-id is itself a directory name (`<cardId>_<ts>_<nonce>`).
+ */
+export function resolveRunDir(projectRoot: string, stateDirName: string, runId: string): string {
+  return gauntletPath(projectRoot, stateDirName, "results", runId);
+}
+
 // Canonicalize a path to its realpath if it exists; otherwise walk up
 // to the nearest existing ancestor, realpath *that*, and re-append the
 // missing tail. This gives us symlink-aware containment where the
