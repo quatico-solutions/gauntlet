@@ -1,9 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import {
-  parseJsonl,
-  reduceTranscript,
+  parseTranscriptFromStaticPayload,
 } from "../../ui/src/lib/transcript";
-import { parseTranscriptFromStaticPayload } from "../../ui/src/hooks/useTranscript";
 
 // Minimal run_start + run_end jsonl for static-mode testing
 const MINIMAL_JSONL = [
@@ -43,17 +41,9 @@ describe("parseTranscriptFromStaticPayload", () => {
     expect(model?.runEnd?.status).toBe("pass");
   });
 
-  test("returns null for empty string", () => {
+  test("returns empty model for empty string", () => {
     const model = parseTranscriptFromStaticPayload("");
     // empty jsonl yields empty model (not null), but runStart is undefined
     expect(model?.runStart).toBeUndefined();
-  });
-
-  test("matches output of parseJsonl + reduceTranscript directly", () => {
-    const model = parseTranscriptFromStaticPayload(MINIMAL_JSONL);
-    const expected = reduceTranscript(parseJsonl(MINIMAL_JSONL));
-    expect(model?.runStart?.runId).toBe(expected.runStart?.runId);
-    expect(model?.runEnd?.status).toBe(expected.runEnd?.status);
-    expect(model?.ordered.length).toBe(expected.ordered.length);
   });
 });

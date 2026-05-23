@@ -2,19 +2,10 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import {
   parseJsonl,
+  parseTranscriptFromStaticPayload,
   reduceTranscript,
   type TranscriptModel,
 } from "../lib/transcript";
-
-/**
- * Pure helper: parse a raw JSONL string into a TranscriptModel.
- * Used by the static-mode branch so this path can be unit-tested
- * without a DOM or hook runner.
- */
-export function parseTranscriptFromStaticPayload(runJsonl: string): TranscriptModel {
-  const events = parseJsonl(runJsonl);
-  return reduceTranscript(events);
-}
 
 export type TranscriptError = "not-found" | "network" | "parse";
 
