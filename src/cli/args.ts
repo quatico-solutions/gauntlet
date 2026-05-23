@@ -557,6 +557,10 @@ Commands:
     --project-dir <dir>      Project root (contains <state-dir>/results/<runId>)
     --state-dir <name>       State directory leaf name (default: .gauntlet)
 
+  render <runIdOrPath>     Re-render an existing run's HTML report (<runDir>/index.html)
+    --project-dir <dir>      Project root (contains the state dir)
+    --state-dir <name>       State directory leaf name (default: .gauntlet)
+
 Environment:
   GAUNTLET_PORT              Server port
   GAUNTLET_PROJECT_ROOT      Project root (contains the state dir)

@@ -4,7 +4,6 @@ import { parseArgs } from "../../src/cli/args";
 describe("parseArgs render", () => {
   test("parses a run-id positional", () => {
     const parsed = parseArgs(["bun", "index.ts", "render", "01-add-one_20260514T220510Z_u116"]);
-    expect(parsed.command).toBe("render");
     if (parsed.command !== "render") throw new Error("unreachable");
     expect(parsed.runIdOrPath).toBe("01-add-one_20260514T220510Z_u116");
   });
