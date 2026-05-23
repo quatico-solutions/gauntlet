@@ -63,6 +63,7 @@ const FANOUT_ALLOWED = new Set(["out", "model", "from-result"]);
 const SERVE_ALLOWED = new Set(["port", "project-dir", "state-dir", "chrome", "target", "model", "max-time", "reflection-interval", "viewport", "save-screencast"]);
 const CONFIG_ALLOWED = new Set(["json", "project-dir", "state-dir", "port", "chrome", "target", "model", "max-time", "reflection-interval", "viewport", "save-screencast"]);
 const ASK_ALLOWED = new Set(["turn", "model", "project-dir", "state-dir"]);
+const RENDER_ALLOWED = new Set(["project-dir", "state-dir"]);
 
 function rejectUnknownFlags(
   flags: Record<string, unknown>,
@@ -135,7 +136,14 @@ export interface AskArgs {
   cli: CliArgsInput;
 }
 
-export type ParsedArgs = RunArgs | BatchArgs | ValidateArgs | FanoutArgs | ServeArgs | ConfigArgs | AskArgs;
+export interface RenderArgs {
+  command: "render";
+  /** A run-id (looked up under <state-dir>/results/) or an absolute/relative path to a run dir. */
+  runIdOrPath: string;
+  cli: CliArgsInput;
+}
+
+export type ParsedArgs = RunArgs | BatchArgs | ValidateArgs | FanoutArgs | ServeArgs | ConfigArgs | AskArgs | RenderArgs;
 
 export function parseArgs(argv: string[]): ParsedArgs {
   // Skip "bun" and script name. Strip `--verbose` here so it works on
@@ -164,6 +172,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       return parseConfigArgs(args.slice(1));
     case "ask":
       return parseAskArgs(args.slice(1));
+    case "render":
+      return parseRenderArgs(args.slice(1));
     default:
       throw new Error(`Unknown command: ${command}\n${usage()}`);
   }
@@ -210,6 +220,20 @@ function parseAskArgs(args: string[]): AskArgs {
     runId: positional,
     upToTurn: parseIntFlag(flags.turn, "--turn"),
     modelOverride,
+    cli: { projectRoot: flags["project-dir"], stateDirName: flags["state-dir"] },
+  };
+}
+
+function parseRenderArgs(args: string[]): RenderArgs {
+  const positional = extractPositional(args);
+  if (!positional) {
+    throw new Error("Missing run-id or path\n\nUsage: gauntlet render <run-id-or-path>");
+  }
+  const flags = parseFlags(args);
+  rejectUnknownFlags(flags, RENDER_ALLOWED, "render");
+  return {
+    command: "render",
+    runIdOrPath: positional,
     cli: { projectRoot: flags["project-dir"], stateDirName: flags["state-dir"] },
   };
 }
