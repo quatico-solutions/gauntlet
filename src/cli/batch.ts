@@ -4,6 +4,7 @@ import type { EvidenceLogger, EventObserver } from "../evidence/logger";
 import type { LLMClient } from "../models/provider";
 import { gauntletPath } from "../paths";
 import { runOne, type RunOneOptions, type RunOneSummary } from "./run-one";
+import { safeEmitIndexHtml } from "./auto-emit-html";
 import { runRunSet } from "../runs/run-set";
 import { installSigintHandler } from "./signals";
 import type { RunSetCtx } from "../runs/run-set-types";
@@ -132,7 +133,7 @@ export async function runBatch(
             runSetCtx,
           );
           try {
-            return await runOneImpl({
+            const summary = await runOneImpl({
               scenarioPath: card.scenarioPath,
               target: opts.target,
               adapterType: opts.adapterType,
@@ -142,6 +143,8 @@ export async function runBatch(
               runId,
               clientFactory: opts.clientFactory,
             });
+            await safeEmitIndexHtml(summary.outDir);
+            return summary;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             if (table) table.setErrored(cardId, null, msg, runSetCtx.attemptNumber);
@@ -219,6 +222,7 @@ export async function runBatch(
         onLogger,
         clientFactory: opts.clientFactory,
       });
+      await safeEmitIndexHtml(summary.outDir);
       const s = summary.result.status;
       switch (s) {
         case "pass": pass++; break;

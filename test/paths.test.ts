@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
-import { gauntletPath, isSafePath, resolveInside } from "../src/paths";
+import { gauntletPath, isSafePath, resolveInside, resolveRunDir } from "../src/paths";
 
 describe("gauntletPath", () => {
   test("composes <root>/.gauntlet/<sub> for a single segment", () => {
@@ -210,5 +210,17 @@ describe("resolveInside", () => {
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
+  });
+});
+
+describe("resolveRunDir", () => {
+  test("composes results-root + runId", () => {
+    const path = resolveRunDir("/proj", ".gauntlet", "01-add-one_20260514T220510Z_u116");
+    expect(path).toBe("/proj/.gauntlet/results/01-add-one_20260514T220510Z_u116");
+  });
+
+  test("honours a custom state-dir name", () => {
+    const path = resolveRunDir("/proj", ".my-state", "card_2026T000000Z_aaaa");
+    expect(path).toBe("/proj/.my-state/results/card_2026T000000Z_aaaa");
   });
 });

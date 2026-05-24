@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import {
   parseJsonl,
+  parseTranscriptFromStaticPayload,
   reduceTranscript,
   type TranscriptModel,
 } from "../lib/transcript";
@@ -31,6 +32,17 @@ export function useTranscript(runId: string | null): UseTranscriptResult {
     setLoading(true);
     setError(null);
     setModel(null);
+
+    const staticPayload = typeof window !== "undefined" ? window.__GAUNTLET_RUN__ : undefined;
+    if (staticPayload?.runJsonl) {
+      try {
+        if (!cancelled) setModel(parseTranscriptFromStaticPayload(staticPayload.runJsonl));
+      } catch {
+        if (!cancelled) setError("parse");
+      }
+      if (!cancelled) setLoading(false);
+      return () => { cancelled = true; };
+    }
 
     api.results.fileText(runId, "run.jsonl")
       .then((text) => {

@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:ui": "tsc -p ui/tsconfig.json --noEmit",
-    "build:ui": "cd ui && bun run build",
+    "build:ui": "cd ui && bun run build && bun run build:static",
     "test": "bun test",
     "check": "bun run typecheck && bun run typecheck:ui && bun run build:ui && bun run test",
     "install-hooks": "bash scripts/install-hooks.sh",

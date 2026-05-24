@@ -277,6 +277,16 @@ export function parseJsonl(text: string): TranscriptEvent[] {
   return out;
 }
 
+/**
+ * Pure helper: parse a raw JSONL string into a TranscriptModel.
+ * Used by the static-mode branch so this path can be unit-tested
+ * without a DOM or hook runner.
+ */
+export function parseTranscriptFromStaticPayload(runJsonl: string): TranscriptModel {
+  const events = parseJsonl(runJsonl);
+  return reduceTranscript(events);
+}
+
 // Helpers for render-time consumers.
 
 export function turnsInOrder(model: TranscriptModel): TurnModel[] {
