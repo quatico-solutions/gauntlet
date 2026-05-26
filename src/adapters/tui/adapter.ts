@@ -238,10 +238,11 @@ export class TUIAdapter implements Adapter {
   describeTarget(target: string): string {
     const base =
       `You are at an interactive bash shell rendered inside a tmux pane ` +
-      `(${TUI_GRID.width}×${TUI_GRID.height}). Use \`type\` and \`press\` to ` +
-      `issue shell commands and answer any prompts. The shell is your ` +
+      `(${TUI_GRID.width}×${TUI_GRID.height}). Use \`type_and_submit\` to ` +
+      `issue shell commands and answer any prompts; reach for \`type\` and ` +
+      `\`press\` only for incremental input or named keys. The shell is your ` +
       `durable session — many commands can run through it during the run. ` +
-      `When you are finished, type \`exit\` to close the shell cleanly.`;
+      `When you are finished, send \`exit\` to close the shell cleanly.`;
     if (!target) return base;
     return `${base} The command you are exercising is \`${target}\`.`;
   }
