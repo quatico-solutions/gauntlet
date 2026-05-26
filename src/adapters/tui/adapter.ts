@@ -201,6 +201,25 @@ export class TUIAdapter implements Adapter {
     }
   }
 
+  // Text + CR delivered as one literal send-keys call → one write() to the
+  // PTY → one stdin data event on the TUI side. Splitting into type() then
+  // press("Enter") is two writes with an event-loop tick between them, which
+  // Ink/React TUIs (Codex, Claude Code) can land mid-render and drop.
+  async typeAndSubmit(text: string): Promise<void> {
+    const result = spawnSync(this.tmux(
+      "send-keys",
+      "-t",
+      this.sessionName,
+      "-l",
+      text + "\r",
+    ));
+
+    if (result.exitCode !== 0) {
+      const stderr = new TextDecoder().decode(result.stderr);
+      throw new Error(`Failed to type-and-submit: ${stderr}`);
+    }
+  }
+
   describeTarget(target: string): string {
     const base =
       `You are at an interactive bash shell rendered inside a tmux pane ` +
@@ -249,7 +268,7 @@ export class TUIAdapter implements Adapter {
   }
 
   isMutatingTool(name: string): boolean {
-    return name === "type" || name === "press";
+    return name === "type" || name === "press" || name === "type_and_submit";
   }
 
   toolDefinitions(): ToolDefinition[] {
@@ -274,6 +293,18 @@ export class TUIAdapter implements Adapter {
             key: { type: "string", description: "Key name to press" },
           },
           required: ["key"],
+        },
+      },
+      {
+        name: "type_and_submit",
+        description:
+          "Type literal text and press Enter atomically (delivered as a single tmux send-keys burst). Use this for full-screen TUIs (e.g. Codex, Claude Code) where a separate `type` followed by `press(Enter)` can drop the Enter mid-redraw, leaving the message in the input field unsent. For line-oriented programs (bash, REPLs) `type` with a trailing newline is equivalent and either works.",
+        parameters: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "Text to type before submitting" },
+          },
+          required: ["text"],
         },
       },
       {
@@ -322,6 +353,10 @@ export class TUIAdapter implements Adapter {
       case "press": {
         await this.press(args.key as string);
         return textResult("pressed");
+      }
+      case "type_and_submit": {
+        await this.typeAndSubmit(args.text as string);
+        return textResult("typed and submitted");
       }
       case "read_screen": {
         const screen = await this.readScreen();
