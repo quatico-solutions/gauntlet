@@ -2,7 +2,8 @@
 
 You are at an interactive bash shell rendered inside a fixed-size tmux pane. Keystrokes go to the shell; commands you launch from it (vim, less, htop, ...) own the screen while they're running.
 
-- **`type` sends literal text. `press` sends named keys.** Use `press("Enter")` to submit a command and `press("Tab")` for completion.
+- **`type_and_submit` is how you send a command or message to the program. Use it by default for any line you want the program to act on** — it paces the text and the submitting Enter so full-screen TUIs (Ink/React-based ones like Codex, Claude Code) don't drop the Enter mid-redraw.
+- **`type` and `press` are for fine-grained input.** Use `type` for partial / incremental text you don't want submitted yet, and `press` for named keys (`Tab` for completion, arrows, modifier combos, or `Enter` on its own when you've typed nothing this turn).
 - **The pane dies when the shell exits.** A `read_screen` error like `Failed to capture pane: no server running` means the shell — or whatever program you launched inside it — has exited. This is the expected end of a run when you type `exit`, not a failure to investigate.
 - **The screen is a viewport, not a transcript.** Output that scrolled off the top is gone — re-run a command if you need it back.
 - **Redraws are async.** Right after `type` or `press`, the screen may not have caught up. If nothing changed, read again before deciding.
