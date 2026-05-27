@@ -201,6 +201,40 @@ export class TUIAdapter implements Adapter {
     }
   }
 
+  // Type, give the receiving TUI one render cycle to settle, then send Enter.
+  // Submit-then-drop in Ink/React TUIs (Codex, Claude Code) is a render-state
+  // race on the receiver, not a sender-atomicity issue — when Enter arrives
+  // during the render that the text update triggered, the input field's
+  // state machine handles it against a stale view and discards it. A small
+  // fixed delay covers a single ~16ms frame and turns the race into a
+  // guarantee.
+  async typeAndSubmit(text: string): Promise<void> {
+    const typed = spawnSync(this.tmux(
+      "send-keys",
+      "-t",
+      this.sessionName,
+      "-l",
+      text,
+    ));
+    if (typed.exitCode !== 0) {
+      const stderr = new TextDecoder().decode(typed.stderr);
+      throw new Error(`Failed to type-and-submit (typing): ${stderr}`);
+    }
+
+    await new Promise((r) => setTimeout(r, 15));
+
+    const submitted = spawnSync(this.tmux(
+      "send-keys",
+      "-t",
+      this.sessionName,
+      "Enter",
+    ));
+    if (submitted.exitCode !== 0) {
+      const stderr = new TextDecoder().decode(submitted.stderr);
+      throw new Error(`Failed to type-and-submit (submitting): ${stderr}`);
+    }
+  }
+
   describeTarget(target: string): string {
     const base =
       `You are at an interactive bash shell rendered inside a tmux pane ` +
@@ -249,7 +283,7 @@ export class TUIAdapter implements Adapter {
   }
 
   isMutatingTool(name: string): boolean {
-    return name === "type" || name === "press";
+    return name === "type" || name === "press" || name === "type_and_submit";
   }
 
   toolDefinitions(): ToolDefinition[] {
@@ -274,6 +308,18 @@ export class TUIAdapter implements Adapter {
             key: { type: "string", description: "Key name to press" },
           },
           required: ["key"],
+        },
+      },
+      {
+        name: "type_and_submit",
+        description:
+          "Type literal text and press Enter atomically (delivered as a single tmux send-keys burst). Use this for full-screen TUIs (e.g. Codex, Claude Code) where a separate `type` followed by `press(Enter)` can drop the Enter mid-redraw, leaving the message in the input field unsent. For line-oriented programs (bash, REPLs) `type` with a trailing newline is equivalent and either works.",
+        parameters: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "Text to type before submitting" },
+          },
+          required: ["text"],
         },
       },
       {
@@ -322,6 +368,10 @@ export class TUIAdapter implements Adapter {
       case "press": {
         await this.press(args.key as string);
         return textResult("pressed");
+      }
+      case "type_and_submit": {
+        await this.typeAndSubmit(args.text as string);
+        return textResult("typed and submitted");
       }
       case "read_screen": {
         const screen = await this.readScreen();

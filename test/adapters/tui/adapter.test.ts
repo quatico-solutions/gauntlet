@@ -77,6 +77,34 @@ describe.skipIf(!tmuxAvailable)("TUIAdapter", () => {
     expect(screen).toContain("5");
   });
 
+  test("typeAndSubmit delivers text and submits in one shot", async () => {
+    adapter = new TUIAdapter({ runDir });
+    await adapter.start("");
+    await new Promise((r) => setTimeout(r, 300));
+    await adapter.typeAndSubmit("echo combined-submit");
+    await new Promise((r) => setTimeout(r, 300));
+    const screen = await adapter.readScreen();
+    expect(screen).toContain("combined-submit");
+    expect(screen).toContain("echo combined-submit");
+  });
+
+  test("executeTool dispatches type_and_submit", async () => {
+    adapter = new TUIAdapter({ runDir });
+    const logDir = mkdtempSync(join(tmpdir(), "gauntlet-tui-tas-"));
+    const innerLogger = new EvidenceLogger(logDir);
+    await adapter.start("");
+    await new Promise((r) => setTimeout(r, 300));
+    const result = await adapter.executeTool(
+      "type_and_submit",
+      { text: "echo tool-dispatch" },
+      innerLogger,
+    );
+    expect(result.text).toBe("typed and submitted");
+    await new Promise((r) => setTimeout(r, 300));
+    const screen = await adapter.readScreen();
+    expect(screen).toContain("tool-dispatch");
+  });
+
   test("close kills the tmux session", async () => {
     adapter = new TUIAdapter({ runDir });
     await adapter.start("");
@@ -214,7 +242,16 @@ describe.skipIf(!tmuxAvailable)("TUIAdapter", () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain("type");
     expect(names).toContain("press");
+    expect(names).toContain("type_and_submit");
     expect(names).toContain("read_screen");
+  });
+
+  test("isMutatingTool marks type, press, and type_and_submit as mutating", () => {
+    adapter = new TUIAdapter();
+    expect(adapter.isMutatingTool("type")).toBe(true);
+    expect(adapter.isMutatingTool("press")).toBe(true);
+    expect(adapter.isMutatingTool("type_and_submit")).toBe(true);
+    expect(adapter.isMutatingTool("read_screen")).toBe(false);
   });
 });
 
