@@ -4,6 +4,9 @@ import type { CredentialResolverConfig } from "../config";
 import { buildReadTool, type ReadTool } from "../context/read-tool";
 import { buildFetchCredentialTool, type FetchCredentialTool } from "../context/credential-tool";
 import { buildBashTool, type BashTool } from "./bash-tool";
+import { WatchManager } from "./watch-manager";
+import { buildWatchLogsTool, type WatchLogsTool } from "./watch-logs-tool";
+import { buildWakeOnIdleLogTool, type WakeOnIdleLogTool } from "./wake-on-idle-log-tool";
 
 export interface SharedToolsOptions {
   contextRoot?: string;
@@ -36,12 +39,17 @@ export function buildSharedTools(opts: SharedToolsOptions): SharedTools {
     opts.credentialResolver,
   );
   const bashTool: BashTool = buildBashTool({ cwd: opts.cwd });
+  const watchManager = new WatchManager();
+  const watchLogsTool: WatchLogsTool = buildWatchLogsTool({ manager: watchManager });
+  const wakeTool: WakeOnIdleLogTool = buildWakeOnIdleLogTool({ manager: watchManager });
 
   const definitions = (): ToolDefinition[] => {
     const defs: ToolDefinition[] = [];
     if (readTool) defs.push(readTool.definition);
     if (credentialTool) defs.push(credentialTool.definition);
     defs.push(bashTool.definition);
+    defs.push(watchLogsTool.definition);
+    defs.push(wakeTool.definition);
     return defs;
   };
 
@@ -49,6 +57,8 @@ export function buildSharedTools(opts: SharedToolsOptions): SharedTools {
     if (name === "read") return readTool !== null;
     if (name === "fetch_credential") return credentialTool !== null;
     if (name === "bash") return true;
+    if (name === "watch_logs") return true;
+    if (name === "wake_on_idle_log") return true;
     return false;
   };
 
@@ -62,6 +72,8 @@ export function buildSharedTools(opts: SharedToolsOptions): SharedTools {
       return credentialTool.execute(args, logger);
     }
     if (name === "bash") return bashTool.execute(args, logger);
+    if (name === "watch_logs") return watchLogsTool.execute(args, logger);
+    if (name === "wake_on_idle_log") return wakeTool.execute(args, logger);
     throw new Error(`SharedTools: unknown or unmounted tool: ${name}`);
   };
 
