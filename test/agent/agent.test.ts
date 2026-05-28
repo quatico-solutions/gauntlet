@@ -403,22 +403,22 @@ describe("runAgent", () => {
     expect((client as any)._chatCalls).toHaveLength(1);
   });
 
-  test("empty response (no tool calls, no text) returns investigate", async () => {
-    const client = makeMockClient([
-      {
-        text: "",
-        toolCalls: [],
-        stopReason: "end_turn",
-        rawAssistantMessage: { role: "assistant", content: "" },
-        usage: { inputTokens: 50, outputTokens: 0 },
-      },
-    ]);
+  test("empty response triggers a nudge; second empty ends with investigate (PRI-1864)", async () => {
+    const emptyResp = {
+      text: "",
+      toolCalls: [],
+      stopReason: "end_turn" as const,
+      rawAssistantMessage: { role: "assistant", content: [] },
+      usage: { inputTokens: 50, outputTokens: 0 },
+    };
+    const client = makeMockClient([emptyResp, emptyResp]);
 
     const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
 
     expect(result.status).toBe("investigate");
-    expect(result.summary).toContain("neither tool call nor text");
-    expect((client as any)._chatCalls).toHaveLength(1);
+    expect(result.summary).toContain("empty content twice");
+    // Two chat() calls: original + nudge retry.
+    expect((client as any)._chatCalls).toHaveLength(2);
   });
 
   test("malformed report_result returns investigate with raw args in reasoning", async () => {

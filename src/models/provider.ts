@@ -4,6 +4,15 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /**
+   * Optional per-tool override for the agent loop's `executeTool` race
+   * timeout. When unset, the loop uses
+   * `options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS` (30s). Tools that
+   * legitimately block for minutes (e.g. wake_on_idle_log) declare a
+   * larger value here so the per-call race doesn't kill them before
+   * their own internal timeout fires. PRI-1864.
+   */
+  maxExecutionMs?: number;
 }
 
 export interface ToolCall {
