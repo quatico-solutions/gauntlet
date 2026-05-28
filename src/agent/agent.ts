@@ -22,6 +22,46 @@ const RECENT_MUTATING_CAP = 16;
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30000;
 
+const EMPTY_RESPONSE_NUDGE =
+  "<SYSTEM-REMINDER>\n" +
+  "You returned no tool calls and no text. Either:\n" +
+  "  - Call report_result with a status to end the run, or\n" +
+  "  - Take another action (use the tools).\n" +
+  "If you intend to wait, prefer wake_on_idle_log over leaving an empty turn.\n" +
+  "</SYSTEM-REMINDER>";
+
+/**
+ * The empty-end_turn safety net (PRI-1864) needs to push the empty
+ * assistant turn into the messages array so the next chat() call has
+ * valid role alternation. But providers reject assistant messages with
+ * zero-content arrays. Substitute a stub text block. Provider-shape-
+ * aware: Anthropic's raw is `{role, content[]}`, OpenAI Responses is
+ * an array of output items.
+ */
+export function synthesizeFilledAssistantMessage(raw: unknown): unknown {
+  if (
+    raw &&
+    typeof raw === "object" &&
+    "content" in raw &&
+    Array.isArray((raw as { content: unknown }).content) &&
+    ((raw as { content: unknown[] }).content as unknown[]).length === 0
+  ) {
+    return {
+      ...(raw as object),
+      content: [{ type: "text", text: "(empty turn)" }],
+    };
+  }
+  if (Array.isArray(raw) && raw.length === 0) {
+    return [
+      {
+        role: "assistant",
+        content: [{ type: "output_text", text: "(empty turn)" }],
+      },
+    ];
+  }
+  return raw;
+}
+
 export interface AgentOptions {
   toolTimeoutMs?: number;
   /**
@@ -155,6 +195,16 @@ export async function runAgent(
   );
   const tools = [...adapter.toolDefinitions(), REPORT_TOOL];
 
+  // Per-tool execute-timeout override (PRI-1864). Tools that legitimately
+  // block for minutes (wake_on_idle_log) declare maxExecutionMs so the
+  // executeTool race doesn't kill them before their internal clamp.
+  const toolTimeoutOverrides = new Map<string, number>();
+  for (const td of tools) {
+    if (typeof td.maxExecutionMs === "number" && td.maxExecutionMs > 0) {
+      toolTimeoutOverrides.set(td.name, td.maxExecutionMs);
+    }
+  }
+
   logger.logRunStart({
     runId,
     cardId: card.id,
@@ -185,6 +235,7 @@ export async function runAgent(
   let totalCacheCreation = 0;
   let totalCacheRead = 0;
   let turns = 0;
+  let emptyResponseNudged = false;
   const deadline = startTime + budgetMs;
   // Bounded buffer of state-changing tool calls, classified by the
   // adapter via isMutatingTool. Drives the reflection-checkpoint trace.
@@ -375,11 +426,16 @@ export async function runAgent(
       });
     }
 
+    // Any non-empty response resets the empty-nudge tracker.
+    if (response.toolCalls.length > 0 || response.text) {
+      emptyResponseNudged = false;
+    }
+
     // Process tool calls
     if (response.toolCalls.length > 0) {
       pushAssistantTurn(messages, response.rawAssistantMessage);
 
-      const toolTimeout = options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+      const baseToolTimeout = options.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
       const results: ToolResult[] = [];
       for (const tc of response.toolCalls) {
         if (isAborted()) return abortedResult();
@@ -388,6 +444,7 @@ export async function runAgent(
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         let result: ToolResult;
         let errored = false;
+        const toolTimeout = toolTimeoutOverrides.get(tc.name) ?? baseToolTimeout;
         try {
           result = await Promise.race([
             adapter.executeTool(tc.name, tc.arguments, logger),
@@ -460,18 +517,32 @@ export async function runAgent(
         )
       );
     } else {
-      // Neither tool calls nor text. Re-sending the same prompt would
-      // produce the same empty response — break instead of spinning for
-      // the rest of MAX_TURNS.
-      logger.logEvent("empty_response", {
+      // Empty response. Try a nudge once (PRI-1864 — long-haul polling
+      // loops can self-prime Sonnet into emitting nothing). If we
+      // already nudged on the previous empty turn and still got empty,
+      // give up cleanly.
+      if (emptyResponseNudged) {
+        logger.logEvent("empty_response_after_nudge", {
+          turn: turns,
+          stopReason: response.stopReason,
+        });
+        return buildResult({
+          status: "investigate",
+          summary: "LLM returned empty content twice, even after a nudge",
+          reasoning: `Empty response on turn ${turns} and again after nudge. Likely model self-priming on an empty-prefix pattern.`,
+        });
+      }
+      emptyResponseNudged = true;
+      logger.logEvent("empty_response_nudge", {
         turn: turns,
         stopReason: response.stopReason,
       });
-      return buildResult({
-        status: "investigate",
-        summary: "LLM returned neither tool call nor text",
-        reasoning: `Empty response on turn ${turns} with stopReason: ${response.stopReason}. Likely a model or prompt issue.`,
-      });
+      // Push a stub-filled version of the empty assistant turn so the
+      // next chat() request has valid role alternation, then add the
+      // nudge as a user message and let the while-loop iterate.
+      pushAssistantTurn(messages, synthesizeFilledAssistantMessage(response.rawAssistantMessage));
+      logger.logUserMessage(turns, EMPTY_RESPONSE_NUDGE);
+      messages.push(client.userMessage(EMPTY_RESPONSE_NUDGE));
     }
   }
 
