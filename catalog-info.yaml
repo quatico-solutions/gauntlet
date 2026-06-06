@@ -1,0 +1,14 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: gauntlet
+  description: "AI-powered QA testing framework that drives web/CLI/TUI targets from markdown story cards and returns pass/fail verdicts with evidence."
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+    prime-radiant.com/repo-map-rev: "31d447dfdc8a503a5c1e19d78709a91c8169a123"
+  tags: [typescript, qa-testing, ai-agents, llm]
+spec:
+  type: tool
+  lifecycle: production
+  owner: user:mhat
+  system: eval-labs
