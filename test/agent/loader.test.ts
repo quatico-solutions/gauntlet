@@ -13,8 +13,8 @@ describe("loadPromptFile", () => {
     }
   });
 
-  test("persona file has the auditor opener", () => {
-    expect(loadPromptFile("persona")).toMatch(/^You are an auditor\./);
+  test("persona file has the black-box QA opener", () => {
+    expect(loadPromptFile("persona")).toMatch(/^You are a black box software QA engineer\./);
   });
 
   test("evaluation file has the Reporting header", () => {
