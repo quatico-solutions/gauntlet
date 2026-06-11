@@ -695,6 +695,63 @@ describe("runAgent", () => {
     expect(String(rejection.content)).toContain("criteria[1].evidence");
   });
 
+  test("an overall pass contradicting a criterion fail is re-asked (PRI-2160)", async () => {
+    const contradictory = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "All good",
+            reasoning: "Mostly fine",
+            observations: [],
+            criteria: [
+              { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+              { criterion: "error shown", verdict: "fail", evidence: "no banner appeared" },
+            ],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "contradictory" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const corrected = {
+      text: "corrected",
+      toolCalls: [
+        {
+          id: "call_2",
+          name: "report_result",
+          arguments: {
+            status: "fail",
+            summary: "Error banner missing",
+            reasoning: "Second criterion failed",
+            observations: [],
+            criteria: [
+              { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+              { criterion: "error shown", verdict: "fail", evidence: "no banner appeared" },
+            ],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "corrected" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([contradictory, corrected]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("fail");
+    expect(result.criteria).toHaveLength(2);
+    const rejection = (client as any)._chatCalls[1].find(
+      (m: any) => m.role === "tool_result" && m.tool_call_id === "call_1",
+    );
+    expect(String(rejection.content)).toContain("contradicts");
+  });
+
   test("persistently uncited reports are salvaged after bounded re-asks — the verdict survives without criteria (PRI-2160)", async () => {
     const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
     const logger = makeMockLogger();
@@ -1097,6 +1154,33 @@ describe("runAgent", () => {
       expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
     });
 
+    test("an intervening text-only turn breaks the stall chain", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      const textTurn = {
+        text: "Let me think about what I am seeing here.",
+        toolCalls: [],
+        stopReason: "end_turn" as const,
+        rawAssistantMessage: { role: "assistant", content: "t-text" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        textTurn,
+        readTurn("c3"),
+        readTurn("c4"),
+        reportTurn("c5"),
+      ]);
+
+      await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
+    });
+
     test("a mutating call resets the stall counter", async () => {
       const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
       const logger = makeMockLogger();
@@ -1434,6 +1518,49 @@ describe("runAgent", () => {
       { kind: "suggestion", description: "raise the budget" },
     ]);
     expect((client as any)._chatCalls).toHaveLength(1);
+  });
+
+  test("grace-turn criteria contradicting the verdict are dropped, not fatal (PRI-2160)", async () => {
+    const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+    const logger = makeMockLogger();
+    (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+      eventLog.push({ name, params });
+    };
+    const client = makeMockClient([
+      {
+        text: "out of time",
+        toolCalls: [
+          {
+            id: "c1",
+            name: "report_result",
+            arguments: {
+              status: "pass",
+              summary: "Looked fine overall",
+              reasoning: "Ran out of budget",
+              observations: [],
+              criteria: [
+                { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+                { criterion: "error shown", verdict: "unclear", evidence: "never got to it" },
+              ],
+            },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "grace" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+    ]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, logger, undefined, {
+      runId: makeRunId(acCard.id),
+      budgetMs: 0,
+    });
+
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toBeUndefined();
+    const dropped = eventLog.find((e) => e.name === "report_criteria_dropped");
+    expect(dropped).toBeDefined();
+    expect(String(dropped?.params.reason)).toContain("contradicts");
   });
 
   test("falls through to generic exhausted result when grace turn also fails to report", async () => {

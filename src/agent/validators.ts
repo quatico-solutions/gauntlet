@@ -286,6 +286,33 @@ export function parseReportCriteria(
 }
 
 /**
+ * Cross-field consistency between the overall verdict and the
+ * per-criterion table (PRI-2160): an overall `pass` asserts the
+ * acceptance criteria are met, so it may not carry a `fail` or
+ * `unclear` criterion verdict. The reverse is NOT enforced — an
+ * overall fail/investigate with all-passing criteria is legitimate
+ * (something outside the listed criteria can still sink the run).
+ */
+export function checkCriteriaConsistency(
+  status: ReportableStatus,
+  criteria: readonly CriterionVerdict[],
+): ParseResult<true> {
+  if (status !== "pass") return { ok: true, value: true };
+  for (let i = 0; i < criteria.length; i++) {
+    if (criteria[i].verdict !== "pass") {
+      return {
+        ok: false,
+        reason:
+          `status: "pass" contradicts criteria[${i}].verdict: "${criteria[i].verdict}" — ` +
+          `an overall pass requires every criterion verdict to be "pass"; ` +
+          `either correct the criterion verdict or change the overall status`,
+      };
+    }
+  }
+  return { ok: true, value: true };
+}
+
+/**
  * Validate tool-call arguments against a tool's declared JSON schema.
  *
  * Handles the narrow JSON Schema subset the tools actually declare today:

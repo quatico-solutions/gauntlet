@@ -8,7 +8,7 @@ import { RESULT_SCHEMA_VERSION } from "../types";
 import type { RunId } from "../util/brands";
 import { buildSystemPrompt } from "./prompts";
 import { buildInitialUserMessage } from "./initial-message";
-import { parseReportCriteria, parseReportResult, salvageReportResult } from "./validators";
+import { checkCriteriaConsistency, parseReportCriteria, parseReportResult, salvageReportResult } from "./validators";
 import {
   buildReflectionReminder,
   renderTrace,
@@ -329,8 +329,15 @@ export async function runAgent(
   let maxTokensNudged = false;
   // Stall watchdog state (PRI-2081): fingerprint of the last solo
   // non-mutating tool call and how many consecutive turns repeated it.
+  // The chain is CONSECUTIVE by definition (spec) — any turn that is not
+  // a qualifying solo non-mutating read (text-only, empty, max_tokens
+  // recovery, report re-ask) breaks it via resetStallTracker.
   let stallRepeats = 0;
   let lastStallFingerprint: string | null = null;
+  const resetStallTracker = () => {
+    stallRepeats = 0;
+    lastStallFingerprint = null;
+  };
   const deadline = startTime + budgetMs;
   // Bounded buffer of state-changing tool calls, classified by the
   // adapter via isMutatingTool. Drives the reflection-checkpoint trace.
@@ -511,15 +518,20 @@ export async function runAgent(
           card.acceptanceCriteria,
         );
         if (criteriaParsed.ok) {
-          return buildResult({
-            status: parsed.value.status,
-            summary: parsed.value.summary,
-            reasoning: parsed.value.reasoning,
-            observations: parsed.value.observations,
-            criteria: criteriaParsed.value.length > 0 ? criteriaParsed.value : undefined,
-          });
+          const consistency = checkCriteriaConsistency(parsed.value.status, criteriaParsed.value);
+          if (consistency.ok) {
+            return buildResult({
+              status: parsed.value.status,
+              summary: parsed.value.summary,
+              reasoning: parsed.value.reasoning,
+              observations: parsed.value.observations,
+              criteria: criteriaParsed.value.length > 0 ? criteriaParsed.value : undefined,
+            });
+          }
+          validationFailure = consistency.reason;
+        } else {
+          validationFailure = criteriaParsed.reason;
         }
-        validationFailure = criteriaParsed.reason;
       }
 
       {
@@ -548,6 +560,7 @@ export async function runAgent(
                 ),
           );
           messages.push(...client.toolResultMessages(response.toolCalls, retryResults));
+          resetStallTracker();
           continue;
         }
 
@@ -603,6 +616,7 @@ export async function runAgent(
       pushAssistantTurn(messages, synthesizeTruncatedAssistantStub(response.rawAssistantMessage));
       logger.logUserMessage(turns, MAX_TOKENS_NUDGE);
       messages.push(client.userMessage(MAX_TOKENS_NUDGE));
+      resetStallTracker();
       continue;
     }
 
@@ -767,6 +781,7 @@ export async function runAgent(
         });
       }
     } else if (response.text) {
+      resetStallTracker();
       pushAssistantTurn(messages, response.rawAssistantMessage);
       messages.push(
         client.userMessage(
@@ -790,6 +805,7 @@ export async function runAgent(
         });
       }
       emptyResponseNudged = true;
+      resetStallTracker();
       logger.logEvent("empty_response_nudge", {
         turn: turns,
         stopReason: response.stopReason,
@@ -874,21 +890,29 @@ export async function runAgent(
           (graceReport.arguments as Record<string, unknown>).criteria,
           card.acceptanceCriteria,
         );
+        let graceCriteria: VetResult["criteria"];
         if (!criteriaParsed.ok) {
           logger.logEvent("report_criteria_dropped", {
             turn: graceTurn,
             reason: criteriaParsed.reason,
           });
+        } else {
+          const consistency = checkCriteriaConsistency(parsed.value.status, criteriaParsed.value);
+          if (!consistency.ok) {
+            logger.logEvent("report_criteria_dropped", {
+              turn: graceTurn,
+              reason: consistency.reason,
+            });
+          } else if (criteriaParsed.value.length > 0) {
+            graceCriteria = criteriaParsed.value;
+          }
         }
         return buildResult({
           status: parsed.value.status,
           summary: parsed.value.summary,
           reasoning: parsed.value.reasoning,
           observations: parsed.value.observations,
-          criteria:
-            criteriaParsed.ok && criteriaParsed.value.length > 0
-              ? criteriaParsed.value
-              : undefined,
+          criteria: graceCriteria,
         });
       }
       // The final turn produced report_result but it was malformed.

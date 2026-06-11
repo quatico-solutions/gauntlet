@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import {
+  checkCriteriaConsistency,
   parseReportCriteria,
   parseReportResult,
   salvageReportResult,
@@ -305,6 +306,45 @@ describe("salvageReportResult", () => {
   test("refuses to salvage non-object args", () => {
     const result = salvageReportResult("pass");
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("checkCriteriaConsistency", () => {
+  const cite = (verdict: "pass" | "fail" | "unclear") => ({
+    criterion: "x",
+    verdict,
+    evidence: "observed",
+  });
+
+  test("accepts pass when every criterion passed", () => {
+    const r = checkCriteriaConsistency("pass", [cite("pass"), cite("pass")]);
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects pass when a criterion failed", () => {
+    const r = checkCriteriaConsistency("pass", [cite("pass"), cite("fail")]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain("pass");
+      expect(r.reason).toContain("criteria[1]");
+    }
+  });
+
+  test("rejects pass when a criterion is unclear", () => {
+    const r = checkCriteriaConsistency("pass", [cite("unclear")]);
+    expect(r.ok).toBe(false);
+  });
+
+  test("fail and investigate may carry any mix of criterion verdicts", () => {
+    expect(checkCriteriaConsistency("fail", [cite("pass"), cite("fail")]).ok).toBe(true);
+    expect(checkCriteriaConsistency("investigate", [cite("unclear")]).ok).toBe(true);
+    // An overall fail with all-passing criteria is allowed: something
+    // outside the listed criteria can still sink the run.
+    expect(checkCriteriaConsistency("fail", [cite("pass")]).ok).toBe(true);
+  });
+
+  test("pass with no criteria (criteria-less card) is fine", () => {
+    expect(checkCriteriaConsistency("pass", []).ok).toBe(true);
   });
 });
 
