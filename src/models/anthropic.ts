@@ -40,7 +40,11 @@ export function createAnthropicClient(model: string): LLMClient {
       const response = await withLlmErrorSanitization(() =>
         client.messages.create({
           model,
-          max_tokens: 4096,
+          // 4096 killed a run mid-verdict: adaptive thinking counts
+          // against this cap, and a judge composing its final report
+          // after a long run can think past 4k (PRI-2160, run b35d).
+          // Cost is per token actually emitted, not per cap.
+          max_tokens: 16384,
           system,
           messages: apiMessages,
           tools: convertedTools,

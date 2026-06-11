@@ -434,27 +434,6 @@ describe("runAgent", () => {
     expect(result.status).toBe("fail");
   }, 10000);
 
-  test("max_tokens stop_reason returns investigate without retrying", async () => {
-    // Only one response is queued — a second call would throw "No more mock
-    // responses". Confirms the loop breaks immediately instead of nudging.
-    const client = makeMockClient([
-      {
-        text: "Partial thought cut off",
-        toolCalls: [],
-        stopReason: "max_tokens",
-        rawAssistantMessage: { role: "assistant", content: "truncated" },
-        usage: { inputTokens: 100, outputTokens: 4096 },
-      },
-    ]);
-
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
-
-    expect(result.status).toBe("investigate");
-    expect(result.summary).toContain("max_tokens");
-    // Exactly one chat() call — did not retry.
-    expect((client as any)._chatCalls).toHaveLength(1);
-  });
-
   test("empty response triggers a nudge; second empty ends with investigate (PRI-1864)", async () => {
     const emptyResp = {
       text: "",
@@ -835,6 +814,70 @@ describe("runAgent", () => {
     );
     expect(siblingResult).toBeDefined();
     expect(String(siblingResult.content)).toContain("not executed");
+  });
+
+  // Regression: PRI-2160 (run b35d). The judge hit max_tokens mid-thinking
+  // on turn 36 while composing its verdict and the run went indeterminate
+  // despite a fully-successful subject. A truncation now gets one recovery
+  // turn (truncated output discarded, concision nudge injected) before
+  // falling back to investigate.
+  test("max_tokens truncation gets one recovery turn; the recovered report is honored (PRI-2160)", async () => {
+    const truncated = {
+      text: "I was reasoning at length about the criteria and then got cut o",
+      toolCalls: [],
+      stopReason: "max_tokens" as const,
+      rawAssistantMessage: { role: "assistant", content: [{ type: "text", text: "cut o" }] },
+      usage: { inputTokens: 100, outputTokens: 4096 },
+    };
+    const recovered = {
+      text: "reporting now",
+      toolCalls: [
+        {
+          id: "c2",
+          name: "report_result",
+          arguments: { status: "pass", summary: "All good", reasoning: "Verified", observations: [] },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "r2" },
+      usage: { inputTokens: 100, outputTokens: 50 },
+    };
+    const client = makeMockClient([truncated, recovered]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("pass");
+    expect(result.summary).toBe("All good");
+
+    const chatCalls = (client as any)._chatCalls;
+    expect(chatCalls).toHaveLength(2);
+    // The truncated output was replaced with a stub (not replayed), and
+    // the recovery nudge tells the model it was cut off.
+    const recoveryMessages = chatCalls[1];
+    const lastMessage = recoveryMessages[recoveryMessages.length - 1];
+    expect(lastMessage.role).toBe("user");
+    expect(String(lastMessage.content)).toContain("cut off");
+    expect(String(lastMessage.content)).toContain("report_result");
+    const stub = recoveryMessages[recoveryMessages.length - 2];
+    expect(JSON.stringify(stub)).toContain("truncated");
+    expect(JSON.stringify(stub)).not.toContain("cut o\"");
+  });
+
+  test("a second max_tokens truncation returns investigate", async () => {
+    const truncated = {
+      text: "still rambling",
+      toolCalls: [],
+      stopReason: "max_tokens" as const,
+      rawAssistantMessage: { role: "assistant", content: [{ type: "text", text: "still rambling" }] },
+      usage: { inputTokens: 100, outputTokens: 4096 },
+    };
+    const client = makeMockClient([truncated, truncated]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toContain("max_tokens");
+    expect((client as any)._chatCalls).toHaveLength(2);
   });
 
   test("accumulates cache token usage across turns", async () => {

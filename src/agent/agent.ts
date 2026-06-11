@@ -28,6 +28,13 @@ const DEFAULT_TOOL_TIMEOUT_MS = 30000;
 // almost always fix its own call when shown the validation error.
 const MAX_REPORT_VALIDATION_RETRIES = 2;
 
+const MAX_TOKENS_NUDGE =
+  "<SYSTEM-REMINDER>\n" +
+  "Your previous response was cut off by the output token limit and has been discarded. " +
+  "Do not repeat it. Respond concisely — prefer tool calls over long prose. " +
+  "If you have reached a verdict, call report_result now with a brief summary and reasoning.\n" +
+  "</SYSTEM-REMINDER>";
+
 const EMPTY_RESPONSE_NUDGE =
   "<SYSTEM-REMINDER>\n" +
   "You returned no tool calls and no text. Either:\n" +
@@ -66,6 +73,28 @@ export function synthesizeFilledAssistantMessage(raw: unknown): unknown {
     ];
   }
   return raw;
+}
+
+/**
+ * Build the assistant turn that stands in for a max_tokens-truncated
+ * response (PRI-2160). The truncated content is NOT replayed: a partial
+ * thinking block can't be round-tripped (its signature never arrived)
+ * and partial tool calls must not be executed, so the whole turn is
+ * replaced with a short text stub. Provider-shape-aware like
+ * `synthesizeFilledAssistantMessage` above: Anthropic's raw is
+ * `{role, content[]}`, OpenAI Responses is an array of output items.
+ */
+export function synthesizeTruncatedAssistantStub(raw: unknown): unknown {
+  const stubText = "(response truncated by the output token limit; discarded)";
+  if (Array.isArray(raw)) {
+    return [
+      {
+        role: "assistant",
+        content: [{ type: "output_text", text: stubText }],
+      },
+    ];
+  }
+  return { role: "assistant", content: [{ type: "text", text: stubText }] };
 }
 
 export interface AgentOptions {
@@ -267,6 +296,7 @@ export async function runAgent(
   let turns = 0;
   let emptyResponseNudged = false;
   let reportValidationRetries = 0;
+  let maxTokensNudged = false;
   const deadline = startTime + budgetMs;
   // Bounded buffer of state-changing tool calls, classified by the
   // adapter via isMutatingTool. Drives the reflection-checkpoint trace.
@@ -514,20 +544,32 @@ export async function runAgent(
       }
     }
 
-    // Truncated output. Nudging an already-truncated turn just burns more
-    // tokens — break immediately with an investigate verdict so the human
-    // (or an escalating scheduler) sees the problem.
+    // Truncated output. A run died this way on the verge of its verdict
+    // (PRI-2160, run b35d: max_tokens mid-thinking on turn 36, subject
+    // fully successful) — so the first truncation gets one recovery
+    // turn: discard the partial output, inject a concision nudge, and
+    // let the model try again. Bounded at one per run; a second
+    // truncation ends with investigate so the human (or an escalating
+    // scheduler) sees the problem.
     if (response.stopReason === "max_tokens") {
       logger.logEvent("stopped_max_tokens", {
         turn: turns,
         hasText: Boolean(response.text),
         toolCallCount: response.toolCalls.length,
+        recovery: !maxTokensNudged,
       });
-      return buildResult({
-        status: "investigate",
-        summary: "LLM response truncated by max_tokens before reporting",
-        reasoning: `Stopped with max_tokens on turn ${turns}. Increase max_tokens or shorten the scenario.`,
-      });
+      if (maxTokensNudged) {
+        return buildResult({
+          status: "investigate",
+          summary: "LLM response truncated by max_tokens before reporting",
+          reasoning: `Stopped with max_tokens on turn ${turns}, after an earlier truncation had already used the recovery turn. Increase max_tokens or shorten the scenario.`,
+        });
+      }
+      maxTokensNudged = true;
+      pushAssistantTurn(messages, synthesizeTruncatedAssistantStub(response.rawAssistantMessage));
+      logger.logUserMessage(turns, MAX_TOKENS_NUDGE);
+      messages.push(client.userMessage(MAX_TOKENS_NUDGE));
+      continue;
     }
 
     // Any non-empty response resets the empty-nudge tracker.
