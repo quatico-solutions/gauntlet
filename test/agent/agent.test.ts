@@ -97,12 +97,16 @@ function makeMockClient(responses: AgentResponse[]): LLMClient {
     userMessage(content: string) {
       return { role: "user", content };
     },
-    toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
-      return calls.map((call, i) => ({
+    toolResultMessages(calls: ToolCall[], results: ToolResult[], extraUserText?: string) {
+      const msgs: unknown[] = calls.map((call, i) => ({
         role: "tool_result",
         tool_call_id: call.id,
         content: results[i].text,
       }));
+      if (extraUserText) {
+        msgs.push({ role: "user", content: extraUserText });
+      }
+      return msgs;
     },
     _chatCalls: chatCalls,
     _toolsPerCall: toolsPerCall,
@@ -878,6 +882,144 @@ describe("runAgent", () => {
     expect(result.status).toBe("investigate");
     expect(result.summary).toContain("max_tokens");
     expect((client as any)._chatCalls).toHaveLength(2);
+  });
+
+  // Stall watchdog (PRI-2081): a frozen read-poll loop — the same
+  // non-mutating tool call returning byte-identical results turn after
+  // turn — gets a mechanical warning, then a forced final report,
+  // instead of burning the whole wall-clock budget (Pattern 5: 6.2M
+  // tokens / 4430s for no verdict).
+  describe("stall watchdog (PRI-2081)", () => {
+    const readTurn = (id: string) => ({
+      text: "",
+      toolCalls: [{ id, name: "screenshot", arguments: {} }],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: `t-${id}` },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    const reportTurn = (id: string) => ({
+      text: "done",
+      toolCalls: [
+        {
+          id,
+          name: "report_result",
+          arguments: { status: "investigate", summary: "stuck", reasoning: "screen frozen", observations: [] },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: `r-${id}` },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+
+    test("the third identical read turn gets a stall warning", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        reportTurn("c4"),
+      ]);
+
+      const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(result.status).toBe("investigate");
+      const warning = eventLog.find((e) => e.name === "agent_stall_warning");
+      expect(warning).toBeDefined();
+      expect(warning?.params.tool).toBe("screenshot");
+      // The warning is injected alongside the third identical turn's
+      // tool results, so the model sees it before its fourth call.
+      const fourthCallMessages = (client as any)._chatCalls[3];
+      expect(JSON.stringify(fourthCallMessages)).toContain("SYSTEM-REMINDER");
+      expect(JSON.stringify(fourthCallMessages)).toContain("frozen");
+    });
+
+    test("the sixth identical read turn forces a final report", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        readTurn("c4"),
+        readTurn("c5"),
+        readTurn("c6"),
+        reportTurn("c7"),
+      ]);
+
+      const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      // The forced turn honors the model's own report.
+      expect(result.status).toBe("investigate");
+      expect(result.summary).toBe("stuck");
+      expect(eventLog.find((e) => e.name === "agent_stall_forced_report")).toBeDefined();
+
+      // The forced turn offers ONLY report_result.
+      const toolsPerCall = (client as any)._toolsPerCall;
+      expect(toolsPerCall[6]).toEqual(["report_result"]);
+      expect((client as any)._chatCalls).toHaveLength(7);
+    });
+
+    test("changing read results never trip the watchdog", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      // Adapter returns a different result each call — a live screen.
+      let n = 0;
+      const adapter = makeMockAdapter();
+      adapter.executeTool = async () => textResult(`frame ${n++}`);
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        readTurn("c4"),
+        readTurn("c5"),
+        readTurn("c6"),
+        reportTurn("c7"),
+      ]);
+
+      await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
+      expect(eventLog.find((e) => e.name === "agent_stall_forced_report")).toBeUndefined();
+    });
+
+    test("a mutating call resets the stall counter", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      const adapter = makeMockAdapter();
+      adapter.isMutatingTool = (name: string) => name === "click";
+      const clickTurn = {
+        text: "",
+        toolCalls: [{ id: "cm", name: "click", arguments: { selector: "#x" } }],
+        stopReason: "tool_use" as const,
+        rawAssistantMessage: { role: "assistant", content: "t-click" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        clickTurn,
+        readTurn("c3"),
+        readTurn("c4"),
+        reportTurn("c5"),
+      ]);
+
+      await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
+    });
   });
 
   test("accumulates cache token usage across turns", async () => {

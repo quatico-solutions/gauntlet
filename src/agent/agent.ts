@@ -28,6 +28,42 @@ const DEFAULT_TOOL_TIMEOUT_MS = 30000;
 // almost always fix its own call when shown the validation error.
 const MAX_REPORT_VALIDATION_RETRIES = 2;
 
+// Stall watchdog (PRI-2081): consecutive solo non-mutating tool calls
+// whose (name, args, result text) are byte-identical mean the agent is
+// polling a frozen surface. Warn at the third identical turn; force a
+// final report at the sixth. Byte-identity is deliberately conservative —
+// any change in the surface (clock, spinner, scrolling log) resets the
+// counter. See docs/superpowers/specs/2026-06-11-stall-watchdog-spec.md.
+const STALL_WARNING_AFTER = 2;
+const STALL_FORCED_REPORT_AFTER = 5;
+
+function buildStallWarning(tool: string, repeats: number): string {
+  return (
+    "<SYSTEM-REMINDER>\n" +
+    `Your last ${repeats + 1} ${tool} calls returned byte-identical output — the surface you are polling looks frozen. ` +
+    "Polling it again will not produce new information. Consult the authoritative record instead " +
+    "(inspect the session logs or files via bash, or wait for activity with wake_on_idle_log if available), " +
+    "or call report_result with what you already know.\n" +
+    "</SYSTEM-REMINDER>"
+  );
+}
+
+function buildStallForcedReminder(tool: string, repeats: number): string {
+  return (
+    "<SYSTEM-REMINDER>\n" +
+    `You have repeated the same ${tool} call ${repeats + 1} times in a row with byte-identical output. ` +
+    "The run is stalled. No more application tools are available — only report_result can be called now. " +
+    "This is your final response.\n" +
+    "\n" +
+    "Call report_result to end the run with an actionable summary:\n" +
+    '  - Set status to "investigate" unless you already observed enough to decide pass or fail.\n' +
+    "  - In summary, describe what you did, what you observed, and what stopped changing.\n" +
+    "  - In reasoning, explain what you were waiting for and why the run stalled.\n" +
+    '  - Include concrete recommendations as observations (kind: "suggestion") for whoever picks this up next.\n' +
+    "</SYSTEM-REMINDER>"
+  );
+}
+
 const MAX_TOKENS_NUDGE =
   "<SYSTEM-REMINDER>\n" +
   "Your previous response was cut off by the output token limit and has been discarded. " +
@@ -297,6 +333,10 @@ export async function runAgent(
   let emptyResponseNudged = false;
   let reportValidationRetries = 0;
   let maxTokensNudged = false;
+  // Stall watchdog state (PRI-2081): fingerprint of the last solo
+  // non-mutating tool call and how many consecutive turns repeated it.
+  let stallRepeats = 0;
+  let lastStallFingerprint: string | null = null;
   const deadline = startTime + budgetMs;
   // Bounded buffer of state-changing tool calls, classified by the
   // adapter via isMutatingTool. Drives the reflection-checkpoint trace.
@@ -624,6 +664,40 @@ export async function runAgent(
         });
       }
 
+      // Stall watchdog (PRI-2081). A solo non-mutating call whose
+      // (name, args, result text) matches the previous turn's exactly
+      // increments the counter; anything else resets it. Adapters/mocks
+      // without isMutatingTool are exempt (same posture as reflection).
+      let stallWarningText: string | undefined;
+      if (
+        response.toolCalls.length === 1 &&
+        typeof adapter.isMutatingTool === "function" &&
+        !adapter.isMutatingTool(response.toolCalls[0].name)
+      ) {
+        const tc0 = response.toolCalls[0];
+        let argsJson = "<unserializable>";
+        try { argsJson = JSON.stringify(tc0.arguments ?? {}); } catch { /* ignore */ }
+        const fingerprint = `${tc0.name} ${argsJson} ${results[0].text ?? ""}`;
+        if (fingerprint === lastStallFingerprint) {
+          stallRepeats++;
+        } else {
+          stallRepeats = 0;
+          lastStallFingerprint = fingerprint;
+        }
+        if (stallRepeats === STALL_WARNING_AFTER) {
+          logger.logEvent("agent_stall_warning", {
+            turn: turns,
+            tool: tc0.name,
+            repeats: stallRepeats,
+          });
+          stallWarningText = buildStallWarning(tc0.name, stallRepeats);
+          logger.logUserMessage(turns, stallWarningText);
+        }
+      } else {
+        stallRepeats = 0;
+        lastStallFingerprint = null;
+      }
+
       // Reflection checkpoint bookkeeping. Skipped entirely when
       // reflection is disabled so older callers (and adapter mocks) that
       // don't implement isMutatingTool aren't dragged in. Informational
@@ -654,7 +728,30 @@ export async function runAgent(
         }
       }
 
+      if (stallWarningText) {
+        extraUserText = extraUserText
+          ? `${extraUserText}\n\n${stallWarningText}`
+          : stallWarningText;
+      }
+
       messages.push(...client.toolResultMessages(response.toolCalls, results, extraUserText));
+
+      // Stall escalation: the surface has been frozen through the
+      // warning and beyond — stop paying for the poll loop and demand
+      // the model's own account of the run (PRI-2081).
+      if (stallRepeats >= STALL_FORCED_REPORT_AFTER) {
+        const stalledTool = response.toolCalls[0].name;
+        logger.logEvent("agent_stall_forced_report", {
+          turn: turns,
+          tool: stalledTool,
+          repeats: stallRepeats,
+        });
+        return finalReportTurn(buildStallForcedReminder(stalledTool, stallRepeats), {
+          summary: "Agent stalled repeating an unchanging read without reporting a result",
+          reasoning: `Stalled: ${stallRepeats + 1} consecutive identical ${stalledTool} calls; the forced-report reminder did not yield a valid report_result.`,
+          malformedEvent: "stall_grace_malformed_report",
+        });
+      }
     } else if (response.text) {
       pushAssistantTurn(messages, response.rawAssistantMessage);
       messages.push(
@@ -692,12 +789,129 @@ export async function runAgent(
     }
   }
 
+  /**
+   * One final LLM turn with ONLY report_result mounted, prompted by
+   * `reminderText`. Shared by the two early-end paths that still want
+   * the model's own account of the run: time-budget exhaustion (the
+   * grace turn) and the stall watchdog's forced report (PRI-2081).
+   * Does not count against `usage.turns` — the turn is overhead.
+   *
+   * The model's report is honored when valid; per-criterion citations
+   * (PRI-2160) are accepted when valid but never fatal here (no re-ask
+   * budget); a malformed report falls to salvage (PRI-2140) and then
+   * to the caller-supplied fallback investigate.
+   */
+  async function finalReportTurn(
+    reminderText: string,
+    fallback: { summary: string; reasoning: string; malformedEvent: string },
+  ): Promise<VetResult> {
+    const graceTurn = turns + 1;
+    logger.logUserMessage(graceTurn, reminderText);
+    messages.push(client.userMessage(reminderText));
+
+    logger.logLlmRequest(graceTurn, messages.length);
+    const graceResponse = await client.chat(messages, [REPORT_TOOL], systemPrompt, { runId });
+    totalInputTokens += graceResponse.usage.inputTokens;
+    totalOutputTokens += graceResponse.usage.outputTokens;
+    totalCacheCreation += graceResponse.usage.cacheCreationInputTokens ?? 0;
+    totalCacheRead += graceResponse.usage.cacheReadInputTokens ?? 0;
+
+    const graceThinking: Array<{ text: string; signature?: string }> = [];
+    const graceRaw = graceResponse.rawAssistantMessage as { content?: Array<Record<string, unknown>> } | undefined;
+    if (graceRaw && Array.isArray(graceRaw.content)) {
+      for (const block of graceRaw.content) {
+        if (block && block.type === "thinking" && typeof block.thinking === "string") {
+          graceThinking.push({
+            text: block.thinking as string,
+            signature: typeof block.signature === "string" ? block.signature : undefined,
+          });
+        }
+      }
+    }
+
+    logger.logLlmResponse({
+      turn: graceTurn,
+      stopReason: graceResponse.stopReason,
+      text: graceResponse.text,
+      thinking: graceThinking,
+      toolCalls: graceResponse.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
+      usage: {
+        inputTokens: graceResponse.usage.inputTokens,
+        outputTokens: graceResponse.usage.outputTokens,
+        cacheCreationInputTokens: graceResponse.usage.cacheCreationInputTokens,
+        cacheReadInputTokens: graceResponse.usage.cacheReadInputTokens,
+      },
+      rawAssistantMessage: graceResponse.rawAssistantMessage,
+    });
+
+    if (graceResponse.rawUsage !== undefined) {
+      logger.logUsageRow(graceResponse.rawUsage);
+    }
+
+    const graceReport = graceResponse.toolCalls.find((tc) => tc.name === "report_result");
+    if (graceReport) {
+      const parsed = parseReportResult(graceReport.arguments);
+      if (parsed.ok) {
+        // No re-ask budget here, so per-criterion citations (PRI-2160)
+        // are accepted when valid but never fatal: an invalid or
+        // missing criteria array is dropped with an event, not
+        // re-asked — the verdict survives.
+        const criteriaParsed = parseReportCriteria(
+          (graceReport.arguments as Record<string, unknown>).criteria,
+          card.acceptanceCriteria,
+        );
+        if (!criteriaParsed.ok) {
+          logger.logEvent("report_criteria_dropped", {
+            turn: graceTurn,
+            reason: criteriaParsed.reason,
+          });
+        }
+        return buildResult({
+          status: parsed.value.status,
+          summary: parsed.value.summary,
+          reasoning: parsed.value.reasoning,
+          observations: parsed.value.observations,
+          criteria:
+            criteriaParsed.ok && criteriaParsed.value.length > 0
+              ? criteriaParsed.value
+              : undefined,
+        });
+      }
+      // The final turn produced report_result but it was malformed.
+      // There is no re-ask budget left, so try salvage directly
+      // (PRI-2140): a valid core verdict survives; only malformed
+      // observations are dropped.
+      const salvaged = salvageReportResult(graceReport.arguments);
+      if (salvaged.ok) {
+        logger.logEvent("report_result_salvaged", {
+          turn: graceTurn,
+          reason: parsed.reason,
+          dropped: salvaged.value.dropped,
+        });
+        return buildResult({
+          status: salvaged.value.status,
+          summary: salvaged.value.summary,
+          reasoning: salvaged.value.reasoning,
+          observations: salvaged.value.observations,
+        });
+      }
+      // Log and fall through to the generic result — same posture as the
+      // in-loop malformed path, minus the raw-args dump (already captured
+      // in logLlmResponse).
+      logger.logEvent(fallback.malformedEvent, { reason: parsed.reason });
+    }
+
+    return buildResult({
+      status: "investigate",
+      summary: fallback.summary,
+      reasoning: fallback.reasoning,
+    });
+  }
+
   // Time budget exhausted. The run promised `budgetMs` wall-clock of tool
   // access and delivered it. Rather than ending with a generic "exhausted"
   // verdict, we inject one final SYSTEM-REMINDER and let the agent call
   // report_result with a best-effort summary of where it got stuck and why.
-  // This extra LLM call does not count against `usage.turns` — the caller
-  // contract is preserved; the grace turn is overhead.
   const nowAtGrace = Date.now();
   const elapsedMsAtGrace = nowAtGrace - startTime;
   logger.logEvent("deadline_reminder", { budgetMs, elapsedMs: elapsedMsAtGrace });
@@ -718,104 +932,9 @@ export async function runAgent(
     `for whoever picks this up next.\n` +
     `</SYSTEM-REMINDER>`;
 
-  const graceTurn = turns + 1;
-  logger.logUserMessage(graceTurn, reminderText);
-  messages.push(client.userMessage(reminderText));
-
-  logger.logLlmRequest(graceTurn, messages.length);
-  const graceResponse = await client.chat(messages, [REPORT_TOOL], systemPrompt, { runId });
-  totalInputTokens += graceResponse.usage.inputTokens;
-  totalOutputTokens += graceResponse.usage.outputTokens;
-  totalCacheCreation += graceResponse.usage.cacheCreationInputTokens ?? 0;
-  totalCacheRead += graceResponse.usage.cacheReadInputTokens ?? 0;
-
-  const graceThinking: Array<{ text: string; signature?: string }> = [];
-  const graceRaw = graceResponse.rawAssistantMessage as { content?: Array<Record<string, unknown>> } | undefined;
-  if (graceRaw && Array.isArray(graceRaw.content)) {
-    for (const block of graceRaw.content) {
-      if (block && block.type === "thinking" && typeof block.thinking === "string") {
-        graceThinking.push({
-          text: block.thinking as string,
-          signature: typeof block.signature === "string" ? block.signature : undefined,
-        });
-      }
-    }
-  }
-
-  logger.logLlmResponse({
-    turn: graceTurn,
-    stopReason: graceResponse.stopReason,
-    text: graceResponse.text,
-    thinking: graceThinking,
-    toolCalls: graceResponse.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })),
-    usage: {
-      inputTokens: graceResponse.usage.inputTokens,
-      outputTokens: graceResponse.usage.outputTokens,
-      cacheCreationInputTokens: graceResponse.usage.cacheCreationInputTokens,
-      cacheReadInputTokens: graceResponse.usage.cacheReadInputTokens,
-    },
-    rawAssistantMessage: graceResponse.rawAssistantMessage,
-  });
-
-  if (graceResponse.rawUsage !== undefined) {
-    logger.logUsageRow(graceResponse.rawUsage);
-  }
-
-  const graceReport = graceResponse.toolCalls.find((tc) => tc.name === "report_result");
-  if (graceReport) {
-    const parsed = parseReportResult(graceReport.arguments);
-    if (parsed.ok) {
-      // The grace turn has no re-ask budget, so per-criterion citations
-      // (PRI-2160) are accepted when valid but never fatal: an invalid
-      // or missing criteria array is dropped with an event, not
-      // re-asked — the verdict survives.
-      const criteriaParsed = parseReportCriteria(
-        (graceReport.arguments as Record<string, unknown>).criteria,
-        card.acceptanceCriteria,
-      );
-      if (!criteriaParsed.ok) {
-        logger.logEvent("report_criteria_dropped", {
-          turn: graceTurn,
-          reason: criteriaParsed.reason,
-        });
-      }
-      return buildResult({
-        status: parsed.value.status,
-        summary: parsed.value.summary,
-        reasoning: parsed.value.reasoning,
-        observations: parsed.value.observations,
-        criteria:
-          criteriaParsed.ok && criteriaParsed.value.length > 0
-            ? criteriaParsed.value
-            : undefined,
-      });
-    }
-    // Grace turn produced report_result but it was malformed. There is no
-    // re-ask budget left, so try salvage directly (PRI-2140): a valid
-    // core verdict survives; only malformed observations are dropped.
-    const salvaged = salvageReportResult(graceReport.arguments);
-    if (salvaged.ok) {
-      logger.logEvent("report_result_salvaged", {
-        turn: graceTurn,
-        reason: parsed.reason,
-        dropped: salvaged.value.dropped,
-      });
-      return buildResult({
-        status: salvaged.value.status,
-        summary: salvaged.value.summary,
-        reasoning: salvaged.value.reasoning,
-        observations: salvaged.value.observations,
-      });
-    }
-    // Log and fall through to the generic result — same posture as the
-    // in-loop malformed path, minus the raw-args dump (already captured
-    // in logLlmResponse).
-    logger.logEvent("deadline_grace_malformed_report", { reason: parsed.reason });
-  }
-
-  return buildResult({
-    status: "investigate",
+  return finalReportTurn(reminderText, {
     summary: "Agent reached time budget without reporting a result",
     reasoning: `Exceeded ${Math.round(budgetMs/1000)}s budget; grace-turn reminder did not yield a valid report_result.`,
+    malformedEvent: "deadline_grace_malformed_report",
   });
 }
