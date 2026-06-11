@@ -83,8 +83,10 @@ constant if field data demands it):
 
 A forced report still passes through the PRI-2140 validation path (re-ask
 budget already spent or not, salvage as last resort), and the PRI-2160
-criteria citations are accepted-if-valid but not re-asked, exactly like the
-deadline grace turn.
+criteria contract applies exactly as on the deadline grace turn: valid,
+consistent citations are kept; a verdict that cannot substantiate them on
+a card with acceptance criteria downgrades to investigate
+(`report_criteria_unsubstantiated`) while the model's account survives.
 
 ### Why force a report instead of erroring
 

@@ -752,7 +752,7 @@ describe("runAgent", () => {
     expect(String(rejection.content)).toContain("contradicts");
   });
 
-  test("persistently uncited reports are salvaged after bounded re-asks — the verdict survives without criteria (PRI-2160)", async () => {
+  test("persistently uncited reports are salvaged but a pass downgrades to investigate (PRI-2160)", async () => {
     const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
     const logger = makeMockLogger();
     (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
@@ -780,12 +780,50 @@ describe("runAgent", () => {
 
     const result = await runAgent(acCard, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
 
-    expect(result.status).toBe("pass");
+    // The model's account survives, but an unsubstantiated pass on a
+    // card with acceptance criteria must not stand as a pass.
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toBe("It all worked");
     expect(result.criteria).toBeUndefined();
     expect((client as any)._chatCalls).toHaveLength(3);
     const salvaged = eventLog.find((e) => e.name === "report_result_salvaged");
     expect(salvaged).toBeDefined();
-    expect(String(salvaged?.params.reason)).toContain("criteria");
+    const unsubstantiated = eventLog.find((e) => e.name === "report_criteria_unsubstantiated");
+    expect(unsubstantiated).toBeDefined();
+    expect(unsubstantiated?.params.originalStatus).toBe("pass");
+  });
+
+  test("salvage keeps valid criteria when only the observations were malformed (PRI-2160)", async () => {
+    const citedCriteria = [
+      { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+      { criterion: "error shown", verdict: "pass", evidence: "banner visible" },
+    ];
+    const stubborn = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "Both criteria satisfied",
+            reasoning: "Verified on screen",
+            observations: [{ kind: "ug", description: "stubbornly truncated" }],
+            criteria: citedCriteria,
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "stubborn" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([stubborn, stubborn, stubborn]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toEqual(citedCriteria);
+    expect(result.observations).toEqual([]);
   });
 
   test("a card without acceptance criteria does not require cited verdicts", async () => {
@@ -1520,7 +1558,7 @@ describe("runAgent", () => {
     expect((client as any)._chatCalls).toHaveLength(1);
   });
 
-  test("grace-turn criteria contradicting the verdict are dropped, not fatal (PRI-2160)", async () => {
+  test("grace-turn pass contradicted by its own criteria downgrades to investigate (PRI-2160)", async () => {
     const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
     const logger = makeMockLogger();
     (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
@@ -1556,9 +1594,13 @@ describe("runAgent", () => {
       budgetMs: 0,
     });
 
-    expect(result.status).toBe("pass");
+    // The contradiction (pass + unclear criterion) cannot stand as a
+    // pass even on the grace turn — the verdict downgrades, the
+    // model's account survives.
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toBe("Looked fine overall");
     expect(result.criteria).toBeUndefined();
-    const dropped = eventLog.find((e) => e.name === "report_criteria_dropped");
+    const dropped = eventLog.find((e) => e.name === "report_criteria_unsubstantiated");
     expect(dropped).toBeDefined();
     expect(String(dropped?.params.reason)).toContain("contradicts");
   });

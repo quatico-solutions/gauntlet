@@ -422,6 +422,48 @@ export async function runAgent(
     return result;
   }
 
+  /**
+   * Citation contract at the fallback seams (PRI-2160 over PRI-2140).
+   * Salvage and the final-report turn preserve the model's account
+   * (summary/reasoning/observations), but on a card with acceptance
+   * criteria a verdict that cannot substantiate valid, consistent
+   * per-criterion citations must not stand — it downgrades to
+   * investigate (logged as report_criteria_unsubstantiated). Valid
+   * criteria found in the raw args are kept even when something else
+   * (e.g. an observation) was malformed. Criteria-less cards pass
+   * through untouched.
+   */
+  function enforceCriteriaContract(
+    status: "pass" | "fail" | "investigate",
+    rawArgs: unknown,
+    turn: number,
+  ): { status: "pass" | "fail" | "investigate"; criteria?: VetResult["criteria"] } {
+    const rawCriteria =
+      rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs)
+        ? (rawArgs as Record<string, unknown>).criteria
+        : undefined;
+    const parsedCriteria = parseReportCriteria(rawCriteria, card.acceptanceCriteria);
+    let reason: string;
+    if (parsedCriteria.ok) {
+      const consistency = checkCriteriaConsistency(status, parsedCriteria.value);
+      if (consistency.ok) {
+        return {
+          status,
+          criteria: parsedCriteria.value.length > 0 ? parsedCriteria.value : undefined,
+        };
+      }
+      reason = consistency.reason;
+    } else {
+      reason = parsedCriteria.reason;
+    }
+    logger.logEvent("report_criteria_unsubstantiated", {
+      turn,
+      reason,
+      originalStatus: status,
+    });
+    return { status: "investigate" };
+  }
+
   const isAborted = (): boolean => options.abortSignal?.aborted === true;
   const abortedResult = (): VetResult => {
     logger.logShutdownSignaled({
@@ -571,11 +613,13 @@ export async function runAgent(
             reason: validationFailure,
             dropped: salvaged.value.dropped,
           });
+          const contract = enforceCriteriaContract(salvaged.value.status, report.arguments, turns);
           return buildResult({
-            status: salvaged.value.status,
+            status: contract.status,
             summary: salvaged.value.summary,
             reasoning: salvaged.value.reasoning,
             observations: salvaged.value.observations,
+            criteria: contract.criteria,
           });
         }
 
@@ -886,33 +930,13 @@ export async function runAgent(
         // are accepted when valid but never fatal: an invalid or
         // missing criteria array is dropped with an event, not
         // re-asked — the verdict survives.
-        const criteriaParsed = parseReportCriteria(
-          (graceReport.arguments as Record<string, unknown>).criteria,
-          card.acceptanceCriteria,
-        );
-        let graceCriteria: VetResult["criteria"];
-        if (!criteriaParsed.ok) {
-          logger.logEvent("report_criteria_dropped", {
-            turn: graceTurn,
-            reason: criteriaParsed.reason,
-          });
-        } else {
-          const consistency = checkCriteriaConsistency(parsed.value.status, criteriaParsed.value);
-          if (!consistency.ok) {
-            logger.logEvent("report_criteria_dropped", {
-              turn: graceTurn,
-              reason: consistency.reason,
-            });
-          } else if (criteriaParsed.value.length > 0) {
-            graceCriteria = criteriaParsed.value;
-          }
-        }
+        const contract = enforceCriteriaContract(parsed.value.status, graceReport.arguments, graceTurn);
         return buildResult({
-          status: parsed.value.status,
+          status: contract.status,
           summary: parsed.value.summary,
           reasoning: parsed.value.reasoning,
           observations: parsed.value.observations,
-          criteria: graceCriteria,
+          criteria: contract.criteria,
         });
       }
       // The final turn produced report_result but it was malformed.
@@ -926,11 +950,13 @@ export async function runAgent(
           reason: parsed.reason,
           dropped: salvaged.value.dropped,
         });
+        const contract = enforceCriteriaContract(salvaged.value.status, graceReport.arguments, graceTurn);
         return buildResult({
-          status: salvaged.value.status,
+          status: contract.status,
           summary: salvaged.value.summary,
           reasoning: salvaged.value.reasoning,
           observations: salvaged.value.observations,
+          criteria: contract.criteria,
         });
       }
       // Log and fall through to the generic result — same posture as the

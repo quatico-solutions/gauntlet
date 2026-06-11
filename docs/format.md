@@ -136,10 +136,13 @@ agent's reasoning, the observations, and pointers to the evidence files.
   entry per criterion of the card, in order: `criterion` (the agent's
   restatement), `verdict` (`pass`, `fail`, `unclear`), and `evidence` (a quote
   of what the agent observed plus its source). Present when the card declares
-  acceptance criteria and the report passed citation validation; absent for
-  criteria-less cards, results written before this field existed, and
-  internally-emitted or salvaged results. Additive and optional — no
-  `schemaVersion` bump; readers that ignore it are unaffected.
+  acceptance criteria and the report carried valid, consistent citations;
+  absent for criteria-less cards, results written before this field existed,
+  and internally-emitted results. On the fallback paths (salvage, grace/forced
+  final report) a verdict that cannot substantiate valid criteria on a card
+  that declares them is downgraded to `investigate` rather than passed
+  through. Additive and optional — no `schemaVersion` bump; readers that
+  ignore it are unaffected.
 - `evidence` — pointers to files for this run:
   - `screenshots`: relative paths to screenshots
   - `log`: relative path to `run.jsonl`
