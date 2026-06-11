@@ -659,7 +659,7 @@ export async function runAgent(
       }
 
       // Stall watchdog (PRI-2081). A solo non-mutating call whose
-      // (name, args, result text) matches the previous turn's exactly
+      // (name, args, stable result payload) matches the previous turn's exactly
       // increments the counter; anything else resets it. Adapters/mocks
       // without isMutatingTool are exempt (same posture as reflection).
       let stallWarningText: string | undefined;
@@ -671,7 +671,14 @@ export async function runAgent(
         const tc0 = response.toolCalls[0];
         let argsJson = "<unserializable>";
         try { argsJson = JSON.stringify(tc0.arguments ?? {}); } catch { /* ignore */ }
-        const fingerprint = `${tc0.name} ${argsJson} ${results[0].text ?? ""}`;
+        // Fingerprint the STABLE payload of the result. For image
+        // results that's the image bytes — the text carries a per-call
+        // path ("Screenshot saved to screenshots/00X.png"), which would
+        // make a frozen screen look alive (and an identical caption over
+        // a changing screen look frozen).
+        const result0 = results[0];
+        const stablePayload = result0.kind === "image" ? result0.image.data : result0.text ?? "";
+        const fingerprint = `${tc0.name} ${argsJson} ${stablePayload}`;
         if (fingerprint === lastStallFingerprint) {
           stallRepeats++;
         } else {

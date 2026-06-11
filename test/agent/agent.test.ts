@@ -1039,6 +1039,64 @@ describe("runAgent", () => {
       expect(eventLog.find((e) => e.name === "agent_stall_forced_report")).toBeUndefined();
     });
 
+    test("identical frozen screenshots trip the watchdog despite per-call path text (web adapter shape)", async () => {
+      // Web screenshot results carry "Screenshot saved to screenshots/00X.png"
+      // in result.text — different every call even when the screen is
+      // frozen. The fingerprint must use the stable payload (the image
+      // bytes), not the volatile text.
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      let shot = 0;
+      const adapter = makeMockAdapter();
+      adapter.executeTool = async () => ({
+        kind: "image" as const,
+        image: { data: "FROZEN_SCREEN_BYTES", mediaType: "image/png" },
+        imagePath: `screenshots/00${shot}.png`,
+        text: `Screenshot saved to screenshots/00${shot++}.png`,
+      });
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        reportTurn("c4"),
+      ]);
+
+      await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      const warning = eventLog.find((e) => e.name === "agent_stall_warning");
+      expect(warning).toBeDefined();
+    });
+
+    test("changing screenshots never trip the watchdog even with identical text", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      let frame = 0;
+      const adapter = makeMockAdapter();
+      adapter.executeTool = async () => ({
+        kind: "image" as const,
+        image: { data: `FRAME_${frame++}`, mediaType: "image/png" },
+        imagePath: "screenshots/live.png",
+        text: "Screenshot saved to screenshots/live.png",
+      });
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        readTurn("c4"),
+        reportTurn("c5"),
+      ]);
+
+      await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
+    });
+
     test("a mutating call resets the stall counter", async () => {
       const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
       const logger = makeMockLogger();

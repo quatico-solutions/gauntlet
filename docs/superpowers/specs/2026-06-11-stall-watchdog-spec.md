@@ -37,11 +37,17 @@ The agent loop fingerprints each turn after tool execution:
 - the adapter classifies that tool as **non-mutating** (`isMutatingTool`
   false — `read_screen`, `read_output`, `screenshot`, `wake_on_idle_log`,
   ...);
-- the call's `(name, JSON(arguments), result text)` is **byte-identical** to
-  the previous turn's fingerprint.
+- the call's `(name, JSON(arguments), stable result payload)` is
+  **byte-identical** to the previous turn's fingerprint. The stable
+  payload is the **image bytes** for image results — the web adapter's
+  screenshot text embeds a per-call file path ("Screenshot saved to
+  screenshots/00X.png"), which would make a frozen screen look alive
+  (and an identical caption over a changing screen look frozen) — and
+  the **result text** for everything else (TUI `read_screen` text is the
+  raw screen contents).
 
 Consecutive identical turns increment a stall counter; anything else (a
-mutating call, a multi-call turn, different args, different result text)
+mutating call, a multi-call turn, different args, a different payload)
 resets it to zero.
 
 Byte-identity is deliberately conservative: a screen with a clock, a
