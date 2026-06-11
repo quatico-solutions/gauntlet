@@ -1,4 +1,5 @@
-import { parseStoryCard } from "../../src/format/story-card";
+import { parseStoryCard, type StoryCard } from "../../src/format/story-card";
+import type { CriterionVerdict } from "../../src/types";
 import type {
   LLMClient,
   ToolCall,
@@ -28,10 +29,29 @@ export function step(
   };
 }
 
+/**
+ * Build the cited per-criterion verdicts a report against this card
+ * must carry (PRI-2160). These tests exercise adapter behavior, not
+ * citation discipline, so a uniform scripted verdict/evidence per
+ * criterion is enough to satisfy the validator.
+ */
+export function citeAll(
+  card: StoryCard,
+  verdict: CriterionVerdict["verdict"],
+  evidence = "scripted run: observed via adapter output"
+): CriterionVerdict[] {
+  return card.acceptanceCriteria.map((criterion) => ({
+    criterion,
+    verdict,
+    evidence,
+  }));
+}
+
 export function report(
   status: string,
   summary: string,
-  reasoning: string
+  reasoning: string,
+  criteria?: CriterionVerdict[]
 ): AgentResponse {
   return {
     text: summary,
@@ -39,7 +59,10 @@ export function report(
       {
         id: "call_report",
         name: "report_result",
-        arguments: { status, summary, reasoning },
+        arguments:
+          criteria !== undefined
+            ? { status, summary, reasoning, criteria }
+            : { status, summary, reasoning },
       },
     ],
     stopReason: "tool_use",

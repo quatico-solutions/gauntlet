@@ -7,13 +7,29 @@ import type { Adapter } from "../../src/adapters/adapter";
 import type { EvidenceLogger } from "../../src/evidence/logger";
 import type { StoryCard } from "../../src/format/story-card";
 
+// Criteria-less card: most tests here exercise loop mechanics, not the
+// per-criterion citation contract, so reports don't need a criteria
+// array. Citation behavior is tested separately with acCard below.
 const card: StoryCard = {
   id: "test-001",
   title: "Test scenario",
   status: "ready",
   tags: [],
   description: "A test",
-  acceptanceCriteria: ["something works"],
+  acceptanceCriteria: [],
+  raw: "",
+};
+
+// Card with acceptance criteria, for the per-criterion citation tests
+// (PRI-2160): a report against this card must carry one cited verdict
+// per criterion.
+const acCard: StoryCard = {
+  id: "test-ac-001",
+  title: "Test scenario with criteria",
+  status: "ready",
+  tags: [],
+  description: "A test with acceptance criteria",
+  acceptanceCriteria: ["login works", "error shown for bad password"],
   raw: "",
 };
 
@@ -418,27 +434,6 @@ describe("runAgent", () => {
     expect(result.status).toBe("fail");
   }, 10000);
 
-  test("max_tokens stop_reason returns investigate without retrying", async () => {
-    // Only one response is queued — a second call would throw "No more mock
-    // responses". Confirms the loop breaks immediately instead of nudging.
-    const client = makeMockClient([
-      {
-        text: "Partial thought cut off",
-        toolCalls: [],
-        stopReason: "max_tokens",
-        rawAssistantMessage: { role: "assistant", content: "truncated" },
-        usage: { inputTokens: 100, outputTokens: 4096 },
-      },
-    ]);
-
-    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
-
-    expect(result.status).toBe("investigate");
-    expect(result.summary).toContain("max_tokens");
-    // Exactly one chat() call — did not retry.
-    expect((client as any)._chatCalls).toHaveLength(1);
-  });
-
   test("empty response triggers a nudge; second empty ends with investigate (PRI-1864)", async () => {
     const emptyResp = {
       text: "",
@@ -563,6 +558,190 @@ describe("runAgent", () => {
     ]);
   });
 
+  test("a report against acceptance criteria without cited verdicts is re-asked; the cited re-call is honored and persisted (PRI-2160)", async () => {
+    const uncitedReport = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "Both criteria satisfied",
+            reasoning: "Saw the dashboard and the error banner",
+            observations: [],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "uncited" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const citedCriteria = [
+      {
+        criterion: "login works",
+        verdict: "pass",
+        evidence: "Dashboard header 'Welcome back' rendered after submit (screenshot 002)",
+      },
+      {
+        criterion: "error shown for bad password",
+        verdict: "pass",
+        evidence: "Banner 'Incorrect password' visible after submitting bad creds",
+      },
+    ];
+    const citedReport = {
+      text: "cited",
+      toolCalls: [
+        {
+          id: "call_2",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "Both criteria satisfied",
+            reasoning: "Saw the dashboard and the error banner",
+            observations: [],
+            criteria: citedCriteria,
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "cited" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([uncitedReport, citedReport]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toEqual(citedCriteria);
+
+    const chatCalls = (client as any)._chatCalls;
+    expect(chatCalls).toHaveLength(2);
+    const rejection = chatCalls[1].find(
+      (m: any) => m.role === "tool_result" && m.tool_call_id === "call_1",
+    );
+    expect(String(rejection.content)).toContain("criteria");
+  });
+
+  test("a report with empty evidence on one criterion is re-asked", async () => {
+    const weakReport = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "fail",
+            summary: "Second criterion failed",
+            reasoning: "No error shown",
+            observations: [],
+            criteria: [
+              { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+              { criterion: "error shown", verdict: "fail", evidence: "" },
+            ],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "weak" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const fixedReport = {
+      text: "fixed",
+      toolCalls: [
+        {
+          id: "call_2",
+          name: "report_result",
+          arguments: {
+            status: "fail",
+            summary: "Second criterion failed",
+            reasoning: "No error shown",
+            observations: [],
+            criteria: [
+              { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+              {
+                criterion: "error shown",
+                verdict: "fail",
+                evidence: "Submitted bad password; page stayed blank, no banner in screenshot 004",
+              },
+            ],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "fixed" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([weakReport, fixedReport]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("fail");
+    expect(result.criteria?.[1].evidence).toContain("screenshot 004");
+    const rejection = (client as any)._chatCalls[1].find(
+      (m: any) => m.role === "tool_result" && m.tool_call_id === "call_1",
+    );
+    expect(String(rejection.content)).toContain("criteria[1].evidence");
+  });
+
+  test("persistently uncited reports are salvaged after bounded re-asks — the verdict survives without criteria (PRI-2160)", async () => {
+    const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+    const logger = makeMockLogger();
+    (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+      eventLog.push({ name, params });
+    };
+    const uncitedReport = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "It all worked",
+            reasoning: "Looked fine",
+            observations: [],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "uncited" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([uncitedReport, uncitedReport, uncitedReport]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toBeUndefined();
+    expect((client as any)._chatCalls).toHaveLength(3);
+    const salvaged = eventLog.find((e) => e.name === "report_result_salvaged");
+    expect(salvaged).toBeDefined();
+    expect(String(salvaged?.params.reason)).toContain("criteria");
+  });
+
+  test("a card without acceptance criteria does not require cited verdicts", async () => {
+    const client = makeMockClient([
+      {
+        text: "done",
+        toolCalls: [
+          {
+            id: "c1",
+            name: "report_result",
+            arguments: { status: "pass", summary: "ok", reasoning: "ok", observations: [] },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "r" },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    ]);
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toBeUndefined();
+    expect((client as any)._chatCalls).toHaveLength(1);
+  });
+
   test("unsalvageable malformed report_result returns investigate after bounded re-asks", async () => {
     const badStatusReport = {
       text: "reporting",
@@ -635,6 +814,95 @@ describe("runAgent", () => {
     );
     expect(siblingResult).toBeDefined();
     expect(String(siblingResult.content)).toContain("not executed");
+  });
+
+  // Regression: PRI-2160 (run b35d). The judge hit max_tokens mid-thinking
+  // on turn 36 while composing its verdict and the run went indeterminate
+  // despite a fully-successful subject. A truncation now gets one recovery
+  // turn (truncated output discarded, concision nudge injected) before
+  // falling back to investigate.
+  test("max_tokens truncation gets one recovery turn; the recovered report is honored (PRI-2160)", async () => {
+    const truncated = {
+      text: "I was reasoning at length about the criteria and then got cut o",
+      toolCalls: [],
+      stopReason: "max_tokens" as const,
+      rawAssistantMessage: { role: "assistant", content: [{ type: "text", text: "cut o" }] },
+      usage: { inputTokens: 100, outputTokens: 4096 },
+    };
+    const recovered = {
+      text: "reporting now",
+      toolCalls: [
+        {
+          id: "c2",
+          name: "report_result",
+          arguments: { status: "pass", summary: "All good", reasoning: "Verified", observations: [] },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "r2" },
+      usage: { inputTokens: 100, outputTokens: 50 },
+    };
+    const client = makeMockClient([truncated, recovered]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("pass");
+    expect(result.summary).toBe("All good");
+
+    const chatCalls = (client as any)._chatCalls;
+    expect(chatCalls).toHaveLength(2);
+    // The truncated output was replaced with a stub (not replayed), and
+    // the recovery nudge tells the model it was cut off.
+    const recoveryMessages = chatCalls[1];
+    const lastMessage = recoveryMessages[recoveryMessages.length - 1];
+    expect(lastMessage.role).toBe("user");
+    expect(String(lastMessage.content)).toContain("cut off");
+    expect(String(lastMessage.content)).toContain("report_result");
+    const stub = recoveryMessages[recoveryMessages.length - 2];
+    expect(JSON.stringify(stub)).toContain("truncated");
+    expect(JSON.stringify(stub)).not.toContain("cut o\"");
+  });
+
+  test("truncation stub is a valid input item for both provider shapes", async () => {
+    const { synthesizeTruncatedAssistantStub } = await import("../../src/agent/agent");
+
+    // Anthropic raw is {role, content[]} — stub keeps that shape.
+    const anthropicStub = synthesizeTruncatedAssistantStub({
+      role: "assistant",
+      content: [{ type: "text", text: "partial" }],
+    }) as { role: string; content: Array<{ type: string; text: string }> };
+    expect(anthropicStub.role).toBe("assistant");
+    expect(anthropicStub.content[0].type).toBe("text");
+    expect(anthropicStub.content[0].text).toContain("truncated");
+
+    // OpenAI Responses raw is an array of output items — the stub must be
+    // a valid *input* item: a `message` item with string content (the
+    // same shape openai.ts's userMessage emits), not an output_text
+    // block missing the full ResponseOutputMessage shape.
+    const openaiStub = synthesizeTruncatedAssistantStub([
+      { type: "message", role: "assistant", content: [] },
+    ]) as Array<{ type: string; role: string; content: string }>;
+    expect(openaiStub).toHaveLength(1);
+    expect(openaiStub[0].type).toBe("message");
+    expect(openaiStub[0].role).toBe("assistant");
+    expect(openaiStub[0].content).toContain("truncated");
+  });
+
+  test("a second max_tokens truncation returns investigate", async () => {
+    const truncated = {
+      text: "still rambling",
+      toolCalls: [],
+      stopReason: "max_tokens" as const,
+      rawAssistantMessage: { role: "assistant", content: [{ type: "text", text: "still rambling" }] },
+      usage: { inputTokens: 100, outputTokens: 4096 },
+    };
+    const client = makeMockClient([truncated, truncated]);
+
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toContain("max_tokens");
+    expect((client as any)._chatCalls).toHaveLength(2);
   });
 
   test("accumulates cache token usage across turns", async () => {

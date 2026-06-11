@@ -112,6 +112,13 @@ describe("Web e2e smoke test", () => {
                       summary: "Greeting page works",
                       reasoning:
                         "Typed Alice, clicked Greet, saw Hello Alice!",
+                      criteria: [
+                        {
+                          criterion: "Greeting appears after clicking button",
+                          verdict: "pass",
+                          evidence: "Page showed 'Hello Alice!' after clicking Greet",
+                        },
+                      ],
                     },
                   },
                 ],

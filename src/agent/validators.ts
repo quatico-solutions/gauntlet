@@ -13,7 +13,7 @@
  * `properties` — so a 50-line validator handles what actually ships.
  */
 import type { ToolDefinition } from "../models/provider";
-import type { Observation, ObservationKind } from "../types";
+import type { CriterionVerdict, Observation, ObservationKind } from "../types";
 
 /**
  * The statuses the LLM is allowed to report via `report_result`. Note that
@@ -35,6 +35,11 @@ const OBSERVATION_KINDS: readonly ObservationKind[] = [
   "performance",
 ];
 const VET_STATUSES: readonly ReportableStatus[] = ["pass", "fail", "investigate"];
+const CRITERION_VERDICTS: readonly CriterionVerdict["verdict"][] = [
+  "pass",
+  "fail",
+  "unclear",
+];
 
 /**
  * Validate the required verdict fields of a `report_result` call:
@@ -76,13 +81,13 @@ function parseCoreFields(args: Record<string, unknown>): ParseResult<{
 }
 
 /**
- * Decode the `observations` field to an array. Some models (observed on
- * Sonnet 4.6) sometimes hand us the array already stringified —
+ * Decode an array-valued field. Some models (observed on Sonnet 4.6)
+ * sometimes hand us the array already stringified —
  * `observations: "[{...}, {...}]"`. The data is valid, just one level
  * too encoded. Try a single JSON.parse before failing; if it doesn't
  * decode to an array we report the type error.
  */
-function decodeObservationsField(value: unknown): ParseResult<unknown[]> {
+function decodeArrayField(value: unknown, fieldName: string): ParseResult<unknown[]> {
   let decodedValue: unknown = value;
   if (typeof decodedValue === "string") {
     try {
@@ -95,7 +100,7 @@ function decodeObservationsField(value: unknown): ParseResult<unknown[]> {
   if (!Array.isArray(decodedValue)) {
     return {
       ok: false,
-      reason: `observations: expected array, got ${typeName(decodedValue)}`,
+      reason: `${fieldName}: expected array, got ${typeName(decodedValue)}`,
     };
   }
   return { ok: true, value: decodedValue };
@@ -144,7 +149,7 @@ export function parseReportResult(args: unknown): ParseResult<{
 
   const observations: Observation[] = [];
   if (args.observations !== undefined && args.observations !== null) {
-    const decoded = decodeObservationsField(args.observations);
+    const decoded = decodeArrayField(args.observations, "observations");
     if (!decoded.ok) return decoded;
     for (let i = 0; i < decoded.value.length; i++) {
       const obs = parseObservation(decoded.value[i], i);
@@ -186,7 +191,7 @@ export function salvageReportResult(args: unknown): ParseResult<{
   const observations: Observation[] = [];
   const dropped: Array<{ index: number; reason: string }> = [];
   if (args.observations !== undefined && args.observations !== null) {
-    const decoded = decodeObservationsField(args.observations);
+    const decoded = decodeArrayField(args.observations, "observations");
     if (!decoded.ok) {
       dropped.push({ index: -1, reason: decoded.reason });
     } else {
@@ -199,6 +204,85 @@ export function salvageReportResult(args: unknown): ParseResult<{
   }
 
   return { ok: true, value: { ...core.value, observations, dropped } };
+}
+
+/**
+ * Validate the per-criterion verdict citations of a `report_result` call
+ * (PRI-2160). When the card declares acceptance criteria, the report
+ * must carry exactly one entry per criterion, in order, each with a
+ * verdict and non-empty evidence — a verdict the agent can't back with
+ * something it observed is invalid and gets re-asked. Cards without
+ * acceptance criteria require nothing; any stray `criteria` value is
+ * ignored (the field IS the per-criterion table, and there are no
+ * criteria for it to describe).
+ */
+export function parseReportCriteria(
+  value: unknown,
+  acceptanceCriteria: readonly string[],
+): ParseResult<CriterionVerdict[]> {
+  if (acceptanceCriteria.length === 0) {
+    return { ok: true, value: [] };
+  }
+
+  if (value === undefined || value === null) {
+    return {
+      ok: false,
+      reason:
+        `criteria: missing — the story has ${acceptanceCriteria.length} acceptance ` +
+        `criteria; provide one entry per criterion, in order, each with a verdict ` +
+        `and the evidence you observed`,
+    };
+  }
+
+  const decoded = decodeArrayField(value, "criteria");
+  if (!decoded.ok) return decoded;
+
+  if (decoded.value.length !== acceptanceCriteria.length) {
+    return {
+      ok: false,
+      reason:
+        `criteria: expected ${acceptanceCriteria.length} entries (one per ` +
+        `acceptance criterion, in order), got ${decoded.value.length}`,
+    };
+  }
+
+  const entries: CriterionVerdict[] = [];
+  for (let i = 0; i < decoded.value.length; i++) {
+    const entry = decoded.value[i];
+    if (!isRecord(entry)) {
+      return { ok: false, reason: `criteria[${i}]: expected object, got ${typeName(entry)}` };
+    }
+    if (typeof entry.criterion !== "string") {
+      return {
+        ok: false,
+        reason: `criteria[${i}].criterion: expected string, got ${typeName(entry.criterion)}`,
+      };
+    }
+    if (
+      typeof entry.verdict !== "string" ||
+      !CRITERION_VERDICTS.includes(entry.verdict as CriterionVerdict["verdict"])
+    ) {
+      return {
+        ok: false,
+        reason: `criteria[${i}].verdict: "${String(entry.verdict)}" not in [${CRITERION_VERDICTS.join(", ")}]`,
+      };
+    }
+    if (typeof entry.evidence !== "string" || entry.evidence.trim() === "") {
+      return {
+        ok: false,
+        reason:
+          `criteria[${i}].evidence: must be a non-empty string quoting what you ` +
+          `observed (screen text, file content + path, log line, or command output)`,
+      };
+    }
+    entries.push({
+      criterion: entry.criterion,
+      verdict: entry.verdict as CriterionVerdict["verdict"],
+      evidence: entry.evidence,
+    });
+  }
+
+  return { ok: true, value: entries };
 }
 
 /**

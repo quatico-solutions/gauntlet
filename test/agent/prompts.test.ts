@@ -36,6 +36,28 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("observation");
   });
 
+  // PRI-2160: the agent must give a cited per-criterion verdict, so the
+  // criteria are numbered (entries map by position) and both the
+  // scenario closer and the Reporting section demand evidence.
+  test("numbers acceptance criteria and demands cited per-criterion verdicts (PRI-2160)", () => {
+    const card: StoryCard = {
+      id: "story-001",
+      title: "User can add a todo",
+      status: "ready",
+      tags: [],
+      description: "As a user I want to add a todo",
+      acceptanceCriteria: ["Item appears in list", "Count updates"],
+      raw: "",
+    };
+
+    const prompt = buildSystemPrompt(card, undefined, undefined, undefined, 5);
+    expect(prompt).toContain("1. Item appears in list");
+    expect(prompt).toContain("2. Count updates");
+    expect(prompt).toContain("`criteria` array");
+    // Evidence must be observed, and absence claims need a cited search.
+    expect(prompt).toContain("never happened");
+  });
+
   test("instructs autonomous exploration when no criteria", () => {
     const card: StoryCard = {
       id: "story-001",

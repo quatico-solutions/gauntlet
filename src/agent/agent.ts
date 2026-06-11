@@ -8,7 +8,7 @@ import { RESULT_SCHEMA_VERSION } from "../types";
 import type { RunId } from "../util/brands";
 import { buildSystemPrompt } from "./prompts";
 import { buildInitialUserMessage } from "./initial-message";
-import { parseReportResult, salvageReportResult } from "./validators";
+import { parseReportCriteria, parseReportResult, salvageReportResult } from "./validators";
 import {
   buildReflectionReminder,
   renderTrace,
@@ -27,6 +27,13 @@ const DEFAULT_TOOL_TIMEOUT_MS = 30000;
 // LLM-emitted enums occasionally truncate ("ug" for "bug"); the model can
 // almost always fix its own call when shown the validation error.
 const MAX_REPORT_VALIDATION_RETRIES = 2;
+
+const MAX_TOKENS_NUDGE =
+  "<SYSTEM-REMINDER>\n" +
+  "Your previous response was cut off by the output token limit and has been discarded. " +
+  "Do not repeat it. Respond concisely — prefer tool calls over long prose. " +
+  "If you have reached a verdict, call report_result now with a brief summary and reasoning.\n" +
+  "</SYSTEM-REMINDER>";
 
 const EMPTY_RESPONSE_NUDGE =
   "<SYSTEM-REMINDER>\n" +
@@ -58,14 +65,30 @@ export function synthesizeFilledAssistantMessage(raw: unknown): unknown {
     };
   }
   if (Array.isArray(raw) && raw.length === 0) {
-    return [
-      {
-        role: "assistant",
-        content: [{ type: "output_text", text: "(empty turn)" }],
-      },
-    ];
+    // Valid Responses *input* item: a `message` item with string content
+    // (same shape openai.ts's userMessage emits). A bare assistant item
+    // with `output_text` content is not a valid input shape.
+    return [{ type: "message", role: "assistant", content: "(empty turn)" }];
   }
   return raw;
+}
+
+/**
+ * Build the assistant turn that stands in for a max_tokens-truncated
+ * response (PRI-2160). The truncated content is NOT replayed: a partial
+ * thinking block can't be round-tripped (its signature never arrived)
+ * and partial tool calls must not be executed, so the whole turn is
+ * replaced with a short text stub. Provider-shape-aware like
+ * `synthesizeFilledAssistantMessage` above: Anthropic's raw is
+ * `{role, content[]}`, OpenAI Responses is an array of output items.
+ */
+export function synthesizeTruncatedAssistantStub(raw: unknown): unknown {
+  const stubText = "(response truncated by the output token limit; discarded)";
+  if (Array.isArray(raw)) {
+    // Valid Responses *input* item — see synthesizeFilledAssistantMessage.
+    return [{ type: "message", role: "assistant", content: stubText }];
+  }
+  return { role: "assistant", content: [{ type: "text", text: stubText }] };
 }
 
 export interface AgentOptions {
@@ -174,6 +197,30 @@ export const REPORT_TOOL: ToolDefinition = {
           required: ["kind", "description"],
         },
       },
+      criteria: {
+        type: "array",
+        description:
+          "Per-criterion verdicts. Required when the scenario lists acceptance criteria: one entry per criterion, in the order listed; omit for scenarios without acceptance criteria. Pass as an array literal, not a JSON string.",
+        items: {
+          type: "object",
+          properties: {
+            criterion: {
+              type: "string",
+              description: "Short restatement of the criterion",
+            },
+            verdict: {
+              type: "string",
+              enum: ["pass", "fail", "unclear"],
+            },
+            evidence: {
+              type: "string",
+              description:
+                "What you observed that supports this verdict: a short quote plus its source (screen text, file content and path, log line, or command output). For a claim that something never happened, cite the search you ran and what it returned.",
+            },
+          },
+          required: ["criterion", "verdict", "evidence"],
+        },
+      },
       reasoning: {
         type: "string",
         description: "Why you reached this verdict",
@@ -243,6 +290,7 @@ export async function runAgent(
   let turns = 0;
   let emptyResponseNudged = false;
   let reportValidationRetries = 0;
+  let maxTokensNudged = false;
   const deadline = startTime + budgetMs;
   // Bounded buffer of state-changing tool calls, classified by the
   // adapter via isMutatingTool. Drives the reflection-checkpoint trace.
@@ -263,12 +311,14 @@ export async function runAgent(
     summary: string;
     reasoning: string;
     observations?: VetResult["observations"];
+    criteria?: VetResult["criteria"];
   }): VetResult;
   function buildResult(partial: {
     status: "errored";
     summary: string;
     reasoning: string;
     observations?: VetResult["observations"];
+    criteria?: VetResult["criteria"];
     error: { type: string; message: string };
   }): VetResult;
   function buildResult(partial: {
@@ -276,6 +326,7 @@ export async function runAgent(
     summary: string;
     reasoning: string;
     observations?: VetResult["observations"];
+    criteria?: VetResult["criteria"];
     error?: { type: string; message: string };
   }): VetResult {
     const base = {
@@ -285,6 +336,7 @@ export async function runAgent(
       summary: partial.summary,
       reasoning: partial.reasoning,
       observations: partial.observations ?? [],
+      criteria: partial.criteria,
       evidence: {
         screenshots: logger.screenshots,
         log: logger.logPath,
@@ -309,6 +361,7 @@ export async function runAgent(
       reasoning: result.reasoning,
       observationCount: result.observations.length,
       observations: result.observations,
+      criteria: result.criteria,
       durationMs: result.duration_ms,
       usage: {
         inputTokens: totalInputTokens,
@@ -405,7 +458,31 @@ export async function runAgent(
       }
 
       const parsed = parseReportResult(report.arguments);
+      let validationFailure: string;
       if (!parsed.ok) {
+        validationFailure = parsed.reason;
+      } else {
+        // Per-criterion citation validation (PRI-2160): when the card
+        // has acceptance criteria, the report must carry one cited
+        // verdict per criterion. Checked only after the base shape
+        // parses — its failure reason feeds the same re-ask path.
+        const criteriaParsed = parseReportCriteria(
+          (report.arguments as Record<string, unknown>).criteria,
+          card.acceptanceCriteria,
+        );
+        if (criteriaParsed.ok) {
+          return buildResult({
+            status: parsed.value.status,
+            summary: parsed.value.summary,
+            reasoning: parsed.value.reasoning,
+            observations: parsed.value.observations,
+            criteria: criteriaParsed.value.length > 0 ? criteriaParsed.value : undefined,
+          });
+        }
+        validationFailure = criteriaParsed.reason;
+      }
+
+      {
         // A malformed report_result must not silently discard a
         // substantive verdict (PRI-2140). First feed the validation
         // error back to the model for a corrected call (bounded);
@@ -416,13 +493,13 @@ export async function runAgent(
           logger.logEvent("report_result_invalid_retry", {
             turn: turns,
             attempt: reportValidationRetries,
-            reason: parsed.reason,
+            reason: validationFailure,
           });
           pushAssistantTurn(messages, response.rawAssistantMessage);
           const retryResults: ToolResult[] = response.toolCalls.map((tc) =>
             tc.id === report.id
               ? textResult(
-                  `Error: report_result rejected: ${parsed.reason}. ` +
+                  `Error: report_result rejected: ${validationFailure}. ` +
                   `Call report_result again with corrected arguments. ` +
                   `Keep your verdict and findings the same; fix only the invalid field.`,
                 )
@@ -438,7 +515,7 @@ export async function runAgent(
         if (salvaged.ok) {
           logger.logEvent("report_result_salvaged", {
             turn: turns,
-            reason: parsed.reason,
+            reason: validationFailure,
             dropped: salvaged.value.dropped,
           });
           return buildResult({
@@ -455,32 +532,38 @@ export async function runAgent(
         try { rawArgs = JSON.stringify(report.arguments); } catch { /* ignore */ }
         return buildResult({
           status: "investigate",
-          summary: `LLM returned malformed report_result: ${parsed.reason}`,
+          summary: `LLM returned malformed report_result: ${validationFailure}`,
           reasoning: `Validator rejected report_result args. raw=${rawArgs}`,
         });
       }
-      return buildResult({
-        status: parsed.value.status,
-        summary: parsed.value.summary,
-        reasoning: parsed.value.reasoning,
-        observations: parsed.value.observations,
-      });
     }
 
-    // Truncated output. Nudging an already-truncated turn just burns more
-    // tokens — break immediately with an investigate verdict so the human
-    // (or an escalating scheduler) sees the problem.
+    // Truncated output. A run died this way on the verge of its verdict
+    // (PRI-2160, run b35d: max_tokens mid-thinking on turn 36, subject
+    // fully successful) — so the first truncation gets one recovery
+    // turn: discard the partial output, inject a concision nudge, and
+    // let the model try again. Bounded at one per run; a second
+    // truncation ends with investigate so the human (or an escalating
+    // scheduler) sees the problem.
     if (response.stopReason === "max_tokens") {
       logger.logEvent("stopped_max_tokens", {
         turn: turns,
         hasText: Boolean(response.text),
         toolCallCount: response.toolCalls.length,
+        recovery: !maxTokensNudged,
       });
-      return buildResult({
-        status: "investigate",
-        summary: "LLM response truncated by max_tokens before reporting",
-        reasoning: `Stopped with max_tokens on turn ${turns}. Increase max_tokens or shorten the scenario.`,
-      });
+      if (maxTokensNudged) {
+        return buildResult({
+          status: "investigate",
+          summary: "LLM response truncated by max_tokens before reporting",
+          reasoning: `Stopped with max_tokens on turn ${turns}, after an earlier truncation had already used the recovery turn. Increase max_tokens or shorten the scenario.`,
+        });
+      }
+      maxTokensNudged = true;
+      pushAssistantTurn(messages, synthesizeTruncatedAssistantStub(response.rawAssistantMessage));
+      logger.logUserMessage(turns, MAX_TOKENS_NUDGE);
+      messages.push(client.userMessage(MAX_TOKENS_NUDGE));
+      continue;
     }
 
     // Any non-empty response resets the empty-nudge tracker.
@@ -676,11 +759,29 @@ export async function runAgent(
   if (graceReport) {
     const parsed = parseReportResult(graceReport.arguments);
     if (parsed.ok) {
+      // The grace turn has no re-ask budget, so per-criterion citations
+      // (PRI-2160) are accepted when valid but never fatal: an invalid
+      // or missing criteria array is dropped with an event, not
+      // re-asked — the verdict survives.
+      const criteriaParsed = parseReportCriteria(
+        (graceReport.arguments as Record<string, unknown>).criteria,
+        card.acceptanceCriteria,
+      );
+      if (!criteriaParsed.ok) {
+        logger.logEvent("report_criteria_dropped", {
+          turn: graceTurn,
+          reason: criteriaParsed.reason,
+        });
+      }
       return buildResult({
         status: parsed.value.status,
         summary: parsed.value.summary,
         reasoning: parsed.value.reasoning,
         observations: parsed.value.observations,
+        criteria:
+          criteriaParsed.ok && criteriaParsed.value.length > 0
+            ? criteriaParsed.value
+            : undefined,
       });
     }
     // Grace turn produced report_result but it was malformed. There is no

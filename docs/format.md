@@ -132,6 +132,14 @@ agent's reasoning, the observations, and pointers to the evidence files.
 - `observations` — incidental findings, each with `kind` (`bug`, `ux`, `typo`,
   `suggestion`, `a11y`, `performance`) and `description`. An observation may
   also carry an `evidence` array of paths pointing at supporting files.
+- `criteria` (optional) — per-acceptance-criterion verdicts (PRI-2160), one
+  entry per criterion of the card, in order: `criterion` (the agent's
+  restatement), `verdict` (`pass`, `fail`, `unclear`), and `evidence` (a quote
+  of what the agent observed plus its source). Present when the card declares
+  acceptance criteria and the report passed citation validation; absent for
+  criteria-less cards, results written before this field existed, and
+  internally-emitted or salvaged results. Additive and optional — no
+  `schemaVersion` bump; readers that ignore it are unaffected.
 - `evidence` — pointers to files for this run:
   - `screenshots`: relative paths to screenshots
   - `log`: relative path to `run.jsonl`

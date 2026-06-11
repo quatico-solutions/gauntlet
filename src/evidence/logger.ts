@@ -107,6 +107,9 @@ export interface RunEndFields {
   reasoning: string;
   observationCount: number;
   observations: Array<{ kind: string; description: string; evidence?: string[] }>;
+  /** Per-acceptance-criterion cited verdicts (PRI-2160). Present only
+   * when the result carries them — mirrors VetResult.criteria. */
+  criteria?: Array<{ criterion: string; verdict: string; evidence: string }>;
   durationMs: number;
   usage: {
     inputTokens: number;

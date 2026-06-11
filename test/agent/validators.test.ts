@@ -1,5 +1,10 @@
 import { describe, test, expect } from "bun:test";
-import { parseReportResult, salvageReportResult, validateToolArgs } from "../../src/agent/validators";
+import {
+  parseReportCriteria,
+  parseReportResult,
+  salvageReportResult,
+  validateToolArgs,
+} from "../../src/agent/validators";
 import type { ToolDefinition } from "../../src/models/provider";
 
 describe("parseReportResult", () => {
@@ -300,6 +305,117 @@ describe("salvageReportResult", () => {
   test("refuses to salvage non-object args", () => {
     const result = salvageReportResult("pass");
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("parseReportCriteria", () => {
+  const TWO_ACS = [
+    "The login form accepts valid credentials",
+    "An error is shown for a wrong password",
+  ];
+
+  test("accepts one cited verdict per criterion, in order", () => {
+    const result = parseReportCriteria(
+      [
+        {
+          criterion: "login works",
+          verdict: "pass",
+          evidence: "After submitting, the dashboard header 'Welcome back' rendered (screenshot 003)",
+        },
+        {
+          criterion: "wrong password error",
+          verdict: "fail",
+          evidence: "Submitting a bad password navigated to a blank page; no error text on screen",
+        },
+      ],
+      TWO_ACS,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toHaveLength(2);
+      expect(result.value[0].verdict).toBe("pass");
+      expect(result.value[1].verdict).toBe("fail");
+    }
+  });
+
+  // Regression: PRI-2160 (run 2eb5). The judge asserted "the reviewer
+  // never mentioned the DRY violation" without citing any artifact; the
+  // reviewer's transcript flagged it explicitly. An AC verdict without
+  // evidence is invalid and must be re-asked.
+  test("rejects a missing criteria array when the card has acceptance criteria", () => {
+    const result = parseReportCriteria(undefined, TWO_ACS);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("criteria");
+      expect(result.reason).toContain("2");
+    }
+  });
+
+  test("rejects a count mismatch", () => {
+    const result = parseReportCriteria(
+      [{ criterion: "only one", verdict: "pass", evidence: "saw it" }],
+      TWO_ACS,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("2");
+  });
+
+  test("rejects empty or whitespace-only evidence", () => {
+    const result = parseReportCriteria(
+      [
+        { criterion: "a", verdict: "pass", evidence: "real quote from the screen" },
+        { criterion: "b", verdict: "pass", evidence: "   " },
+      ],
+      TWO_ACS,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("criteria[1].evidence");
+  });
+
+  test("rejects a verdict outside pass/fail/unclear", () => {
+    const result = parseReportCriteria(
+      [
+        { criterion: "a", verdict: "pass", evidence: "x" },
+        { criterion: "b", verdict: "maybe", evidence: "y" },
+      ],
+      TWO_ACS,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("criteria[1].verdict");
+  });
+
+  test("rejects a non-string criterion restatement", () => {
+    const result = parseReportCriteria(
+      [
+        { criterion: 1, verdict: "pass", evidence: "x" },
+        { criterion: "b", verdict: "pass", evidence: "y" },
+      ],
+      TWO_ACS,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("criteria[0].criterion");
+  });
+
+  test("decodes a JSON-stringified criteria array (same double-encoding hazard as observations)", () => {
+    const result = parseReportCriteria(
+      JSON.stringify([
+        { criterion: "a", verdict: "pass", evidence: "x" },
+        { criterion: "b", verdict: "unclear", evidence: "y" },
+      ]),
+      TWO_ACS,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value[1].verdict).toBe("unclear");
+  });
+
+  test("a card without acceptance criteria requires nothing and yields an empty list", () => {
+    expect(parseReportCriteria(undefined, []).ok).toBe(true);
+    const ignored = parseReportCriteria(
+      [{ criterion: "stray", verdict: "pass", evidence: "x" }],
+      [],
+    );
+    expect(ignored.ok).toBe(true);
+    if (ignored.ok) expect(ignored.value).toEqual([]);
   });
 });
 

@@ -7,6 +7,7 @@ import { readFileSync, mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
+  citeAll,
   loadStory,
   step,
   report,
@@ -58,7 +59,7 @@ describe("Web e2e — TodoMVC", () => {
         step("call_6", "type", { text: "Walk the dog", selector: ".new-todo" }),
         step("call_7", "press", { key: "Enter" }),
         step("call_8", "extract", { selector: ".todo-count" }),
-        report("pass", "Todo items can be added", "Added two items, count updated correctly"),
+        report("pass", "Todo items can be added", "Added two items, count updated correctly", citeAll(card, "pass")),
       ];
 
       const client = makeScriptedClient(steps);
@@ -120,7 +121,8 @@ describe("Web e2e — TodoMVC", () => {
         report(
           "fail",
           "Editing is not supported",
-          "Double-clicking a todo did not reveal an edit input"
+          "Double-clicking a todo did not reveal an edit input",
+          citeAll(card, "fail")
         ),
       ];
 

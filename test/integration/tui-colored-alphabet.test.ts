@@ -7,7 +7,7 @@ import type { AgentResponse } from "../../src/models/provider";
 import { mkdtempSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadStory, step, report, makeScriptedClient } from "./helpers";
+import { citeAll, loadStory, step, report, makeScriptedClient } from "./helpers";
 
 const hasTmux = (() => {
   try {
@@ -54,6 +54,7 @@ describe.skipIf(!hasTmux)("TUI adapter e2e — colored-alphabet capture evidence
         "pass",
         "agent read the screen",
         "Read ANSI-rendered letters and verified the color mapping",
+        citeAll(card, "pass"),
       ),
     ];
     const client = makeScriptedClient(steps, 500);

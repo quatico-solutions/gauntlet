@@ -59,6 +59,22 @@ export interface Observation {
 }
 
 /**
+ * Per-acceptance-criterion verdict with the evidence supporting it,
+ * reported by the agent via `report_result` when the card declares
+ * acceptance criteria (PRI-2160). `evidence` is what the agent actually
+ * observed — a quote plus its source (screen text, file path, log line,
+ * command output) — so a verdict can be checked against the artifacts
+ * instead of trusted on recollection. Entries map to the card's
+ * criteria by position; `criterion` is the agent's restatement,
+ * recorded for readability.
+ */
+export interface CriterionVerdict {
+  criterion: string;
+  verdict: "pass" | "fail" | "unclear";
+  evidence: string;
+}
+
+/**
  * Base shape — the fields shared by every VetResult variant. `VetResult`
  * itself is a discriminated union on `status`: "errored" variants carry
  * a required `error` object; non-errored variants don't have the field.
@@ -79,6 +95,16 @@ interface VetResultBase {
   summary: string;
   reasoning: string;
   observations: Observation[];
+  /**
+   * Per-acceptance-criterion verdicts with evidence citations
+   * (PRI-2160). Present when the card declares acceptance criteria and
+   * the agent's report satisfied citation validation; absent for
+   * criteria-less cards, pre-existing results, internally-emitted
+   * results (deadline fallback, shutdown drain), and salvaged reports.
+   * Additive and optional — no RESULT_SCHEMA_VERSION bump; consumers
+   * that ignore it are unaffected.
+   */
+  criteria?: CriterionVerdict[];
   evidence: {
     screenshots: string[];
     log: string;
