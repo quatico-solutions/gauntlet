@@ -85,6 +85,7 @@ function makeMockClient(responses: AgentResponse[]): LLMClient {
   let callIndex = 0;
   const chatCalls: unknown[][] = [];
   const toolsPerCall: string[][] = [];
+  const toolResultExtras: Array<string | undefined> = [];
 
   return {
     async chat(messages, tools) {
@@ -98,6 +99,7 @@ function makeMockClient(responses: AgentResponse[]): LLMClient {
       return { role: "user", content };
     },
     toolResultMessages(calls: ToolCall[], results: ToolResult[], extraUserText?: string) {
+      toolResultExtras.push(extraUserText);
       const msgs: unknown[] = calls.map((call, i) => ({
         role: "tool_result",
         tool_call_id: call.id,
@@ -110,7 +112,12 @@ function makeMockClient(responses: AgentResponse[]): LLMClient {
     },
     _chatCalls: chatCalls,
     _toolsPerCall: toolsPerCall,
-  } as LLMClient & { _chatCalls: unknown[][]; _toolsPerCall: string[][] };
+    _toolResultExtras: toolResultExtras,
+  } as LLMClient & {
+    _chatCalls: unknown[][];
+    _toolsPerCall: string[][];
+    _toolResultExtras: Array<string | undefined>;
+  };
 }
 
 describe("runAgent", () => {
@@ -989,6 +996,21 @@ describe("runAgent", () => {
       const toolsPerCall = (client as any)._toolsPerCall;
       expect(toolsPerCall[6]).toEqual(["report_result"]);
       expect((client as any)._chatCalls).toHaveLength(7);
+
+      // The forced-report reminder is woven into the sixth turn's
+      // tool-result message via extraUserText — not appended as a
+      // separate consecutive user message after it.
+      const extras = (client as any)._toolResultExtras;
+      expect(String(extras[5])).toContain("only report_result can be called now");
+      const forcedMessages = (client as any)._chatCalls[6];
+      const lastMessage = forcedMessages[forcedMessages.length - 1] as { role: string; content: string };
+      expect(lastMessage.role).toBe("user");
+      expect(String(lastMessage.content)).toContain("only report_result can be called now");
+      // Exactly one reminder copy: woven, not woven-plus-appended.
+      const reminderCopies = forcedMessages.filter(
+        (m: any) => typeof m.content === "string" && m.content.includes("only report_result can be called now"),
+      );
+      expect(reminderCopies).toHaveLength(1);
     });
 
     test("changing read results never trip the watchdog", async () => {

@@ -728,11 +728,13 @@ export async function runAgent(
           : stallWarningText;
       }
 
-      messages.push(...client.toolResultMessages(response.toolCalls, results, extraUserText));
-
       // Stall escalation: the surface has been frozen through the
       // warning and beyond — stop paying for the poll loop and demand
-      // the model's own account of the run (PRI-2081).
+      // the model's own account of the run (PRI-2081). The forced
+      // reminder is woven into THIS turn's tool-result message (it must
+      // not trail the tool results as a separate consecutive user
+      // message), then the report-only turn runs against it.
+      let stallForcedText: string | undefined;
       if (stallRepeats >= STALL_FORCED_REPORT_AFTER) {
         const stalledTool = response.toolCalls[0].name;
         logger.logEvent("agent_stall_forced_report", {
@@ -740,7 +742,18 @@ export async function runAgent(
           tool: stalledTool,
           repeats: stallRepeats,
         });
-        return finalReportTurn(buildStallForcedReminder(stalledTool, stallRepeats), {
+        stallForcedText = buildStallForcedReminder(stalledTool, stallRepeats);
+        logger.logUserMessage(turns, stallForcedText);
+        extraUserText = extraUserText
+          ? `${extraUserText}\n\n${stallForcedText}`
+          : stallForcedText;
+      }
+
+      messages.push(...client.toolResultMessages(response.toolCalls, results, extraUserText));
+
+      if (stallForcedText !== undefined) {
+        const stalledTool = response.toolCalls[0].name;
+        return finalReportTurn({
           summary: "Agent stalled repeating an unchanging read without reporting a result",
           reasoning: `Stalled: ${stallRepeats + 1} consecutive identical ${stalledTool} calls; the forced-report reminder did not yield a valid report_result.`,
           malformedEvent: "stall_grace_malformed_report",
@@ -784,11 +797,15 @@ export async function runAgent(
   }
 
   /**
-   * One final LLM turn with ONLY report_result mounted, prompted by
-   * `reminderText`. Shared by the two early-end paths that still want
-   * the model's own account of the run: time-budget exhaustion (the
+   * One final LLM turn with ONLY report_result mounted, run against the
+   * messages as they stand. Shared by the two early-end paths that still
+   * want the model's own account of the run: time-budget exhaustion (the
    * grace turn) and the stall watchdog's forced report (PRI-2081).
-   * Does not count against `usage.turns` — the turn is overhead.
+   * Delivering the reminder is the CALLER's job — the deadline path
+   * appends it as a fresh user message; the stall path weaves it into
+   * the tool-result message it just pushed (a reminder must not trail
+   * tool results as a separate consecutive user message). Does not count
+   * against `usage.turns` — the turn is overhead.
    *
    * The model's report is honored when valid; per-criterion citations
    * (PRI-2160) are accepted when valid but never fatal here (no re-ask
@@ -796,13 +813,9 @@ export async function runAgent(
    * to the caller-supplied fallback investigate.
    */
   async function finalReportTurn(
-    reminderText: string,
     fallback: { summary: string; reasoning: string; malformedEvent: string },
   ): Promise<VetResult> {
     const graceTurn = turns + 1;
-    logger.logUserMessage(graceTurn, reminderText);
-    messages.push(client.userMessage(reminderText));
-
     logger.logLlmRequest(graceTurn, messages.length);
     const graceResponse = await client.chat(messages, [REPORT_TOOL], systemPrompt, { runId });
     totalInputTokens += graceResponse.usage.inputTokens;
@@ -926,7 +939,10 @@ export async function runAgent(
     `for whoever picks this up next.\n` +
     `</SYSTEM-REMINDER>`;
 
-  return finalReportTurn(reminderText, {
+  logger.logUserMessage(turns + 1, reminderText);
+  messages.push(client.userMessage(reminderText));
+
+  return finalReportTurn({
     summary: "Agent reached time budget without reporting a result",
     reasoning: `Exceeded ${Math.round(budgetMs/1000)}s budget; grace-turn reminder did not yield a valid report_result.`,
     malformedEvent: "deadline_grace_malformed_report",
