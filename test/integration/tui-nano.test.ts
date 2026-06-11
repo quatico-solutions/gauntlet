@@ -7,7 +7,7 @@ import type { AgentResponse } from "../../src/models/provider";
 import { mkdtempSync, writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadStory, step, report, makeScriptedClient } from "./helpers";
+import { citeAll, loadStory, step, report, makeScriptedClient } from "./helpers";
 
 const hasTmux = (() => {
   try {
@@ -69,7 +69,8 @@ describe.skipIf(!hasTmux || !hasNano)("TUI adapter e2e — nano editor", () => {
       report(
         "pass",
         "nano opens, accepts typed text, and saves files",
-        "Opened file with initial content, typed text, used Ctrl+O to save, confirmed filename"
+        "Opened file with initial content, typed text, used Ctrl+O to save, confirmed filename",
+        citeAll(card, "pass")
       ),
     ];
 
@@ -97,7 +98,8 @@ describe.skipIf(!hasTmux || !hasNano)("TUI adapter e2e — nano editor", () => {
       report(
         "fail",
         "nano does not support tabbed editing",
-        "The screen shows a single file view with no tab bar or tab switching interface"
+        "The screen shows a single file view with no tab bar or tab switching interface",
+        citeAll(card, "fail")
       ),
     ];
 

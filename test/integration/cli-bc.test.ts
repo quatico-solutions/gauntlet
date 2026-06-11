@@ -7,7 +7,7 @@ import type { AgentResponse } from "../../src/models/provider";
 import { mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadStory, step, report, makeScriptedClient } from "./helpers";
+import { citeAll, loadStory, step, report, makeScriptedClient } from "./helpers";
 
 describe("CLI adapter e2e — bc calculator", () => {
   test("pass: bc performs arithmetic", async () => {
@@ -24,7 +24,7 @@ describe("CLI adapter e2e — bc calculator", () => {
       step("call_2", "read_output", {}),
       step("call_3", "type", { text: "6*7\n" }),
       step("call_4", "read_output", {}),
-      report("pass", "bc computes arithmetic correctly", "2+3=5 and 6*7=42"),
+      report("pass", "bc computes arithmetic correctly", "2+3=5 and 6*7=42", citeAll(card, "pass")),
     ];
 
     const client = makeScriptedClient(steps);
@@ -53,7 +53,8 @@ describe("CLI adapter e2e — bc calculator", () => {
       report(
         "fail",
         "bc has no help command",
-        "Typing help produced an error, not a help menu"
+        "Typing help produced an error, not a help menu",
+        citeAll(card, "fail")
       ),
     ];
 

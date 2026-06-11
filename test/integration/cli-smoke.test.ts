@@ -100,6 +100,13 @@ describe("CLI adapter e2e smoke test", () => {
               summary: "Echo app correctly echoes input",
               reasoning:
                 "The app displayed a welcome message and echoed back the typed input",
+              criteria: [
+                {
+                  criterion: "App echoes typed input",
+                  verdict: "pass",
+                  evidence: "read_output showed the typed line echoed back",
+                },
+              ],
             },
           },
         ],
