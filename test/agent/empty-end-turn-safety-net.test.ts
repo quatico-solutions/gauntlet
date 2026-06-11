@@ -13,7 +13,9 @@ const card: StoryCard = {
   status: "ready",
   tags: [],
   description: "A test",
-  acceptanceCriteria: [""],
+  // Criteria-less: these tests exercise loop mechanics, not the
+  // per-criterion citation contract (PRI-2160).
+  acceptanceCriteria: [],
   raw: "",
 };
 

@@ -7,13 +7,29 @@ import type { Adapter } from "../../src/adapters/adapter";
 import type { EvidenceLogger } from "../../src/evidence/logger";
 import type { StoryCard } from "../../src/format/story-card";
 
+// Criteria-less card: most tests here exercise loop mechanics, not the
+// per-criterion citation contract, so reports don't need a criteria
+// array. Citation behavior is tested separately with acCard below.
 const card: StoryCard = {
   id: "test-001",
   title: "Test scenario",
   status: "ready",
   tags: [],
   description: "A test",
-  acceptanceCriteria: ["something works"],
+  acceptanceCriteria: [],
+  raw: "",
+};
+
+// Card with acceptance criteria, for the per-criterion citation tests
+// (PRI-2160): a report against this card must carry one cited verdict
+// per criterion.
+const acCard: StoryCard = {
+  id: "test-ac-001",
+  title: "Test scenario with criteria",
+  status: "ready",
+  tags: [],
+  description: "A test with acceptance criteria",
+  acceptanceCriteria: ["login works", "error shown for bad password"],
   raw: "",
 };
 
@@ -561,6 +577,190 @@ describe("runAgent", () => {
     expect(salvaged?.params.dropped).toEqual([
       { index: 1, reason: expect.stringContaining("ug") },
     ]);
+  });
+
+  test("a report against acceptance criteria without cited verdicts is re-asked; the cited re-call is honored and persisted (PRI-2160)", async () => {
+    const uncitedReport = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "Both criteria satisfied",
+            reasoning: "Saw the dashboard and the error banner",
+            observations: [],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "uncited" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const citedCriteria = [
+      {
+        criterion: "login works",
+        verdict: "pass",
+        evidence: "Dashboard header 'Welcome back' rendered after submit (screenshot 002)",
+      },
+      {
+        criterion: "error shown for bad password",
+        verdict: "pass",
+        evidence: "Banner 'Incorrect password' visible after submitting bad creds",
+      },
+    ];
+    const citedReport = {
+      text: "cited",
+      toolCalls: [
+        {
+          id: "call_2",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "Both criteria satisfied",
+            reasoning: "Saw the dashboard and the error banner",
+            observations: [],
+            criteria: citedCriteria,
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "cited" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([uncitedReport, citedReport]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toEqual(citedCriteria);
+
+    const chatCalls = (client as any)._chatCalls;
+    expect(chatCalls).toHaveLength(2);
+    const rejection = chatCalls[1].find(
+      (m: any) => m.role === "tool_result" && m.tool_call_id === "call_1",
+    );
+    expect(String(rejection.content)).toContain("criteria");
+  });
+
+  test("a report with empty evidence on one criterion is re-asked", async () => {
+    const weakReport = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "fail",
+            summary: "Second criterion failed",
+            reasoning: "No error shown",
+            observations: [],
+            criteria: [
+              { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+              { criterion: "error shown", verdict: "fail", evidence: "" },
+            ],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "weak" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const fixedReport = {
+      text: "fixed",
+      toolCalls: [
+        {
+          id: "call_2",
+          name: "report_result",
+          arguments: {
+            status: "fail",
+            summary: "Second criterion failed",
+            reasoning: "No error shown",
+            observations: [],
+            criteria: [
+              { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+              {
+                criterion: "error shown",
+                verdict: "fail",
+                evidence: "Submitted bad password; page stayed blank, no banner in screenshot 004",
+              },
+            ],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "fixed" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([weakReport, fixedReport]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("fail");
+    expect(result.criteria?.[1].evidence).toContain("screenshot 004");
+    const rejection = (client as any)._chatCalls[1].find(
+      (m: any) => m.role === "tool_result" && m.tool_call_id === "call_1",
+    );
+    expect(String(rejection.content)).toContain("criteria[1].evidence");
+  });
+
+  test("persistently uncited reports are salvaged after bounded re-asks — the verdict survives without criteria (PRI-2160)", async () => {
+    const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+    const logger = makeMockLogger();
+    (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+      eventLog.push({ name, params });
+    };
+    const uncitedReport = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "It all worked",
+            reasoning: "Looked fine",
+            observations: [],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "uncited" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([uncitedReport, uncitedReport, uncitedReport]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toBeUndefined();
+    expect((client as any)._chatCalls).toHaveLength(3);
+    const salvaged = eventLog.find((e) => e.name === "report_result_salvaged");
+    expect(salvaged).toBeDefined();
+    expect(String(salvaged?.params.reason)).toContain("criteria");
+  });
+
+  test("a card without acceptance criteria does not require cited verdicts", async () => {
+    const client = makeMockClient([
+      {
+        text: "done",
+        toolCalls: [
+          {
+            id: "c1",
+            name: "report_result",
+            arguments: { status: "pass", summary: "ok", reasoning: "ok", observations: [] },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "r" },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    ]);
+    const result = await runAgent(card, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toBeUndefined();
+    expect((client as any)._chatCalls).toHaveLength(1);
   });
 
   test("unsalvageable malformed report_result returns investigate after bounded re-asks", async () => {

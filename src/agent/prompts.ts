@@ -22,14 +22,22 @@ export function buildScenarioBlocks(card: StoryCard): string[] {
   blocks.push(storyLines.join("\n"));
 
   if (card.acceptanceCriteria.length > 0) {
-    // Acceptance Criteria block — header, bullets (adjacent), then the
-    // "Evaluate..." closer offset by a blank line. Single block so the
-    // joiner doesn't insert blanks between bullets.
+    // Acceptance Criteria block — header, numbered items (adjacent),
+    // then the "Evaluate..." closer offset by a blank line. Single block
+    // so the joiner doesn't insert blanks between items. Numbered, not
+    // bulleted, because report_result's criteria entries map to these by
+    // position (PRI-2160).
     const critLines: string[] = [`## Acceptance Criteria`];
-    for (const criterion of card.acceptanceCriteria) {
-      critLines.push(`- ${criterion}`);
-    }
-    critLines.push(``, `Evaluate each criterion based on what you observe. Use your judgment.`);
+    card.acceptanceCriteria.forEach((criterion, i) => {
+      critLines.push(`${i + 1}. ${criterion}`);
+    });
+    critLines.push(
+      ``,
+      `Evaluate each criterion based on what you observe. Use your judgment. ` +
+        `When you call report_result, its \`criteria\` array must contain one entry ` +
+        `per criterion above, in the same order, each with your verdict and the ` +
+        `evidence you observed.`,
+    );
     blocks.push(critLines.join("\n"));
   } else {
     blocks.push(
