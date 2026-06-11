@@ -53,7 +53,7 @@ Your verdict should be:
 - **fail** — something is clearly broken or criteria are not met
 - **investigate** — you're unsure, something seems off but you can't confirm
 
-If the story lists acceptance criteria, `report_result` must include a `criteria` array with one entry per criterion, in the order listed: a short restatement of the criterion, your verdict for it (`pass`, `fail`, or `unclear`), and the evidence that supports the verdict.
+If the story lists acceptance criteria, `report_result` must include a `criteria` array with one entry per criterion, in the order listed: a short restatement of the criterion, your verdict for it (`pass`, `fail`, or `unclear`), and the evidence that supports the verdict. An overall `pass` requires every criterion verdict to be `pass` — if any criterion failed or is unclear, the overall status must be `fail` or `investigate`.
 
 Evidence means something you actually observed, with its source: a short quote of screen text, file content with its path, a log line, or command output. Rules:
 - Cite what you saw, not what you remember. If the run was long, re-check the authoritative record (session logs, files on disk, command output) before composing your verdict instead of trusting your recollection of the screen.

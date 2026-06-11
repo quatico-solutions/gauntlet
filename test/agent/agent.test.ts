@@ -85,6 +85,7 @@ function makeMockClient(responses: AgentResponse[]): LLMClient {
   let callIndex = 0;
   const chatCalls: unknown[][] = [];
   const toolsPerCall: string[][] = [];
+  const toolResultExtras: Array<string | undefined> = [];
 
   return {
     async chat(messages, tools) {
@@ -97,16 +98,26 @@ function makeMockClient(responses: AgentResponse[]): LLMClient {
     userMessage(content: string) {
       return { role: "user", content };
     },
-    toolResultMessages(calls: ToolCall[], results: ToolResult[]) {
-      return calls.map((call, i) => ({
+    toolResultMessages(calls: ToolCall[], results: ToolResult[], extraUserText?: string) {
+      toolResultExtras.push(extraUserText);
+      const msgs: unknown[] = calls.map((call, i) => ({
         role: "tool_result",
         tool_call_id: call.id,
         content: results[i].text,
       }));
+      if (extraUserText) {
+        msgs.push({ role: "user", content: extraUserText });
+      }
+      return msgs;
     },
     _chatCalls: chatCalls,
     _toolsPerCall: toolsPerCall,
-  } as LLMClient & { _chatCalls: unknown[][]; _toolsPerCall: string[][] };
+    _toolResultExtras: toolResultExtras,
+  } as LLMClient & {
+    _chatCalls: unknown[][];
+    _toolsPerCall: string[][];
+    _toolResultExtras: Array<string | undefined>;
+  };
 }
 
 describe("runAgent", () => {
@@ -511,6 +522,57 @@ describe("runAgent", () => {
     expect(String(rejectionResult.content)).toContain("report_result");
   });
 
+  test("re-ask rejections are logged as tool_call/tool_result rows so revival can replay them (PRI-2140)", async () => {
+    const toolCalls: Array<Record<string, unknown>> = [];
+    const toolResults: Array<Record<string, unknown>> = [];
+    const logger = makeMockLogger();
+    (logger as any).logToolCall = (row: Record<string, unknown>) => toolCalls.push(row);
+    (logger as any).logToolResult = (row: Record<string, unknown>) => toolResults.push(row);
+
+    const badReport = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_bad",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "ok",
+            reasoning: "ok",
+            observations: [{ kind: "ug", description: "bad" }],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "bad" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const corrected = {
+      text: "corrected",
+      toolCalls: [
+        {
+          id: "call_good",
+          name: "report_result",
+          arguments: { status: "pass", summary: "ok", reasoning: "ok", observations: [] },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "good" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([badReport, corrected]);
+
+    await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+    // The rejected call and its synthetic rejection result both have rows,
+    // otherwise session revival replays a dangling tool_use.
+    const rejectedCall = toolCalls.find((r) => r.toolUseId === "call_bad");
+    expect(rejectedCall).toBeDefined();
+    const rejectionRow = toolResults.find((r) => r.toolUseId === "call_bad");
+    expect(rejectionRow).toBeDefined();
+    expect(String(rejectionRow?.text)).toContain("rejected");
+  });
+
   test("exhausted re-asks salvage a valid core verdict, dropping only the malformed observation (PRI-2140)", async () => {
     const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
     const logger = makeMockLogger();
@@ -684,7 +746,64 @@ describe("runAgent", () => {
     expect(String(rejection.content)).toContain("criteria[1].evidence");
   });
 
-  test("persistently uncited reports are salvaged after bounded re-asks — the verdict survives without criteria (PRI-2160)", async () => {
+  test("an overall pass contradicting a criterion fail is re-asked (PRI-2160)", async () => {
+    const contradictory = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "All good",
+            reasoning: "Mostly fine",
+            observations: [],
+            criteria: [
+              { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+              { criterion: "error shown", verdict: "fail", evidence: "no banner appeared" },
+            ],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "contradictory" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const corrected = {
+      text: "corrected",
+      toolCalls: [
+        {
+          id: "call_2",
+          name: "report_result",
+          arguments: {
+            status: "fail",
+            summary: "Error banner missing",
+            reasoning: "Second criterion failed",
+            observations: [],
+            criteria: [
+              { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+              { criterion: "error shown", verdict: "fail", evidence: "no banner appeared" },
+            ],
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "corrected" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([contradictory, corrected]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("fail");
+    expect(result.criteria).toHaveLength(2);
+    const rejection = (client as any)._chatCalls[1].find(
+      (m: any) => m.role === "tool_result" && m.tool_call_id === "call_1",
+    );
+    expect(String(rejection.content)).toContain("contradicts");
+  });
+
+  test("persistently uncited reports are salvaged but a pass downgrades to investigate (PRI-2160)", async () => {
     const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
     const logger = makeMockLogger();
     (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
@@ -712,12 +831,50 @@ describe("runAgent", () => {
 
     const result = await runAgent(acCard, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
 
-    expect(result.status).toBe("pass");
+    // The model's account survives, but an unsubstantiated pass on a
+    // card with acceptance criteria must not stand as a pass.
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toBe("It all worked");
     expect(result.criteria).toBeUndefined();
     expect((client as any)._chatCalls).toHaveLength(3);
     const salvaged = eventLog.find((e) => e.name === "report_result_salvaged");
     expect(salvaged).toBeDefined();
-    expect(String(salvaged?.params.reason)).toContain("criteria");
+    const unsubstantiated = eventLog.find((e) => e.name === "report_criteria_unsubstantiated");
+    expect(unsubstantiated).toBeDefined();
+    expect(unsubstantiated?.params.originalStatus).toBe("pass");
+  });
+
+  test("salvage keeps valid criteria when only the observations were malformed (PRI-2160)", async () => {
+    const citedCriteria = [
+      { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+      { criterion: "error shown", verdict: "pass", evidence: "banner visible" },
+    ];
+    const stubborn = {
+      text: "reporting",
+      toolCalls: [
+        {
+          id: "call_1",
+          name: "report_result",
+          arguments: {
+            status: "pass",
+            summary: "Both criteria satisfied",
+            reasoning: "Verified on screen",
+            observations: [{ kind: "ug", description: "stubbornly truncated" }],
+            criteria: citedCriteria,
+          },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: "stubborn" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    };
+    const client = makeMockClient([stubborn, stubborn, stubborn]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, makeMockLogger(), undefined, { runId: makeRunId(acCard.id), budgetMs: 600_000 });
+
+    expect(result.status).toBe("pass");
+    expect(result.criteria).toEqual(citedCriteria);
+    expect(result.observations).toEqual([]);
   });
 
   test("a card without acceptance criteria does not require cited verdicts", async () => {
@@ -903,6 +1060,273 @@ describe("runAgent", () => {
     expect(result.status).toBe("investigate");
     expect(result.summary).toContain("max_tokens");
     expect((client as any)._chatCalls).toHaveLength(2);
+  });
+
+  // Stall watchdog (PRI-2081): a frozen read-poll loop — the same
+  // non-mutating tool call returning byte-identical results turn after
+  // turn — gets a mechanical warning, then a forced final report,
+  // instead of burning the whole wall-clock budget (Pattern 5: 6.2M
+  // tokens / 4430s for no verdict).
+  describe("stall watchdog (PRI-2081)", () => {
+    const readTurn = (id: string) => ({
+      text: "",
+      toolCalls: [{ id, name: "screenshot", arguments: {} }],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: `t-${id}` },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    const reportTurn = (id: string) => ({
+      text: "done",
+      toolCalls: [
+        {
+          id,
+          name: "report_result",
+          arguments: { status: "investigate", summary: "stuck", reasoning: "screen frozen", observations: [] },
+        },
+      ],
+      stopReason: "tool_use" as const,
+      rawAssistantMessage: { role: "assistant", content: `r-${id}` },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+
+    test("the third identical read turn gets a stall warning", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        reportTurn("c4"),
+      ]);
+
+      const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(result.status).toBe("investigate");
+      const warning = eventLog.find((e) => e.name === "agent_stall_warning");
+      expect(warning).toBeDefined();
+      expect(warning?.params.tool).toBe("screenshot");
+      // The warning is injected alongside the third identical turn's
+      // tool results, so the model sees it before its fourth call.
+      const fourthCallMessages = (client as any)._chatCalls[3];
+      expect(JSON.stringify(fourthCallMessages)).toContain("SYSTEM-REMINDER");
+      expect(JSON.stringify(fourthCallMessages)).toContain("frozen");
+    });
+
+    test("the sixth identical read turn forces a final report", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        readTurn("c4"),
+        readTurn("c5"),
+        readTurn("c6"),
+        reportTurn("c7"),
+      ]);
+
+      const result = await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      // The forced turn honors the model's own report.
+      expect(result.status).toBe("investigate");
+      expect(result.summary).toBe("stuck");
+      expect(eventLog.find((e) => e.name === "agent_stall_forced_report")).toBeDefined();
+
+      // The forced turn offers ONLY report_result.
+      const toolsPerCall = (client as any)._toolsPerCall;
+      expect(toolsPerCall[6]).toEqual(["report_result"]);
+      expect((client as any)._chatCalls).toHaveLength(7);
+
+      // The forced-report reminder is woven into the sixth turn's
+      // tool-result message via extraUserText — not appended as a
+      // separate consecutive user message after it.
+      const extras = (client as any)._toolResultExtras;
+      expect(String(extras[5])).toContain("only report_result can be called now");
+      const forcedMessages = (client as any)._chatCalls[6];
+      const lastMessage = forcedMessages[forcedMessages.length - 1] as { role: string; content: string };
+      expect(lastMessage.role).toBe("user");
+      expect(String(lastMessage.content)).toContain("only report_result can be called now");
+      // Exactly one reminder copy: woven, not woven-plus-appended.
+      const reminderCopies = forcedMessages.filter(
+        (m: any) => typeof m.content === "string" && m.content.includes("only report_result can be called now"),
+      );
+      expect(reminderCopies).toHaveLength(1);
+    });
+
+    test("changing read results never trip the watchdog", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      // Adapter returns a different result each call — a live screen.
+      let n = 0;
+      const adapter = makeMockAdapter();
+      adapter.executeTool = async () => textResult(`frame ${n++}`);
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        readTurn("c4"),
+        readTurn("c5"),
+        readTurn("c6"),
+        reportTurn("c7"),
+      ]);
+
+      await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
+      expect(eventLog.find((e) => e.name === "agent_stall_forced_report")).toBeUndefined();
+    });
+
+    test("identical frozen screenshots trip the watchdog despite per-call path text (web adapter shape)", async () => {
+      // Web screenshot results carry "Screenshot saved to screenshots/00X.png"
+      // in result.text — different every call even when the screen is
+      // frozen. The fingerprint must use the stable payload (the image
+      // bytes), not the volatile text.
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      let shot = 0;
+      const adapter = makeMockAdapter();
+      adapter.executeTool = async () => ({
+        kind: "image" as const,
+        image: { data: "FROZEN_SCREEN_BYTES", mediaType: "image/png" },
+        imagePath: `screenshots/00${shot}.png`,
+        text: `Screenshot saved to screenshots/00${shot++}.png`,
+      });
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        reportTurn("c4"),
+      ]);
+
+      await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      const warning = eventLog.find((e) => e.name === "agent_stall_warning");
+      expect(warning).toBeDefined();
+    });
+
+    test("changing screenshots never trip the watchdog even with identical text", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      let frame = 0;
+      const adapter = makeMockAdapter();
+      adapter.executeTool = async () => ({
+        kind: "image" as const,
+        image: { data: `FRAME_${frame++}`, mediaType: "image/png" },
+        imagePath: "screenshots/live.png",
+        text: "Screenshot saved to screenshots/live.png",
+      });
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        readTurn("c4"),
+        reportTurn("c5"),
+      ]);
+
+      await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
+    });
+
+    test("a stall warning coinciding with a reflection checkpoint logs ONE combined user_message row", async () => {
+      const userRows: Array<{ turn: number; content: string }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logUserMessage = (turn: number, content: string) => {
+        userRows.push({ turn, content });
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        reportTurn("c4"),
+      ]);
+
+      // reflectionInterval 1 makes a reflection checkpoint fire on every
+      // turn — including turn 3, where the stall warning also fires.
+      await runAgent(card, makeMockAdapter(), client, logger, undefined, {
+        runId: makeRunId(card.id),
+        budgetMs: 600_000,
+        reflectionInterval: 1,
+      });
+
+      // Revival reads only the first user_message per turn, so the two
+      // reminders must land in one combined row.
+      const turn3Rows = userRows.filter((r) => r.turn === 3);
+      expect(turn3Rows).toHaveLength(1);
+      expect(turn3Rows[0].content).toContain("frozen");
+      expect(turn3Rows[0].content).toContain("SYSTEM-REMINDER");
+    });
+
+    test("an intervening text-only turn breaks the stall chain", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      const textTurn = {
+        text: "Let me think about what I am seeing here.",
+        toolCalls: [],
+        stopReason: "end_turn" as const,
+        rawAssistantMessage: { role: "assistant", content: "t-text" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        textTurn,
+        readTurn("c3"),
+        readTurn("c4"),
+        reportTurn("c5"),
+      ]);
+
+      await runAgent(card, makeMockAdapter(), client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
+    });
+
+    test("a mutating call resets the stall counter", async () => {
+      const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+        eventLog.push({ name, params });
+      };
+      const adapter = makeMockAdapter();
+      adapter.isMutatingTool = (name: string) => name === "click";
+      const clickTurn = {
+        text: "",
+        toolCalls: [{ id: "cm", name: "click", arguments: { selector: "#x" } }],
+        stopReason: "tool_use" as const,
+        rawAssistantMessage: { role: "assistant", content: "t-click" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        clickTurn,
+        readTurn("c3"),
+        readTurn("c4"),
+        reportTurn("c5"),
+      ]);
+
+      await runAgent(card, adapter, client, logger, undefined, { runId: makeRunId(card.id), budgetMs: 600_000 });
+
+      expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
+    });
   });
 
   test("accumulates cache token usage across turns", async () => {
@@ -1212,6 +1636,53 @@ describe("runAgent", () => {
       { kind: "suggestion", description: "raise the budget" },
     ]);
     expect((client as any)._chatCalls).toHaveLength(1);
+  });
+
+  test("grace-turn pass contradicted by its own criteria downgrades to investigate (PRI-2160)", async () => {
+    const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
+    const logger = makeMockLogger();
+    (logger as any).logEvent = (name: string, params: Record<string, unknown>) => {
+      eventLog.push({ name, params });
+    };
+    const client = makeMockClient([
+      {
+        text: "out of time",
+        toolCalls: [
+          {
+            id: "c1",
+            name: "report_result",
+            arguments: {
+              status: "pass",
+              summary: "Looked fine overall",
+              reasoning: "Ran out of budget",
+              observations: [],
+              criteria: [
+                { criterion: "login works", verdict: "pass", evidence: "dashboard rendered" },
+                { criterion: "error shown", verdict: "unclear", evidence: "never got to it" },
+              ],
+            },
+          },
+        ],
+        stopReason: "tool_use",
+        rawAssistantMessage: { role: "assistant", content: "grace" },
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+    ]);
+
+    const result = await runAgent(acCard, makeMockAdapter(), client, logger, undefined, {
+      runId: makeRunId(acCard.id),
+      budgetMs: 0,
+    });
+
+    // The contradiction (pass + unclear criterion) cannot stand as a
+    // pass even on the grace turn — the verdict downgrades, the
+    // model's account survives.
+    expect(result.status).toBe("investigate");
+    expect(result.summary).toBe("Looked fine overall");
+    expect(result.criteria).toBeUndefined();
+    const dropped = eventLog.find((e) => e.name === "report_criteria_unsubstantiated");
+    expect(dropped).toBeDefined();
+    expect(String(dropped?.params.reason)).toContain("contradicts");
   });
 
   test("falls through to generic exhausted result when grace turn also fails to report", async () => {

@@ -2,6 +2,27 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { LLMClient, ToolDefinition, AgentResponse, StopReason, ToolCall, ToolResult } from "./provider";
 import { withLlmErrorSanitization } from "../util/sanitize-error";
 
+/**
+ * Per-model output-token ceiling. 4096 killed a run mid-verdict
+ * (PRI-2160, run b35d: adaptive thinking counts against the cap and a
+ * judge composing its final report can think past 4k), but legacy
+ * Claude 3.x models reject anything above their smaller caps, so the
+ * raise is model-aware. Cost is per token actually emitted, not per
+ * cap.
+ */
+export function maxOutputTokensForModel(model: string): number {
+  // Known current families (Claude 4.x, Fable/Mythos): plenty of output
+  // headroom — the high cap is opt-in by family, not the default.
+  if (/^claude-(opus|sonnet|haiku)-4/.test(model) || /^claude-(fable|mythos)-/.test(model)) {
+    return 16384;
+  }
+  // Claude 3.5 / 3.7 family: 8192 without beta headers.
+  if (/^claude-3-[57]-/.test(model)) return 8192;
+  // Everything else — Claude 3.0, Claude 2.x, and any unrecognized id —
+  // keeps the conservative 4096 this code always sent before the raise.
+  return 4096;
+}
+
 export function createAnthropicClient(model: string): LLMClient {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error(
@@ -40,11 +61,7 @@ export function createAnthropicClient(model: string): LLMClient {
       const response = await withLlmErrorSanitization(() =>
         client.messages.create({
           model,
-          // 4096 killed a run mid-verdict: adaptive thinking counts
-          // against this cap, and a judge composing its final report
-          // after a long run can think past 4k (PRI-2160, run b35d).
-          // Cost is per token actually emitted, not per cap.
-          max_tokens: 16384,
+          max_tokens: maxOutputTokensForModel(model),
           system,
           messages: apiMessages,
           tools: convertedTools,

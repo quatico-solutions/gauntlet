@@ -91,6 +91,13 @@ function parseBody(body: string): {
   let current: string[] | null = null;
   for (const rawLine of criteriaSection.split("\n")) {
     const line = rawLine.trim();
+    if (/^#{1,6}\s/.test(line)) {
+      // A new markdown heading ends the criteria section entirely — its
+      // prose must not be glommed onto the last bullet. Only real
+      // headings count: a wrapped line like "#123 was referenced" is a
+      // continuation, not a heading.
+      break;
+    }
     if (line.startsWith("- ")) {
       if (current) acceptanceCriteria.push(current.join(" "));
       current = [line.slice(2).trim()];
