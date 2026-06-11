@@ -80,11 +80,30 @@ function parseBody(body: string): {
 
   const description = body.slice(0, markerIndex).trim();
   const criteriaSection = body.slice(markerIndex + marker.length).trim();
-  const acceptanceCriteria = criteriaSection
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
-    .map((line) => line.slice(2).trim());
+
+  // Criteria are markdown list items, and prose criteria soft-wrap across
+  // lines. Continuation lines (indented or lazy) belong to the current
+  // bullet and are joined with a space; a blank line ends the bullet, so
+  // trailing commentary paragraphs are not absorbed. Truncating to the
+  // first line silently dropped the operational half of long criteria —
+  // see PRI-2160.
+  const acceptanceCriteria: string[] = [];
+  let current: string[] | null = null;
+  for (const rawLine of criteriaSection.split("\n")) {
+    const line = rawLine.trim();
+    if (line.startsWith("- ")) {
+      if (current) acceptanceCriteria.push(current.join(" "));
+      current = [line.slice(2).trim()];
+    } else if (line === "") {
+      if (current) acceptanceCriteria.push(current.join(" "));
+      current = null;
+    } else if (current) {
+      current.push(line);
+    }
+    // Non-bullet text outside a bullet (current === null) is ignored,
+    // matching the previous behavior for stray prose in the section.
+  }
+  if (current) acceptanceCriteria.push(current.join(" "));
 
   return { description, acceptanceCriteria };
 }

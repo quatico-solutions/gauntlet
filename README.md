@@ -89,7 +89,7 @@ Test the login flow for a registered user.
 
 The frontmatter parser is intentionally minimal: it splits on the first `:` per line, so values are plain strings -- do not quote them and do not use nested YAML structures.
 
-**Body**: free-form markdown describing the story. Everything before the `## Acceptance Criteria` heading is treated as the description and passed to the agent as context. Lines under `## Acceptance Criteria` that begin with `- ` are parsed as individual criteria; the agent evaluates each one and the verdict reflects whether they all hold. The `## Acceptance Criteria` section is optional -- a description-only card is valid.
+**Body**: free-form markdown describing the story. Everything before the `## Acceptance Criteria` heading is treated as the description and passed to the agent as context. Lines under `## Acceptance Criteria` that begin with `- ` are parsed as individual criteria; a criterion may soft-wrap across multiple lines -- continuation lines (indented or not) are joined onto the bullet until a blank line or the next bullet. The agent evaluates each one and the verdict reflects whether they all hold. The `## Acceptance Criteria` section is optional -- a description-only card is valid.
 
 You can validate a card's format with `gauntlet validate story.md`.
 

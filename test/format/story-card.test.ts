@@ -61,4 +61,70 @@ describe("parseStoryCard", () => {
       parseStoryCard("---\nid: story-x\n---\nSome body")
     ).toThrow();
   });
+
+  // Regression: PRI-2160. Soft-wrapped (multi-line) acceptance criteria
+  // were truncated to their first line — the judge saw "- The duplicated
+  // report-formatting logic was flagged openly by the" with the entire
+  // operational definition (which reviewer, what counts as a fail)
+  // dropped, and three judges guessed the missing half three different
+  // ways. The fixture is the real card from the preserved 4ae1 run.
+  test("joins wrapped continuation lines into a single criterion (PRI-2160)", () => {
+    const card = parseStoryCard(fixture("story-multiline-criteria.md"));
+    expect(card.acceptanceCriteria).toHaveLength(5);
+    const dupCriterion = card.acceptanceCriteria[1];
+    expect(dupCriterion).toContain(
+      "The duplicated report-formatting logic was flagged openly by the per-task quality review",
+    );
+    expect(dupCriterion).toContain(
+      "only the final whole-branch review catching it",
+    );
+    // Joined as one logical line — no internal newlines.
+    expect(dupCriterion).not.toContain("\n");
+    // The last criterion keeps its full wrapped text too.
+    expect(card.acceptanceCriteria[4]).toContain(
+      "the criteria above are about whether the *per-task quality review* was the mechanism",
+    );
+  });
+
+  test("a blank line ends a criterion; trailing prose is not glommed on", () => {
+    const card = parseStoryCard(
+      [
+        "---",
+        "id: story-x",
+        "title: Wrapped criteria",
+        "---",
+        "Description here.",
+        "",
+        "## Acceptance Criteria",
+        "- First criterion wraps onto",
+        "  a second line",
+        "- Second criterion is single-line",
+        "",
+        "This trailing paragraph is commentary, not part of any criterion.",
+      ].join("\n"),
+    );
+    expect(card.acceptanceCriteria).toEqual([
+      "First criterion wraps onto a second line",
+      "Second criterion is single-line",
+    ]);
+  });
+
+  test("unindented (lazy) continuation lines still belong to the bullet", () => {
+    const card = parseStoryCard(
+      [
+        "---",
+        "id: story-x",
+        "title: Lazy continuation",
+        "---",
+        "Body.",
+        "",
+        "## Acceptance Criteria",
+        "- A criterion that wraps",
+        "without indentation on the next line",
+      ].join("\n"),
+    );
+    expect(card.acceptanceCriteria).toEqual([
+      "A criterion that wraps without indentation on the next line",
+    ]);
+  });
 });
