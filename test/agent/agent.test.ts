@@ -1243,6 +1243,35 @@ describe("runAgent", () => {
       expect(eventLog.find((e) => e.name === "agent_stall_warning")).toBeUndefined();
     });
 
+    test("a stall warning coinciding with a reflection checkpoint logs ONE combined user_message row", async () => {
+      const userRows: Array<{ turn: number; content: string }> = [];
+      const logger = makeMockLogger();
+      (logger as any).logUserMessage = (turn: number, content: string) => {
+        userRows.push({ turn, content });
+      };
+      const client = makeMockClient([
+        readTurn("c1"),
+        readTurn("c2"),
+        readTurn("c3"),
+        reportTurn("c4"),
+      ]);
+
+      // reflectionInterval 1 makes a reflection checkpoint fire on every
+      // turn — including turn 3, where the stall warning also fires.
+      await runAgent(card, makeMockAdapter(), client, logger, undefined, {
+        runId: makeRunId(card.id),
+        budgetMs: 600_000,
+        reflectionInterval: 1,
+      });
+
+      // Revival reads only the first user_message per turn, so the two
+      // reminders must land in one combined row.
+      const turn3Rows = userRows.filter((r) => r.turn === 3);
+      expect(turn3Rows).toHaveLength(1);
+      expect(turn3Rows[0].content).toContain("frozen");
+      expect(turn3Rows[0].content).toContain("SYSTEM-REMINDER");
+    });
+
     test("an intervening text-only turn breaks the stall chain", async () => {
       const eventLog: Array<{ name: string; params: Record<string, unknown> }> = [];
       const logger = makeMockLogger();

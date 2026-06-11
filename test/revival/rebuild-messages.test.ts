@@ -61,6 +61,81 @@ describe("rebuildMessages — happy path", () => {
   });
 });
 
+describe("rebuildMessages — recovery-turn fidelity", () => {
+  test("a max_tokens recovery turn replays the stub, then the nudge — not the truncated raw (PRI-2160)", () => {
+    const dir = makeRunDir([
+      minimalRunStart,
+      { type: "system_prompt", content: "sys" },
+      { type: "tool_definitions", tools: [
+        { name: "click", description: "Click", parameters: { type: "object" } },
+      ]},
+      { type: "user_message", turn: 0, content: "go" },
+      // Turn 1: truncated mid-thinking; the live loop discarded it,
+      // pushed a stub, and nudged.
+      { type: "llm_response", turn: 1, stopReason: "max_tokens", text: "I was reasoning at len", thinking: [],
+        toolCalls: [],
+        usage: { inputTokens: 10, outputTokens: 4096 },
+        rawAssistantMessage: { role: "assistant", content: [
+          { type: "text", text: "I was reasoning at len" },
+        ]},
+      },
+      { type: "user_message", turn: 1, content: "<SYSTEM-REMINDER>cut off; be concise</SYSTEM-REMINDER>" },
+      // Turn 2: recovered with a normal tool call.
+      { type: "llm_response", turn: 2, stopReason: "tool_use", text: "", thinking: [],
+        toolCalls: [{ id: "t2", name: "click", arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 5 },
+        rawAssistantMessage: { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "click", input: {} }] },
+      },
+      { type: "tool_call", turn: 2, toolUseId: "t2", name: "click", arguments: {} },
+      { type: "tool_result", turn: 2, toolUseId: "t2", name: "click", durationMs: 5, text: "ok", error: false },
+    ]);
+    cleanups.push(dir);
+
+    const result = rebuildMessages(dir, makeFakeAnthropicClient());
+    const flat = JSON.stringify(result.messages);
+    // Stub replaces the truncated content...
+    expect(flat).toContain("truncated by the output token limit");
+    expect(flat).not.toContain("I was reasoning at len");
+    // ...and comes BEFORE the nudge (assistant then user), matching the
+    // live conversation order.
+    const stubIdx = result.messages.findIndex((m) => JSON.stringify(m).includes("truncated by the output token limit"));
+    const nudgeIdx = result.messages.findIndex((m) => JSON.stringify(m).includes("cut off; be concise"));
+    expect(stubIdx).toBeGreaterThanOrEqual(0);
+    expect(nudgeIdx).toBe(stubIdx + 1);
+  });
+
+  test("an empty-response nudge turn replays the filled stub, then the nudge (PRI-1864)", () => {
+    const dir = makeRunDir([
+      minimalRunStart,
+      { type: "system_prompt", content: "sys" },
+      { type: "tool_definitions", tools: [
+        { name: "click", description: "Click", parameters: { type: "object" } },
+      ]},
+      { type: "user_message", turn: 0, content: "go" },
+      { type: "llm_response", turn: 1, stopReason: "end_turn", text: "", thinking: [],
+        toolCalls: [],
+        usage: { inputTokens: 10, outputTokens: 0 },
+        rawAssistantMessage: { role: "assistant", content: [] },
+      },
+      { type: "user_message", turn: 1, content: "<SYSTEM-REMINDER>empty turn nudge</SYSTEM-REMINDER>" },
+      { type: "llm_response", turn: 2, stopReason: "tool_use", text: "", thinking: [],
+        toolCalls: [{ id: "t2", name: "click", arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 5 },
+        rawAssistantMessage: { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "click", input: {} }] },
+      },
+      { type: "tool_call", turn: 2, toolUseId: "t2", name: "click", arguments: {} },
+      { type: "tool_result", turn: 2, toolUseId: "t2", name: "click", durationMs: 5, text: "ok", error: false },
+    ]);
+    cleanups.push(dir);
+
+    const result = rebuildMessages(dir, makeFakeAnthropicClient());
+    const stubIdx = result.messages.findIndex((m) => JSON.stringify(m).includes("(empty turn)"));
+    const nudgeIdx = result.messages.findIndex((m) => JSON.stringify(m).includes("empty turn nudge"));
+    expect(stubIdx).toBeGreaterThanOrEqual(0);
+    expect(nudgeIdx).toBe(stubIdx + 1);
+  });
+});
+
 describe("rebuildMessages — image rehydration", () => {
   test("reads screenshot bytes from disk and slots them into the tool_result block", () => {
     const dir = makeRunDir([

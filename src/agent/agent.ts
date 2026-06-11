@@ -765,7 +765,6 @@ export async function runAgent(
             repeats: stallRepeats,
           });
           stallWarningText = buildStallWarning(tc0.name, stallRepeats);
-          logger.logUserMessage(turns, stallWarningText);
         }
       } else {
         stallRepeats = 0;
@@ -798,7 +797,6 @@ export async function runAgent(
             ordinal: Math.floor(turns / reflectionInterval),
             traceLength: recentMutatingCalls.length,
           });
-          logger.logUserMessage(turns, extraUserText);
         }
       }
 
@@ -823,10 +821,16 @@ export async function runAgent(
           repeats: stallRepeats,
         });
         stallForcedText = buildStallForcedReminder(stalledTool, stallRepeats);
-        logger.logUserMessage(turns, stallForcedText);
         extraUserText = extraUserText
           ? `${extraUserText}\n\n${stallForcedText}`
           : stallForcedText;
+      }
+
+      // One combined user_message row per turn — revival reads only the
+      // first user_message at a turn, so co-firing reminders (reflection
+      // + stall) must land in a single row.
+      if (extraUserText) {
+        logger.logUserMessage(turns, extraUserText);
       }
 
       messages.push(...client.toolResultMessages(response.toolCalls, results, extraUserText));

@@ -4,7 +4,11 @@ import type { LLMClient, ToolCall, ToolDefinition, ToolResult } from "../models/
 import { pushAssistantTurn, textResult } from "../models/provider";
 import { buildRevivalAddendum } from "./system-prompt-addendum";
 import { getAdapterToolDefinitionsByName } from "../adapters/registry";
-import { REPORT_TOOL } from "../agent/agent";
+import {
+  REPORT_TOOL,
+  synthesizeFilledAssistantMessage,
+  synthesizeTruncatedAssistantStub,
+} from "../agent/agent";
 
 /**
  * The subset of LLMClient that rebuildMessages depends on. Both
@@ -118,9 +122,29 @@ export function rebuildMessages(
     const toolCallEvts = turnEvents.filter((e) => e.type === "tool_call");
     const userMsg = turnEvents.find((e) => e.type === "user_message");
 
-    // Grace turn: a user_message at this turn with NO tool_result group →
-    // standalone user turn (must come BEFORE the assistant response).
+    // A user_message at a turn with NO tool_result group is one of three
+    // shapes, distinguished by the turn's own llm_response:
+    //  - max_tokens recovery (PRI-2160): the live loop DISCARDED the
+    //    truncated response, pushed a stub, then the nudge — replay
+    //    stub-then-user, never the truncated raw (partial thinking
+    //    blocks don't round-trip).
+    //  - empty-response nudge (PRI-1864): the live loop pushed a
+    //    stub-filled assistant turn, then the nudge.
+    //  - grace/forced final report: the reminder is a standalone user
+    //    turn that comes BEFORE the assistant response.
     if (userMsg && toolResultEvts.length === 0) {
+      const respToolCalls = (llmResp?.toolCalls as unknown[] | undefined) ?? [];
+      const respText = llmResp ? String(llmResp.text ?? "") : "";
+      if (llmResp && llmResp.stopReason === "max_tokens") {
+        pushAssistantTurn(messages, synthesizeTruncatedAssistantStub(llmResp.rawAssistantMessage));
+        messages.push(client.userMessage(String(userMsg.content ?? "")));
+        continue;
+      }
+      if (llmResp && respToolCalls.length === 0 && respText === "") {
+        pushAssistantTurn(messages, synthesizeFilledAssistantMessage(llmResp.rawAssistantMessage));
+        messages.push(client.userMessage(String(userMsg.content ?? "")));
+        continue;
+      }
       messages.push(client.userMessage(String(userMsg.content ?? "")));
     }
 
