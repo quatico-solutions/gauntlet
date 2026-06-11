@@ -751,7 +751,7 @@ export async function runAgent(
         // a changing screen look frozen).
         const result0 = results[0];
         const stablePayload = result0.kind === "image" ? result0.image.data : result0.text ?? "";
-        const fingerprint = `${tc0.name} ${argsJson} ${stablePayload}`;
+        const fingerprint = [tc0.name, argsJson, stablePayload].join("\0");
         if (fingerprint === lastStallFingerprint) {
           stallRepeats++;
         } else {

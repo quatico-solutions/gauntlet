@@ -127,6 +127,27 @@ describe("parseStoryCard", () => {
     expect(card.acceptanceCriteria).toEqual(["Only criterion"]);
   });
 
+  test("a continuation line starting with an issue reference is not mistaken for a heading", () => {
+    const card = parseStoryCard(
+      [
+        "---",
+        "id: story-x",
+        "title: Issue ref continuation",
+        "---",
+        "Body.",
+        "",
+        "## Acceptance Criteria",
+        "- The fix for",
+        "#123 was referenced in the commit message",
+        "- Second criterion survives",
+      ].join("\n"),
+    );
+    expect(card.acceptanceCriteria).toEqual([
+      "The fix for #123 was referenced in the commit message",
+      "Second criterion survives",
+    ]);
+  });
+
   test("unindented (lazy) continuation lines still belong to the bullet", () => {
     const card = parseStoryCard(
       [
