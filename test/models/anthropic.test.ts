@@ -5,6 +5,7 @@ import {
   convertResponse,
   resolveAnthropicAuth,
   buildAnthropicSystemBlocks,
+  buildAnthropicClientOptions,
   CLAUDE_CODE_IDENTITY,
 } from "../../src/models/anthropic";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -38,6 +39,24 @@ describe("resolveAnthropicAuth", () => {
     expect(() => resolveAnthropicAuth({})).toThrow(
       /CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY/,
     );
+  });
+});
+
+describe("buildAnthropicClientOptions", () => {
+  test("OAuth mode pins apiKey:null so the SDK can't fall back to x-api-key", () => {
+    // The SDK emits BOTH x-api-key and Authorization when apiKey is set (even
+    // via env) alongside authToken; the server validates x-api-key first → 401.
+    // apiKey:null is what forces Bearer-only.
+    const opts = buildAnthropicClientOptions({ mode: "oauth", token: "sk-ant-oat01-aaa" });
+    expect(opts).toEqual({
+      authToken: "sk-ant-oat01-aaa",
+      apiKey: null,
+      defaultHeaders: { "anthropic-beta": "oauth-2025-04-20" },
+    });
+  });
+
+  test("API-key mode returns empty options (SDK reads ANTHROPIC_API_KEY from env)", () => {
+    expect(buildAnthropicClientOptions({ mode: "api-key" })).toEqual({});
   });
 });
 

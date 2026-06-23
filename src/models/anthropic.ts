@@ -74,17 +74,33 @@ export function buildAnthropicSystemBlocks(
     : [promptBlock];
 }
 
+/**
+ * Anthropic SDK constructor options for the resolved auth.
+ *
+ * OAuth mode pins `apiKey: null`. The SDK otherwise defaults `apiKey` from
+ * `process.env.ANTHROPIC_API_KEY` even when `authToken` is given, and its
+ * `authHeaders` emits BOTH `x-api-key` and `Authorization` — the server then
+ * validates the (possibly wrong/absent) x-api-key first and 401s. `null` forces
+ * Bearer-only. API-key mode returns `{}` so the SDK reads the key from the env,
+ * unchanged.
+ */
+export function buildAnthropicClientOptions(
+  auth: AnthropicAuth,
+): ConstructorParameters<typeof Anthropic>[0] {
+  if (auth.mode === "oauth") {
+    return {
+      authToken: auth.token,
+      apiKey: null,
+      defaultHeaders: { "anthropic-beta": OAUTH_BETA_HEADER },
+    };
+  }
+  return {};
+}
+
 export function createAnthropicClient(model: string): LLMClient {
   const auth = resolveAnthropicAuth();
   const useOAuth = auth.mode === "oauth";
-  // OAuth: Bearer auth + the oauth beta header. API key: the SDK's default
-  // x-api-key path (reads ANTHROPIC_API_KEY).
-  const client = useOAuth
-    ? new Anthropic({
-        authToken: auth.token,
-        defaultHeaders: { "anthropic-beta": OAUTH_BETA_HEADER },
-      })
-    : new Anthropic();
+  const client = new Anthropic(buildAnthropicClientOptions(auth));
 
   return {
     async chat(messages, tools, systemPrompt) {
