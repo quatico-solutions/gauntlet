@@ -23,27 +23,76 @@ export function maxOutputTokensForModel(model: string): number {
   return 4096;
 }
 
+// A subscription OAuth token (from `claude setup-token`) authenticates over
+// Bearer and is gated by Anthropic to Claude Code: the request MUST carry the
+// oauth beta header AND lead its system blocks with this exact identity string,
+// or the API rejects it (429). Verified empirically 2026-06-23.
+export const CLAUDE_CODE_IDENTITY =
+  "You are Claude Code, Anthropic's official CLI for Claude.";
+const OAUTH_BETA_HEADER = "oauth-2025-04-20";
+
+export type AnthropicAuth =
+  | { readonly mode: "oauth"; readonly token: string }
+  | { readonly mode: "api-key" };
+
+/**
+ * Decide how to authenticate to Anthropic. A logged-in subscription is
+ * preferred when present: a `claude setup-token` OAuth token in
+ * CLAUDE_CODE_OAUTH_TOKEN (or the SDK-native ANTHROPIC_AUTH_TOKEN) wins over
+ * ANTHROPIC_API_KEY, which remains the fallback. Throws when neither is set.
+ */
+export function resolveAnthropicAuth(
+  env: Record<string, string | undefined> = process.env,
+): AnthropicAuth {
+  const oauthToken = env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN;
+  if (oauthToken) return { mode: "oauth", token: oauthToken };
+  if (env.ANTHROPIC_API_KEY) return { mode: "api-key" };
+  throw new Error(
+    "No Anthropic credential found. Set CLAUDE_CODE_OAUTH_TOKEN (a subscription " +
+    "token from `claude setup-token`) to use a logged-in Claude subscription, " +
+    "or ANTHROPIC_API_KEY to use a pay-per-token API key."
+  );
+}
+
+/**
+ * Build the request's system blocks. OAuth requires the Claude Code identity as
+ * the FIRST block (order matters — Anthropic checks the first block), with the
+ * caller's prompt following and carrying the cache breakpoint. API-key mode
+ * sends the prompt alone, unchanged.
+ */
+export function buildAnthropicSystemBlocks(
+  systemPrompt: string,
+  useOAuth: boolean,
+): Anthropic.Messages.TextBlockParam[] {
+  const promptBlock: Anthropic.Messages.TextBlockParam = {
+    type: "text",
+    text: systemPrompt,
+    cache_control: { type: "ephemeral" },
+  };
+  return useOAuth
+    ? [{ type: "text", text: CLAUDE_CODE_IDENTITY }, promptBlock]
+    : [promptBlock];
+}
+
 export function createAnthropicClient(model: string): LLMClient {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error(
-      "ANTHROPIC_API_KEY environment variable is not set. " +
-      "Set it to your Anthropic API key to use Claude models."
-    );
-  }
-  const client = new Anthropic();
+  const auth = resolveAnthropicAuth();
+  const useOAuth = auth.mode === "oauth";
+  // OAuth: Bearer auth + the oauth beta header. API key: the SDK's default
+  // x-api-key path (reads ANTHROPIC_API_KEY).
+  const client = useOAuth
+    ? new Anthropic({
+        authToken: auth.token,
+        defaultHeaders: { "anthropic-beta": OAUTH_BETA_HEADER },
+      })
+    : new Anthropic();
 
   return {
     async chat(messages, tools, systemPrompt) {
       const convertedTools = tools.map(convertTool);
 
-      // Cache breakpoint 1: system prompt
-      const system: Anthropic.Messages.TextBlockParam[] = [
-        {
-          type: "text",
-          text: systemPrompt,
-          cache_control: { type: "ephemeral" },
-        },
-      ];
+      // Cache breakpoint 1: system prompt (OAuth prepends the Claude Code
+      // identity block ahead of it — see buildAnthropicSystemBlocks).
+      const system = buildAnthropicSystemBlocks(systemPrompt, useOAuth);
 
       // Cache breakpoint 2: last tool definition
       if (convertedTools.length > 0) {

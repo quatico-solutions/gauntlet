@@ -126,6 +126,12 @@ describe("loadConfig", () => {
     expect(c.apiKeys).toEqual({ anthropic: true, openai: true });
   });
 
+  test("a subscription OAuth token counts as an Anthropic credential (no API key)", () => {
+    const c = loadConfig({}, { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-xxx" } as NodeJS.ProcessEnv);
+    expect(c.apiKeys.anthropic).toBe(true);
+    expect(c.apiKeys.openai).toBe(false);
+  });
+
   test("defaultSaveScreencast defaults to false", () => {
     const c = loadConfig({}, emptyEnv);
     expect(c.defaultSaveScreencast).toBe(false);
@@ -419,6 +425,11 @@ describe("requireLlmCapable", () => {
 
   test("passes when only openai key is set", () => {
     const config = loadConfig({}, { OPENAI_API_KEY: "sk-xxx" } as NodeJS.ProcessEnv);
+    expect(() => requireLlmCapable(config)).not.toThrow();
+  });
+
+  test("passes when only a subscription OAuth token is set", () => {
+    const config = loadConfig({}, { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-xxx" } as NodeJS.ProcessEnv);
     expect(() => requireLlmCapable(config)).not.toThrow();
   });
 

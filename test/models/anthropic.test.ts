@@ -3,10 +3,67 @@ import {
   createAnthropicClient,
   anthropicToolResultMessages,
   convertResponse,
+  resolveAnthropicAuth,
+  buildAnthropicSystemBlocks,
+  CLAUDE_CODE_IDENTITY,
 } from "../../src/models/anthropic";
 import type Anthropic from "@anthropic-ai/sdk";
 
 import { maxOutputTokensForModel } from "../../src/models/anthropic";
+
+describe("resolveAnthropicAuth", () => {
+  test("prefers a subscription OAuth token (CLAUDE_CODE_OAUTH_TOKEN) over an API key", () => {
+    expect(
+      resolveAnthropicAuth({
+        CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-aaa",
+        ANTHROPIC_API_KEY: "sk-ant-api03-bbb",
+      }),
+    ).toEqual({ mode: "oauth", token: "sk-ant-oat01-aaa" });
+  });
+
+  test("accepts ANTHROPIC_AUTH_TOKEN as the OAuth source", () => {
+    expect(resolveAnthropicAuth({ ANTHROPIC_AUTH_TOKEN: "sk-ant-oat01-ccc" })).toEqual({
+      mode: "oauth",
+      token: "sk-ant-oat01-ccc",
+    });
+  });
+
+  test("falls back to the API key when no OAuth token is present", () => {
+    expect(resolveAnthropicAuth({ ANTHROPIC_API_KEY: "sk-ant-api03-bbb" })).toEqual({
+      mode: "api-key",
+    });
+  });
+
+  test("throws when neither an OAuth token nor an API key is set", () => {
+    expect(() => resolveAnthropicAuth({})).toThrow(
+      /CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY/,
+    );
+  });
+});
+
+describe("buildAnthropicSystemBlocks", () => {
+  test("API-key mode: the prompt alone, carrying the cache breakpoint", () => {
+    expect(buildAnthropicSystemBlocks("QA PROMPT", false)).toEqual([
+      { type: "text", text: "QA PROMPT", cache_control: { type: "ephemeral" } },
+    ]);
+  });
+
+  test("OAuth mode: Claude Code identity is the FIRST block, prompt follows", () => {
+    const blocks = buildAnthropicSystemBlocks("QA PROMPT", true);
+    expect(blocks).toHaveLength(2);
+    // Anthropic gates subscription tokens on the first system block being the
+    // exact Claude Code identity (verified: wrong/second-place → 429).
+    expect(blocks[0]).toEqual({ type: "text", text: CLAUDE_CODE_IDENTITY });
+    expect(CLAUDE_CODE_IDENTITY).toBe(
+      "You are Claude Code, Anthropic's official CLI for Claude.",
+    );
+    expect(blocks[1]).toEqual({
+      type: "text",
+      text: "QA PROMPT",
+      cache_control: { type: "ephemeral" },
+    });
+  });
+});
 
 describe("maxOutputTokensForModel", () => {
   test("legacy Claude 3.0 family is capped at 4096", () => {

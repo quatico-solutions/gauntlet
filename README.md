@@ -252,7 +252,7 @@ Gauntlet ships as a `gauntlet` command on your PATH. The package isn't published
 - [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
 - Google Chrome (or Chromium) — required for the `web` adapter; the CDP driver works against either
 - `tmux` — required for the `tui` adapter
-- An LLM API key — `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in your environment
+- An LLM credential — `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in your environment, or a Claude subscription via `CLAUDE_CODE_OAUTH_TOKEN` (see [Using a Claude subscription (OAuth)](#using-a-claude-subscription-oauth))
 
 ### Install
 
@@ -524,7 +524,7 @@ Gauntlet-prefixed (consumed by `loadConfig`):
 
 ### SDK env pass-through policy
 
-Gauntlet does **not** read, wrap, or re-export the SDK-native environment variables. They flow directly to the Anthropic and OpenAI SDKs via the empty-constructor pattern (`new Anthropic()`, `new OpenAI()`).
+Gauntlet does **not** read, wrap, or re-export the SDK-native environment variables — with one exception, a Claude subscription token (see below). Otherwise they flow directly to the Anthropic and OpenAI SDKs via the empty-constructor pattern (`new Anthropic()`, `new OpenAI()`).
 
 | Variable | Owned by |
 |----------|----------|
@@ -535,6 +535,24 @@ Gauntlet does **not** read, wrap, or re-export the SDK-native environment variab
 If you want to point Gauntlet at a custom Anthropic endpoint, set `ANTHROPIC_BASE_URL=https://your-gateway.example.com` directly. Gauntlet will not touch it; the SDK will.
 
 `gauntlet config` records the *presence* of API keys in its output (`apiKeys.anthropic: set`) but never their values.
+
+### Using a Claude subscription (OAuth)
+
+For Claude models, Gauntlet can authenticate with a **logged-in Claude subscription** instead of a pay-per-token API key — useful for running Gauntlet's QA driver against your existing Max/Pro plan.
+
+1. Mint a long-lived token (interactive, one-time):
+
+   ```bash
+   claude setup-token
+   ```
+
+2. Put it in your environment as `CLAUDE_CODE_OAUTH_TOKEN` (e.g. in `.env`). When present, Gauntlet **prefers it over `ANTHROPIC_API_KEY`**; the API key remains the fallback. (`ANTHROPIC_AUTH_TOKEN` is accepted as an alias.)
+
+Unlike the other Anthropic env vars, Gauntlet reads this one explicitly: it constructs the client with the token as `authToken` (Bearer), sends the `anthropic-beta: oauth-2025-04-20` header, and — because Anthropic gates subscription tokens to Claude Code — prepends the exact Claude Code identity (`"You are Claude Code, Anthropic's official CLI for Claude."`) as the **first** system block of every request, with the QA system prompt following. A request missing that framing is rejected with `429`.
+
+**Caveat:** that identity block means the Gauntlet-Agent (the grader) runs under a "you are Claude Code" preface ahead of its QA instructions. The QA prompt itself is unchanged (it's the second block), so the effect is small, but it is a behavioral nudge worth knowing when comparing API-key vs subscription runs.
+
+`gauntlet config` shows `anthropic: set` whenever either credential is present.
 
 ### Inspecting effective config
 
@@ -567,6 +585,7 @@ See the [Configuration](#configuration) section above for the full list. Quick r
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude subscription token (`claude setup-token`); preferred over `ANTHROPIC_API_KEY` when set. See [Using a Claude subscription (OAuth)](#using-a-claude-subscription-oauth). | -- |
 | `ANTHROPIC_API_KEY` | API key for Claude models | -- |
 | `OPENAI_API_KEY` | API key for OpenAI models | -- |
 | `GAUNTLET_PORT` | Server port | 4400 |
