@@ -16,6 +16,25 @@
 // selector. Returns { base, text } or null if the selector doesn't use
 // :contains. The base may be empty (meaning "match any element"); we
 // turn that into "*".
+// GAUNTLET DIVERGENCE #5 (ewz): shadow-piercing querySelectorAll, embedded in every
+// generated CSS-selector snippet. XPath branches stay document-scoped (document.evaluate
+// cannot cross shadow boundaries).
+const HELPER_JS = `
+    function __gDeepQueryAll(sel) {
+      var out = [];
+      function walk(root) {
+        var matches = root.querySelectorAll(sel);
+        for (var i = 0; i < matches.length; i++) out.push(matches[i]);
+        var all = root.querySelectorAll('*');
+        for (var j = 0; j < all.length; j++) {
+          if (all[j].shadowRoot) walk(all[j].shadowRoot);
+        }
+      }
+      walk(document);
+      return out;
+    }
+`;
+
 function parseContains(selector) {
   const m = selector.match(/^(.*?):contains\(\s*(['"])(.*?)\2\s*\)\s*$/);
   if (!m) return null;
@@ -65,7 +84,8 @@ function getElementSelector(selector) {
   const contains = parseContains(selector);
   if (contains) {
     return `(() => {
-      var all = Array.from(document.querySelectorAll(${JSON.stringify(contains.base)})).filter(function(_el) {
+${HELPER_JS}
+      var all = __gDeepQueryAll(${JSON.stringify(contains.base)}).filter(function(_el) {
         var _t = (_el.textContent || '').replace(/\\s+/g, ' ').trim();
         return _t.includes(${JSON.stringify(contains.text)});
       });
@@ -82,9 +102,10 @@ function getElementSelector(selector) {
 
   // CSS selector - prefer visible elements
   return `(() => {
-    var all = document.querySelectorAll(${JSON.stringify(selector)});
+${HELPER_JS}
+    var all = __gDeepQueryAll(${JSON.stringify(selector)});
     if (all.length === 0) return null;
-    var visible = Array.from(all).find(function(el) {
+    var visible = all.find(function(el) {
       var r = el.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     });
@@ -129,9 +150,10 @@ function getElementSelectorAll(selector) {
   const contains = parseContains(selector);
   if (contains) {
     return `(() => {
-      const _els = document.querySelectorAll(${JSON.stringify(contains.base)});
+${HELPER_JS}
+      const _els = __gDeepQueryAll(${JSON.stringify(contains.base)});
       const _want = ${JSON.stringify(contains.text)};
-      return Array.from(_els).filter((_el) => {
+      return _els.filter((_el) => {
         const _t = (_el.textContent || '').replace(/\\s+/g, ' ').trim();
         return _t.includes(_want);
       });
@@ -139,7 +161,10 @@ function getElementSelectorAll(selector) {
   }
 
   // CSS selector
-  return `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`;
+  return `(() => {
+${HELPER_JS}
+    return __gDeepQueryAll(${JSON.stringify(selector)});
+  })()`;
 }
 
 module.exports = { getElementSelector, getElementSelectorAll, parseContains };

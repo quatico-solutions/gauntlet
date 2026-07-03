@@ -7,12 +7,27 @@
 // >= 50x50 with size info; skips smaller icons.
 module.exports = `
   (() => {
+    // GAUNTLET DIVERGENCE #5 (ewz): shadow-piercing query - webbloqs/Lit apps render
+    // everything inside open shadow roots, which document.querySelectorAll cannot see.
+    function __gDeepQueryAll(sel) {
+      var out = [];
+      function walk(root) {
+        var matches = root.querySelectorAll(sel);
+        for (var i = 0; i < matches.length; i++) out.push(matches[i]);
+        var all = root.querySelectorAll('*');
+        for (var j = 0; j < all.length; j++) {
+          if (all[j].shadowRoot) walk(all[j].shadowRoot);
+        }
+      }
+      walk(document);
+      return out;
+    }
     const results = [];
 
     const title = document.title;
     if (title) results.push(\`# \${title}\\n\`);
 
-    const allImages = document.querySelectorAll('img');
+    const allImages = __gDeepQueryAll('img');
     const significantImages = Array.from(allImages).filter(img => {
       const rect = img.getBoundingClientRect();
       return rect.width >= 100 && rect.height >= 100;
@@ -22,7 +37,7 @@ module.exports = `
       results.push(\`\\n**📷 This page contains \${significantImages.length} significant image(s). Check screenshot.png for visual content.**\\n\`);
     }
 
-    const elements = document.querySelectorAll('h1, h2, h3, h4, h5, h6, p, a, li, pre, code, blockquote, table, img, figure');
+    const elements = __gDeepQueryAll('h1, h2, h3, h4, h5, h6, p, a, li, pre, code, blockquote, table, img, figure');
 
     for (const el of elements) {
       const tag = el.tagName.toLowerCase();
