@@ -90,7 +90,13 @@ function attachKeyboardInput({ state, getPageSession, click }) {
           const el = ${getElementSelector(selector)};
           if (!el) return { success: false, error: 'Element not found' };
           el.focus();
-          if (document.activeElement !== el) {
+          // GAUNTLET DIVERGENCE #5 (ewz): document.activeElement stops at a shadow
+          // HOST — chase the active element through open shadow roots before comparing.
+          var _active = document.activeElement;
+          while (_active && _active.shadowRoot && _active.shadowRoot.activeElement) {
+            _active = _active.shadowRoot.activeElement;
+          }
+          if (_active !== el) {
             return { success: false, error: 'Failed to focus element' };
           }
           // Clear via the native value setter so framework-tracked
